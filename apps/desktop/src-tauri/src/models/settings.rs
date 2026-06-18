@@ -1,0 +1,68 @@
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+
+/// Application settings persisted to disk
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSettings {
+    pub mineru_token: String,
+    pub embedding_api_base: String,
+    pub embedding_api_key: String,
+    pub embedding_model: String,
+    pub rerank_api_base: String,
+    pub rerank_api_key: String,
+    pub rerank_model: String,
+    pub llm_api_base: String,
+    pub llm_api_key: String,
+    pub llm_model: String,
+    pub chunk_strategy: String,
+    pub chunk_size: u32,
+    pub chunk_overlap: u32,
+    pub python_port: u16,
+    pub theme: String,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            mineru_token: String::new(),
+            embedding_api_base: "https://api.openai.com".to_string(),
+            embedding_api_key: String::new(),
+            embedding_model: "text-embedding-3-small".to_string(),
+            rerank_api_base: "https://api.jina.ai".to_string(),
+            rerank_api_key: String::new(),
+            rerank_model: "jina-reranker-v2-base-multilingual".to_string(),
+            llm_api_base: "https://api.openai.com".to_string(),
+            llm_api_key: String::new(),
+            llm_model: "gpt-4o-mini".to_string(),
+            chunk_strategy: "recursive".to_string(),
+            chunk_size: 512,
+            chunk_overlap: 50,
+            python_port: 17390,
+            theme: "system".to_string(),
+        }
+    }
+}
+
+impl AppSettings {
+    /// Load settings from the app data directory
+    pub fn load(app_data_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let path = app_data_dir.join("settings.json");
+        if path.exists() {
+            let data = std::fs::read_to_string(&path)?;
+            let settings: AppSettings = serde_json::from_str(&data)?;
+            Ok(settings)
+        } else {
+            let settings = AppSettings::default();
+            settings.save(app_data_dir)?;
+            Ok(settings)
+        }
+    }
+
+    /// Save settings to the app data directory
+    pub fn save(&self, app_data_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        let path = app_data_dir.join("settings.json");
+        let data = serde_json::to_string_pretty(self)?;
+        std::fs::write(&path, data)?;
+        Ok(())
+    }
+}

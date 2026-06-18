@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Rust
+target/
+*.rs.bk
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+.venv/
+uv.lock
+
+# Tauri
+src-tauri/target/
+
+# Build output
+apps/desktop/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# LanceDB data (generated at runtime)
+*.lance/
+
+# App data (generated at runtime)
+app_data/

@@ -17,9 +17,6 @@ Configuration via environment variables:
     RERANK_API_BASE          — Rerank API base URL
     RERANK_API_KEY           — Rerank API key
     RERANK_MODEL             — Rerank model name
-    LLM_API_BASE             — LLM API base URL (for ask_question)
-    LLM_API_KEY              — LLM API key
-    LLM_MODEL                — LLM model name
 """
 
 import json
@@ -52,10 +49,6 @@ RERANK_API_KEY = os.environ.get("RERANK_API_KEY", "")
 RERANK_MODEL = os.environ.get(
     "RERANK_MODEL", "jina-reranker-v2-base-multilingual"
 )
-LLM_API_BASE = os.environ.get("LLM_API_BASE", "https://api.openai.com")
-LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
-LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
-
 # ── MCP Server ──
 
 mcp = FastMCP(name="Local Knowledge Base")
@@ -164,77 +157,6 @@ def get_document(
     searcher = _get_searcher()
     try:
         return searcher.get_document(kb_id, doc_id, include_chunks)
-    finally:
-        searcher.close()
-
-
-@mcp.tool
-def ask_question(
-    kb_id: str,
-    question: str,
-    top_k: int = 5,
-    include_sources: bool = True,
-) -> dict:
-    """
-    Ask a question and get an answer based on the knowledge base content.
-
-    Performs retrieval-augmented generation (RAG): searches for relevant
-    chunks, builds a prompt with context, and generates an answer using
-    the configured LLM.
-
-    Requires LLM_API_KEY to be configured for answer generation.
-
-    Args:
-        kb_id: UUID of the knowledge base to query.
-        question: The question to answer.
-        top_k: Number of source chunks to retrieve (1-20, default 5).
-        include_sources: Whether to include source citations in the response.
-
-    Returns:
-        Dict with 'answer' (string) and optionally 'sources' (list of chunks).
-    """
-    if not LLM_API_KEY:
-        return {
-            "answer": "LLM is not configured. Set LLM_API_KEY to enable Q&A. "
-            "Use search_knowledge_base to find relevant chunks manually.",
-            "sources": [],
-        }
-
-    searcher = _get_searcher()
-    try:
-        # Search for relevant chunks
-        results = searcher.search(
-            query=question,
-            kb_id=kb_id,
-            top_k=min(top_k, 20),
-            search_type="hybrid",
-            rerank=True,
-        )
-
-        if not results:
-            return {
-                "answer": "No relevant information found in the knowledge base.",
-                "sources": [],
-            }
-
-        # Build context
-        context = "\n\n---\n\n".join(
-            [f"[Source: {r['doc_name']}]\n{r['content']}" for r in results]
-        )
-
-        # Call LLM
-        answer = searcher.generate_answer(
-            question=question,
-            context=context,
-            llm_api_base=LLM_API_BASE,
-            llm_api_key=LLM_API_KEY,
-            llm_model=LLM_MODEL,
-        )
-
-        response = {"answer": answer}
-        if include_sources:
-            response["sources"] = results
-        return response
     finally:
         searcher.close()
 

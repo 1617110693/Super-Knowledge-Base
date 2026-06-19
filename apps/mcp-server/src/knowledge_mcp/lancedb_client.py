@@ -228,40 +228,6 @@ class LanceDBSearcher:
 
         return result
 
-    def generate_answer(
-        self,
-        question: str,
-        context: str,
-        llm_api_base: str,
-        llm_api_key: str,
-        llm_model: str,
-    ) -> str:
-        """Generate an answer using the LLM."""
-        system_prompt = f"""You are a helpful AI assistant answering questions based on provided knowledge base context.
-
-Context:
-{context}
-
-Answer the question based on the context. Include citations to source documents where possible. If the context doesn't contain the answer, say so."""
-
-        resp = self._http.post(
-            f"{llm_api_base}/v1/chat/completions",
-            json={
-                "model": llm_model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": question},
-                ],
-            },
-            headers={
-                "Authorization": f"Bearer {llm_api_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
-
     def close(self):
         self._http.close()
         self._db = None

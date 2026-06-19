@@ -21,11 +21,6 @@ class BackendConfig(BaseSettings):
     rerank_api_key: str = ""
     rerank_model: str = "jina-reranker-v2-base-multilingual"
 
-    # LLM API (for chat)
-    llm_api_base: str = "https://api.openai.com"
-    llm_api_key: str = ""
-    llm_model: str = "gpt-4o-mini"
-
     # Chunking defaults
     chunk_strategy: str = "recursive"
     chunk_size: int = 512

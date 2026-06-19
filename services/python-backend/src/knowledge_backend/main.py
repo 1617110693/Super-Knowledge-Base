@@ -6,7 +6,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import chat, documents, knowledge_bases, search, settings
+from .api import documents, knowledge_bases, search, settings
 
 
 def create_app() -> FastAPI:
@@ -25,7 +25,6 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(search.router, prefix="/api/v1", tags=["search"])
-    app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
     app.include_router(documents.router, prefix="/api/v1", tags=["documents"])
     app.include_router(
         knowledge_bases.router, prefix="/api/v1", tags=["knowledge_bases"]

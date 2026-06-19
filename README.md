@@ -27,32 +27,30 @@ A local-first desktop knowledge base application designed for AI agent integrati
   - **Fixed-size** — configurable with overlap
 - **Hybrid search**: Dense vector + BM25 keyword (FTS)
 - **Reranking** for search result refinement
-- **RAG Chat**: Conversational Q&A with streaming responses and source citations
 
 ### 🤖 AI Model Integration (OpenAI-compatible)
 - **Embedding**: OpenAI, Azure, Ollama, vLLM, LiteLLM, LM Studio, or any `/v1/embeddings` endpoint
 - **Rerank**: Jina AI, Cohere, or any `/v1/rerank` or `/rerank` endpoint
-- **LLM**: OpenAI, Azure, Ollama, vLLM, or any `/v1/chat/completions` endpoint
 - **100% provider-agnostic** — you control the models
 
 ### 🔌 MCP Server (Model Context Protocol)
-- **4 tools** for AI agents:
+- **3 tools** for AI agents:
   - `search_knowledge_base` — Hybrid search with reranking
   - `list_knowledge_bases` — List all KBs with stats
   - `get_document` — Full document retrieval
-  - `ask_question` — RAG-powered Q&A
 - **stdio transport** — runs as a subprocess
 - **`uvx` compatible** — one-command launch
 - **No dependency** on the desktop app — reads LanceDB directly
 - Designed for **Claude Code**, but works with any MCP client
+- LLM-powered Q&A is handled by the agent itself (e.g. Claude Code) using the search results
 
 ### 🎨 Desktop UI
-- **Clean, modern interface** with dark/light mode support
+- **Custom frameless window** with integrated title bar
+- **Dark/light mode** and **English/Chinese** language switcher
 - **Sidebar navigation** with KB list
 - **Dashboard** with KB statistics
 - **Document manager** with upload, parse, index, and preview
 - **Search interface** with toggleable hybrid/vector/keyword modes
-- **RAG Chat** with streaming and source citations
 - **Settings panel** for all API keys and model configurations
 
 ---
@@ -70,7 +68,6 @@ graph TB
         MinerU["📄 MinerU API"]
         Embed["🧠 Embedding API"]
         Rerank["📊 Rerank API"]
-        LLM["💬 LLM API"]
     end
 
     React <-->|"Tauri IPC"| Rust
@@ -80,10 +77,9 @@ graph TB
     Python -->|"chunk + embed + search"| DB
     Python -->|"embeddings"| Embed
     Python -->|"rerank"| Rerank
-    Python -->|"chat"| LLM
     MCP -->|"direct read"| DB
     MCP -->|"embeddings"| Embed
-    MCP -->|"LLM"| LLM
+    MCP -->|"rerank"| Rerank
 ```
 
 ### Technology Stack
@@ -117,21 +113,18 @@ graph TB
 git clone https://github.com/your-username/local-knowledge-base.git
 cd local-knowledge-base
 
-# Install frontend dependencies
+# Install frontend dependencies (from workspace root)
 npm install
 
 # Install Python backend dependencies
-cd services/python-backend
-uv sync
-cd ../..
+cd services/python-backend && uv sync && cd ../..
 
 # Install MCP server dependencies
-cd apps/mcp-server
-uv sync
-cd ../..
+cd apps/mcp-server && uv sync && cd ../..
 
-# Build and run the desktop app
-npm tauri dev
+# Launch the desktop app
+cd apps/desktop
+npm run tauri dev
 ```
 
 ### First Launch
@@ -140,12 +133,11 @@ npm tauri dev
 2. Go to **Settings** and configure your API keys:
    - **Embedding API**: OpenAI, Ollama, or any compatible provider
    - **Rerank API** (optional): Jina AI or Cohere
-   - **LLM API**: For RAG chat functionality
    - **MinerU Token** (optional): For high-quality parsing of large documents
 3. Create a **Knowledge Base**
 4. **Upload documents** — the app auto-parses using MinerU (agent mode if no token, precise mode with token)
 5. Click **Index** on parsed documents to generate embeddings and store in LanceDB
-6. **Search** or **Chat** with your knowledge base!
+6. **Search** your knowledge base, or connect Claude Code via the MCP server for AI-powered Q&A
 
 ---
 
@@ -164,9 +156,6 @@ All settings are managed through the desktop app UI. They are persisted to `sett
 | `rerank_api_base` | Rerank API base URL | `https://api.jina.ai` |
 | `rerank_api_key` | Rerank API key | (empty) |
 | `rerank_model` | Rerank model name | `jina-reranker-v2-base-multilingual` |
-| `llm_api_base` | Chat LLM API base URL | `https://api.openai.com` |
-| `llm_api_key` | Chat LLM API key | (empty) |
-| `llm_model` | Chat LLM model name | `gpt-4o-mini` |
 | `chunk_strategy` | Chunking method | `recursive` |
 | `chunk_size` | Characters per chunk | `512` |
 | `chunk_overlap` | Overlap between chunks | `50` |
@@ -178,19 +167,16 @@ The app works with any OpenAI-compatible API. Here are common configurations:
 **OpenAI**
 ```
 Embedding: https://api.openai.com  |  text-embedding-3-small
-LLM:       https://api.openai.com  |  gpt-4o-mini
 ```
 
 **Ollama (local)**
 ```
 Embedding: http://localhost:11434  |  nomic-embed-text
-LLM:       http://localhost:11434  |  llama3.2
 ```
 
 **vLLM / LiteLLM (self-hosted)**
 ```
 Embedding: http://localhost:8000   |  your-model
-LLM:       http://localhost:8000   |  your-model
 ```
 
 **Jina AI (rerank)**
@@ -217,7 +203,7 @@ Rerank:    https://api.cohere.com  |  rerank-english-v3.0
 
 ## MCP Server Usage
 
-The MCP server enables AI agents (especially **Claude Code**) to search and query your knowledge bases.
+The MCP server enables AI agents (especially **Claude Code**) to search and query your knowledge bases. Claude Code handles the LLM reasoning — the MCP server provides knowledge retrieval.
 
 ### Configuration for Claude Code
 
@@ -241,10 +227,7 @@ Add to your `claude_desktop_config.json` or `.claude/settings.json`:
         "EMBEDDING_MODEL": "text-embedding-3-small",
         "RERANK_API_BASE": "https://api.jina.ai",
         "RERANK_API_KEY": "jina-your-key-here",
-        "RERANK_MODEL": "jina-reranker-v2-base-multilingual",
-        "LLM_API_BASE": "https://api.openai.com",
-        "LLM_API_KEY": "sk-your-key-here",
-        "LLM_MODEL": "gpt-4o-mini"
+        "RERANK_MODEL": "jina-reranker-v2-base-multilingual"
       }
     }
   }
@@ -268,7 +251,7 @@ Once the project is published to GitHub:
         "local-kb-mcp"
       ],
       "env": {
-        "KNOWLEDGE_BASE_DATA_DIR": "/path/to/app/data",
+        "KNOWLEDGE_BASE_DATA_DIR": "$HOME/.local-knowledge-base",
         "EMBEDDING_API_BASE": "https://api.openai.com",
         "EMBEDDING_API_KEY": "sk-...",
         "EMBEDDING_MODEL": "text-embedding-3-small"
@@ -320,20 +303,14 @@ Retrieve a document's full text content:
 
 Returns the complete document text reconstructed from chunks.
 
-#### `ask_question`
+### How Claude Code Uses These Tools
 
-Ask a question and get an LLM-generated answer with citations:
+When you ask Claude Code a question about your documents, it can:
+1. Call `search_knowledge_base` to find relevant chunks
+2. Use its own reasoning to synthesize an answer from the results
+3. Optionally call `get_document` to read the full source document
 
-```json
-{
-  "kb_id": "your-kb-uuid",
-  "question": "Summarize the key findings",
-  "top_k": 5,
-  "include_sources": true
-}
-```
-
-Requires `LLM_API_KEY` to be configured.
+This is more powerful than a built-in RAG chatbot because Claude Code can do multi-step reasoning, cross-reference multiple knowledge bases, and combine document knowledge with its general capabilities.
 
 ### Running the MCP Server Manually
 
@@ -346,7 +323,7 @@ uv run local-kb-mcp
 local-kb-mcp
 
 # From Git (one-shot)
-uvx --from git+https://github.com/user/local-knowledge-base#subdirectory=apps/mcp-server local-kb-mcp
+uvx --from git+https://github.com/your-username/local-knowledge-base#subdirectory=apps/mcp-server local-kb-mcp
 ```
 
 ---
@@ -369,6 +346,7 @@ local-knowledge-base/
 │   │       ├── components/         # UI components
 │   │       ├── stores/             # Zustand state stores
 │   │       ├── services/           # tauriBridge + pythonClient
+│   │       ├── i18n/               # Internationalization
 │   │       └── types/              # TypeScript type definitions
 │   └── mcp-server/                 # Python MCP server (FastMCP)
 │       └── src/knowledge_mcp/
@@ -377,7 +355,7 @@ local-knowledge-base/
 ├── services/
 │   └── python-backend/             # Python FastAPI service
 │       └── src/knowledge_backend/
-│           ├── api/                # REST endpoints
+│           ├── api/                # REST endpoints (search, index, kb CRUD)
 │           ├── db/                 # LanceDB manager + schemas
 │           ├── embedding.py        # OpenAI-compatible embedding
 │           ├── reranker.py         # OpenAI-compatible rerank
@@ -391,10 +369,10 @@ local-knowledge-base/
 ```bash
 # Frontend dev server only
 cd apps/desktop
-npm dev
+npm run dev
 
 # Desktop app (full Tauri)
-npm tauri dev
+cd apps/desktop && npm run tauri dev
 
 # Python backend only
 cd services/python-backend
@@ -425,7 +403,7 @@ uv run pytest
 
 ```bash
 # Build the Tauri desktop app
-npm tauri build
+cd apps/desktop && npm run tauri build
 
 # Package the MCP server for distribution
 cd apps/mcp-server
@@ -465,12 +443,15 @@ Directory structure:
 
 ## FAQ
 
+### How does Q&A work without a built-in LLM?
+
+The desktop app focuses on **document indexing and search**. For Q&A, connect Claude Code via the MCP server — Claude reads search results and generates answers with its own reasoning. This is more flexible than a fixed RAG pipeline.
+
 ### Can I use local models (Ollama)?
 
-Yes! Point any of the API endpoints to your local Ollama server:
+Yes! Point the embedding API to your local Ollama server:
 
 - Embedding: `http://localhost:11434` with model like `nomic-embed-text`
-- LLM: `http://localhost:11434` with model like `llama3.2`
 
 ### Do I need a MinerU token?
 

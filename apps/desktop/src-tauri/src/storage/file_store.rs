@@ -65,6 +65,20 @@ impl FileStore {
         Ok(kb)
     }
 
+    pub fn rename_kb(&self, kb_id: &str, new_name: String) -> CommandResult<KnowledgeBase> {
+        let mut registry = self.load_registry()?;
+        let kb = registry
+            .knowledge_bases
+            .iter_mut()
+            .find(|kb| kb.id == kb_id)
+            .ok_or_else(|| AppError::NotFound(format!("Knowledge base not found: {}", kb_id)))?;
+        kb.name = new_name;
+        kb.updated_at = Utc::now();
+        let result = kb.clone();
+        self.save_registry(&registry)?;
+        Ok(result)
+    }
+
     pub fn delete_kb(&self, kb_id: &str) -> CommandResult<()> {
         let mut registry = self.load_registry()?;
         registry.knowledge_bases.retain(|kb| kb.id != kb_id);
@@ -133,6 +147,7 @@ impl FileStore {
             parse_status: ParseStatus::Pending,
             parse_error: None,
             chunk_count: 0,
+            embedding_model: String::new(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -238,9 +253,11 @@ impl FileStore {
         kb_id: &str,
         doc_id: &str,
         chunk_count: u32,
+        embedding_model: String,
     ) -> CommandResult<Document> {
         let mut doc = self.get_document(kb_id, doc_id)?;
         doc.chunk_count = chunk_count;
+        doc.embedding_model = embedding_model;
         doc.updated_at = Utc::now();
         self.save_document_meta(&doc)?;
         Ok(doc)
@@ -276,6 +293,22 @@ impl FileStore {
         if let Some(kb) = registry.knowledge_bases.iter_mut().find(|k| k.id == kb_id) {
             kb.document_count = (kb.document_count as i32 + doc_delta).max(0) as u32;
             kb.chunk_count = (kb.chunk_count as i32 + chunk_delta).max(0) as u32;
+            kb.updated_at = Utc::now();
+        }
+        self.save_registry(&registry)?;
+        Ok(())
+    }
+
+    pub fn update_kb_embedding(
+        &self,
+        kb_id: &str,
+        embedding_model: &str,
+        embedding_dim: u32,
+    ) -> CommandResult<()> {
+        let mut registry = self.load_registry()?;
+        if let Some(kb) = registry.knowledge_bases.iter_mut().find(|k| k.id == kb_id) {
+            kb.embedding_model = embedding_model.to_string();
+            kb.embedding_dim = embedding_dim;
             kb.updated_at = Utc::now();
         }
         self.save_registry(&registry)?;

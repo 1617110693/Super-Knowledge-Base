@@ -4,7 +4,7 @@ import { useI18n } from "../../i18n";
 import { configureClaudeMCP } from "../../services/tauriBridge";
 import { testEmbedding, testRerank } from "../../services/pythonClient";
 import type { AppSettings } from "../../types";
-import { Save, CheckCircle, Loader2, Terminal, Check, X, FolderOpen, FlaskConical } from "lucide-react";
+import { Save, CheckCircle, Loader2, Terminal, Check, X, FolderOpen, FlaskConical, Copy, ClipboardCheck } from "lucide-react";
 
 export function SettingsPanel() {
   const { t } = useI18n();
@@ -13,6 +13,28 @@ export function SettingsPanel() {
   const [saved, setSaved] = useState(false);
   const [claudeStatus, setClaudeStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [configuring, setConfiguring] = useState(false);
+  const [copiedMCP, setCopiedMCP] = useState(false);
+
+  const handleCopyMCPConfig = async () => {
+    const config = {
+      mcpServers: {
+        "local-knowledge-base": {
+          command: "uv",
+          args: ["run", "--directory", "D:/AI/mcp/local-knowledge-base/apps/mcp-server", "local-kb-mcp"],
+          env: {
+            KNOWLEDGE_BASE_DATA_DIR: form.data_dir || "%USERPROFILE%/.local-knowledge-base",
+          },
+        },
+      },
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(config, null, 2));
+      setCopiedMCP(true);
+      setTimeout(() => setCopiedMCP(false), 2000);
+    } catch {
+      // clipboard may not be available
+    }
+  };
   const [testingEmbedding, setTestingEmbedding] = useState(false);
   const [testEmbeddingResult, setTestEmbeddingResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [testingRerank, setTestingRerank] = useState(false);
@@ -235,28 +257,41 @@ export function SettingsPanel() {
       <section className="mb-8">
         <h3 className="text-lg font-semibold mb-4 border-b pb-2">{t("settings.claudeMCP")}</h3>
         <p className="text-sm text-muted-foreground mb-4">{t("settings.claudeMCPDesc")}</p>
-        <button
-          onClick={async () => {
-            setConfiguring(true);
-            setClaudeStatus(null);
-            try {
-              const result = await configureClaudeMCP();
-              setClaudeStatus({ success: result.success, message: result.message });
-            } catch (e) {
-              setClaudeStatus({ success: false, message: String(e) });
-            }
-            setConfiguring(false);
-          }}
-          disabled={configuring}
-          className="flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50"
-        >
-          {configuring ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Terminal className="w-4 h-4" />
-          )}
-          {t("settings.configureClaude")}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={async () => {
+              setConfiguring(true);
+              setClaudeStatus(null);
+              try {
+                const result = await configureClaudeMCP();
+                setClaudeStatus({ success: result.success, message: result.message });
+              } catch (e) {
+                setClaudeStatus({ success: false, message: String(e) });
+              }
+              setConfiguring(false);
+            }}
+            disabled={configuring}
+            className="flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50"
+          >
+            {configuring ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Terminal className="w-4 h-4" />
+            )}
+            {t("settings.configureClaude")}
+          </button>
+          <button
+            onClick={handleCopyMCPConfig}
+            className="flex items-center gap-2 px-4 py-2.5 border rounded-lg text-sm font-medium hover:bg-muted transition-colors"
+          >
+            {copiedMCP ? (
+              <ClipboardCheck className="w-4 h-4 text-green-500" />
+            ) : (
+              <Copy className="w-4 h-4" />
+            )}
+            {copiedMCP ? t("settings.saved") : t("settings.copyMCPConfig")}
+          </button>
+        </div>
         {claudeStatus && (
           <div className={`mt-3 p-3 rounded-lg text-sm flex items-start gap-2 ${
             claudeStatus.success ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-700"

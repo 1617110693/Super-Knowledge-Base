@@ -109,6 +109,11 @@ pub async fn save_document_chunks(
     kb_id: String,
     doc_id: String,
     chunk_count: u32,
+    embedding_model: String,
+    embedding_dim: u32,
 ) -> CommandResult<Document> {
-    state.file_store.update_document_chunks(&kb_id, &doc_id, chunk_count)
+    // Update KB-level embedding info first (borrows), then doc chunks (moves)
+    state.file_store.update_kb_embedding(&kb_id, &embedding_model, embedding_dim)?;
+    let doc = state.file_store.update_document_chunks(&kb_id, &doc_id, chunk_count, embedding_model)?;
+    Ok(doc)
 }

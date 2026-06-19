@@ -60,7 +60,11 @@ export const translations = {
   "docs.indexing": { en: "Indexing...", "zh-CN": "索引中…" },
   "docs.preview": { en: "Preview", "zh-CN": "预览" },
   "docs.delete": { en: "Delete", "zh-CN": "删除" },
+  "docs.reindex": { en: "Re-index", "zh-CN": "重新索引" },
+  "docs.reindexAll": { en: "Re-index All", "zh-CN": "一键重新索引" },
+  "docs.embeddingModel": { en: "Embedding: {model}", "zh-CN": "嵌入模型: {model}" },
   "docs.uploadFilter": { en: "Documents", "zh-CN": "文档文件" },
+  "kb.rename": { en: "Rename", "zh-CN": "重命名" },
 
   // Parse status
   "parse.pending": { en: "pending", "zh-CN": "等待中" },
@@ -125,6 +129,7 @@ export const translations = {
   "settings.claudeMCP": { en: "Claude Code Integration", "zh-CN": "Claude Code 集成" },
   "settings.claudeMCPDesc": { en: "Auto-configure the MCP server for Claude Code. This writes the config to ~/.claude.json so Claude Code can search your knowledge bases.", "zh-CN": "一键配置 Claude Code 的 MCP Server。将配置写入 ~/.claude.json，Claude Code 即可搜索你的知识库。" },
   "settings.configureClaude": { en: "Configure Claude Code MCP", "zh-CN": "一键配置 Claude Code MCP" },
+  "settings.copyMCPConfig": { en: "Copy MCP Config", "zh-CN": "复制 MCP 配置" },
 } as const;
 
 export type TranslationKey = keyof typeof translations;

@@ -136,18 +136,68 @@ def list_knowledge_bases() -> list[dict]:
     """
     List all available knowledge bases with their metadata.
 
-    Returns name, id, document count, and chunk count for each knowledge base.
+    Reads from knowledge_bases.json (the registry) and cross-references with
+    LanceDB tables to get actual chunk counts. Orphaned LanceDB tables (not
+    in the registry) are flagged for cleanup.
 
-    Returns:
-        List of knowledge base summaries.
+    Returns name, id, document count, and chunk count for each knowledge base.
     """
     if not DATA_DIR:
         return []
+
+    # Load registry
+    registry = _load_registry()
+    registry_ids = {kb["id"] for kb in registry.get("knowledge_bases", [])}
+
+    # Get LanceDB stats
     searcher = _get_searcher()
     try:
-        return searcher.list_kbs()
+        lance_kbs = {kb["id"]: kb for kb in searcher.list_kbs()}
     finally:
         searcher.close()
+
+    # Merge: registry KBs with LanceDB stats
+    results = []
+    for kb in registry.get("knowledge_bases", []):
+        stats = lance_kbs.pop(kb["id"], {})
+        results.append({
+            "id": kb["id"],
+            "name": kb["name"],
+            "description": kb.get("description", ""),
+            "document_count": stats.get("document_count", kb.get("document_count", 0)),
+            "chunk_count": stats.get("chunk_count", kb.get("chunk_count", 0)),
+            "created_at": kb.get("created_at", ""),
+        })
+
+    # Flag orphaned LanceDB tables (not in registry)
+    for orphan_id, stats in lance_kbs.items():
+        results.append({
+            "id": orphan_id,
+            "name": f"[ORPHAN TABLE] {orphan_id[:8]}...",
+            "description": "Orphaned LanceDB table — no matching registry entry. Use delete_knowledge_base to clean up.",
+            "document_count": stats.get("document_count", 0),
+            "chunk_count": stats.get("chunk_count", 0),
+            "created_at": "",
+            "orphaned": True,
+        })
+
+    # Flag orphaned KB directories (on disk but not in registry)
+    data_path = Path(DATA_DIR)
+    for entry in data_path.iterdir():
+        if entry.is_dir() and entry.name.startswith("kb_"):
+            kb_id = entry.name.replace("kb_", "").replace("_", "-")
+            if kb_id not in registry_ids and kb_id not in lance_kbs:
+                results.append({
+                    "id": kb_id,
+                    "name": f"[ORPHAN DIR] {kb_id[:8]}...",
+                    "description": "Orphaned KB directory — no registry entry or LanceDB table.",
+                    "document_count": 0,
+                    "chunk_count": 0,
+                    "created_at": "",
+                    "orphaned": True,
+                })
+
+    return results
 
 
 @mcp.tool
@@ -175,6 +225,130 @@ def get_document(
         return searcher.get_document(kb_id, doc_id, include_chunks)
     finally:
         searcher.close()
+
+
+# ── KB management helpers ──
+
+def _load_registry() -> dict:
+    """Load the knowledge base registry from knowledge_bases.json."""
+    path = Path(DATA_DIR) / "knowledge_bases.json"
+    if path.exists():
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"version": 1, "knowledge_bases": []}
+
+
+def _save_registry(registry: dict):
+    """Save the knowledge base registry to knowledge_bases.json."""
+    path = Path(DATA_DIR) / "knowledge_bases.json"
+    with open(path, "w") as f:
+        json.dump(registry, f, indent=2)
+
+
+@mcp.tool
+def create_knowledge_base(name: str, description: str = "") -> dict:
+    """
+    Create a new knowledge base.
+
+    Args:
+        name: Human-readable name for the knowledge base.
+        description: Optional description of the knowledge base.
+
+    Returns:
+        The created knowledge base object with id, name, and metadata.
+    """
+    import uuid
+    from datetime import datetime, timezone
+
+    registry = _load_registry()
+    kb = {
+        "id": str(uuid.uuid4()),
+        "name": name,
+        "description": description,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "document_count": 0,
+        "chunk_count": 0,
+        "embedding_model": "",
+        "embedding_dim": 0,
+    }
+    registry["knowledge_bases"].append(kb)
+    _save_registry(registry)
+
+    # Create KB directory
+    kb_dir = Path(DATA_DIR) / f"kb_{kb['id']}"
+    kb_dir.mkdir(parents=True, exist_ok=True)
+    (kb_dir / "docs").mkdir(exist_ok=True)
+
+    return kb
+
+
+@mcp.tool
+def delete_knowledge_base(kb_id: str) -> dict:
+    """
+    Delete a knowledge base and all its data (documents, vectors, chunks).
+
+    Args:
+        kb_id: UUID of the knowledge base to delete.
+
+    Returns:
+        Status object indicating success or error.
+    """
+    import shutil
+
+    registry = _load_registry()
+    original_count = len(registry["knowledge_bases"])
+    registry["knowledge_bases"] = [
+        kb for kb in registry["knowledge_bases"] if kb["id"] != kb_id
+    ]
+    if len(registry["knowledge_bases"]) == original_count:
+        return {"status": "not_found", "detail": f"Knowledge base not found: {kb_id}"}
+
+    _save_registry(registry)
+
+    # Remove KB directory
+    kb_dir = Path(DATA_DIR) / f"kb_{kb_id}"
+    if kb_dir.exists():
+        shutil.rmtree(kb_dir)
+
+    # Drop LanceDB table
+    table_name = f"kb_{kb_id.replace('-', '_')}"
+    searcher = _get_searcher()
+    try:
+        if table_name in searcher.db.table_names():
+            searcher.db.drop_table(table_name)
+    finally:
+        searcher.close()
+
+    return {"status": "deleted", "kb_id": kb_id}
+
+
+@mcp.tool
+def rename_knowledge_base(kb_id: str, name: str) -> dict:
+    """
+    Rename a knowledge base.
+
+    Args:
+        kb_id: UUID of the knowledge base to rename.
+        name: New name for the knowledge base.
+
+    Returns:
+        The updated knowledge base object, or an error.
+    """
+    from datetime import datetime, timezone
+
+    registry = _load_registry()
+    for kb in registry["knowledge_bases"]:
+        if kb["id"] == kb_id:
+            kb["name"] = name
+            kb["updated_at"] = datetime.now(timezone.utc).isoformat()
+            _save_registry(registry)
+            return kb
+
+    return {"status": "not_found", "detail": f"Knowledge base not found: {kb_id}"}
 
 
 def main():

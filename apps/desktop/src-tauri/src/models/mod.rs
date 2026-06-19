@@ -28,6 +28,8 @@ pub struct Document {
     pub parse_status: ParseStatus,
     pub parse_error: Option<String>,
     pub chunk_count: u32,
+    #[serde(default)]
+    pub embedding_model: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

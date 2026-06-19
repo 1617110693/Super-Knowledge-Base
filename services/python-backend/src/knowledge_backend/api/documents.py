@@ -69,7 +69,13 @@ def index_document(req: IndexRequest):
             chunk_strategy=strategy,
         )
 
-        return {"doc_id": req.doc_id, "chunk_count": count, "status": "indexed"}
+        return {
+            "doc_id": req.doc_id,
+            "chunk_count": count,
+            "status": "indexed",
+            "embedding_model": config.embedding_model,
+            "embedding_dim": embedding_dim,
+        }
     finally:
         db.close()
 

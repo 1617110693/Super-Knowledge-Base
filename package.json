@@ -2,7 +2,7 @@
   "name": "local-knowledge-base",
   "version": "1.0.0",
   "private": true,
-  "description": "Local Agent Knowledge Base â€?desktop app with MCP server integration",
+  "description": "Local Agent Knowledge Base ï¿½?desktop app with MCP server integration",
   "workspaces": [
     "apps/desktop",
     "packages/*"

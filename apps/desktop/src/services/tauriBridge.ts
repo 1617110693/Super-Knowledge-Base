@@ -31,6 +31,10 @@ export async function createKB(
   return invoke("create_kb", { name, description });
 }
 
+export async function renameKB(kbId: string, name: string): Promise<KnowledgeBase> {
+  return invoke("rename_kb", { kbId, name });
+}
+
 export async function deleteKB(kbId: string): Promise<void> {
   return invoke("delete_kb", { kbId });
 }
@@ -73,9 +77,11 @@ export async function getDocumentContent(
 export async function saveDocumentChunks(
   kbId: string,
   docId: string,
-  chunkCount: number
+  chunkCount: number,
+  embeddingModel: string,
+  embeddingDim: number,
 ): Promise<Document> {
-  return invoke("save_document_chunks", { kbId, docId, chunkCount });
+  return invoke("save_document_chunks", { kbId, docId, chunkCount, embeddingModel, embeddingDim });
 }
 
 // ── Parsing ──

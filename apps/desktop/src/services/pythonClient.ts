@@ -55,7 +55,7 @@ export async function indexDocument(params: {
     chunk_size?: number;
     chunk_overlap?: number;
   };
-}): Promise<{ doc_id: string; chunk_count: number; status: string }> {
+}): Promise<{ doc_id: string; chunk_count: number; status: string; embedding_model: string; embedding_dim: number }> {
   return pythonFetch("/index", {
     method: "POST",
     body: JSON.stringify(params),
@@ -124,6 +124,12 @@ export async function chatStream(
   } catch (e) {
     onError(String(e));
   }
+}
+
+// ── KB Management ──
+
+export async function backupKb(kbId: string): Promise<{ kb_id: string; backup_path: string; status: string }> {
+  return pythonFetch(`/kb/${kbId}/backup`, { method: "POST" });
 }
 
 // ── Health ──

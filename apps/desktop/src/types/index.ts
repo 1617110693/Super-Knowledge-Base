@@ -21,6 +21,7 @@ export interface Document {
   parse_status: "pending" | "parsing" | "done" | "failed";
   parse_error?: string;
   chunk_count: number;
+  embedding_model: string;
   created_at: string;
   updated_at: string;
 }

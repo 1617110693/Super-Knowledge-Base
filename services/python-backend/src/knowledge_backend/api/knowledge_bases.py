@@ -1,4 +1,6 @@
 """Knowledge base management endpoints."""
+import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -13,6 +15,10 @@ router = APIRouter()
 class CreateKBRequest(BaseModel):
     kb_id: str
     embedding_dim: int = 1536
+
+
+class BackupKBRequest(BaseModel):
+    kb_id: str
 
 
 @router.post("/kb")
@@ -49,3 +55,21 @@ def get_kb_stats(kb_id: str):
         return db.get_kb_stats(kb_id)
     finally:
         db.close()
+
+
+@router.post("/kb/{kb_id}/backup")
+def backup_kb(kb_id: str):
+    """Create a backup of the LanceDB table before re-indexing."""
+    config = get_config()
+    lancedb_dir = Path(config.knowledge_base_data_dir) / "lancedb_data"
+    table_name = LanceDBManager.table_name(kb_id)
+    table_path = lancedb_dir / f"{table_name}.lance"
+
+    if not table_path.exists():
+        raise HTTPException(404, f"Table not found: {table_name}")
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    backup_path = lancedb_dir / f"{table_name}.lance.{timestamp}.bak"
+    shutil.copytree(table_path, backup_path)
+
+    return {"kb_id": kb_id, "backup_path": str(backup_path), "status": "backed_up"}

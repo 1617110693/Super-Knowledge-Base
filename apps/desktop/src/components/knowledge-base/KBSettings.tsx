@@ -6,7 +6,7 @@ import { indexDocument } from "../../services/pythonClient";
 import {
   FileText, Layers, Upload, Trash2, Loader2,
   CheckCircle, XCircle, Clock, Eye, FolderOpen,
-  Search, Database, AlertTriangle,
+  Search, Database, Pencil, RefreshCw, Check,
 } from "lucide-react";
 import type { Document } from "../../types";
 import { ConfirmDialog } from "../common/ConfirmDialog";
@@ -23,13 +23,16 @@ export function KBSettings() {
   const { kbId } = useParams<{ kbId: string }>();
   const navigate = useNavigate();
   const { t } = useI18n();
-  const { knowledgeBases, documents, loadKBs, loadDocuments, uploadDocument, deleteDocument, refreshDocument, setActiveKB } = useKBStore();
+  const { knowledgeBases, documents, loadKBs, loadDocuments, uploadDocument, deleteDocument, refreshDocument, setActiveKB, renameKB, reindexDocument, reindexAll, indexingIds } = useKBStore();
   const [dragOver, setDragOver] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const uploadingRef = useRef(false); // sync ref to eliminate flash between setState and re-render
+  const uploadingRef = useRef(false);
   const [indexing, setIndexing] = useState<Record<string, boolean>>({});
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<{ docId: string; docName: string } | null>(null);
+
+  // ── Rename KB ──
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
 
   useEffect(() => { loadKBs(); }, []);
   useEffect(() => {
@@ -42,63 +45,78 @@ export function KBSettings() {
   const kb = knowledgeBases.find((k) => k.id === kbId);
   useEffect(() => { if (kb) setActiveKB(kb); }, [kb]);
 
-  // Track index attempts to avoid infinite retry on empty/no-content docs
+  // Poll MinerU parsing + trigger index when parsing finishes
   const indexedRef = useRef<Set<string>>(new Set());
-
-  const doAutoIndex = useCallback(async (doc: Document) => {
-    if (!kbId) return;
-    indexedRef.current.add(doc.id);
-    setIndexing((p) => ({ ...p, [doc.id]: true }));
-    try {
-      const { getDocumentContent, saveDocumentChunks } = await import("../../services/tauriBridge");
-      const content = await getDocumentContent(kbId, doc.id);
-      const result = await indexDocument({ kb_id: kbId, doc_id: doc.id, doc_name: doc.name, markdown_content: content.markdown });
-      // Persist chunk count to disk so restart doesn't re-index
-      await saveDocumentChunks(kbId, doc.id, result.chunk_count);
-      // Update store
-      useKBStore.setState((s) => ({
-        documents: s.documents.map((d) => d.id === doc.id ? { ...d, chunk_count: result.chunk_count } : d),
-      }));
-    } catch (e) {
-      console.error("Auto-index failed:", e);
-      indexedRef.current.delete(doc.id);
-    }
-    setIndexing((p) => ({ ...p, [doc.id]: false }));
-  }, [kbId]);
-
-  // Poll parsing + auto-index
   useEffect(() => {
     if (!kbId) return;
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
+      // Refresh docs still being parsed by MinerU
       for (const doc of documents) {
         if (doc.parse_status === "parsing") {
           refreshDocument(kbId, doc.id);
         }
       }
-      // Auto-index: done + not yet indexed/attempted
+      // When parsing finishes, trigger index once
       for (const doc of documents) {
         if (
           doc.parse_status === "done" &&
           doc.chunk_count === 0 &&
           !indexedRef.current.has(doc.id)
         ) {
-          doAutoIndex(doc);
+          indexedRef.current.add(doc.id);
+          setIndexing((p) => ({ ...p, [doc.id]: true }));
+          try {
+            const { getDocumentContent, saveDocumentChunks } = await import(
+              "../../services/tauriBridge"
+            );
+            const content = await getDocumentContent(kbId, doc.id);
+            const result = await indexDocument({
+              kb_id: kbId,
+              doc_id: doc.id,
+              doc_name: doc.name,
+              markdown_content: content.markdown,
+            });
+            await saveDocumentChunks(kbId, doc.id, result.chunk_count, result.embedding_model, result.embedding_dim);
+            useKBStore.setState((s) => ({
+              documents: s.documents.map((d) =>
+                d.id === doc.id ? { ...d, chunk_count: result.chunk_count, embedding_model: result.embedding_model } : d
+              ),
+            }));
+          } catch (e) {
+            console.error("Auto-index failed:", e);
+            indexedRef.current.delete(doc.id);
+          }
+          setIndexing((p) => ({ ...p, [doc.id]: false }));
         }
       }
     }, 3000);
     return () => clearInterval(interval);
-  }, [documents, kbId, refreshDocument, doAutoIndex]);
+  }, [documents, kbId, refreshDocument]);
+
+  // ── Rename handlers ──
+
+  const startRename = () => {
+    if (kb) {
+      setNameDraft(kb.name);
+      setEditingName(true);
+    }
+  };
+
+  const commitRename = async () => {
+    if (kbId && nameDraft.trim() && nameDraft.trim() !== kb?.name) {
+      await renameKB(kbId, nameDraft.trim());
+    }
+    setEditingName(false);
+  };
 
   // ── Upload ──
 
   const doUpload = useCallback(async (filePath: string) => {
     if (!kbId) return;
     uploadingRef.current = true;
-    setUploading(true);
     try {
       await uploadDocument(kbId, filePath);
     } catch (e) { console.error(e); }
-    setUploading(false);
     uploadingRef.current = false;
   }, [kbId, uploadDocument]);
 
@@ -107,29 +125,24 @@ export function KBSettings() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({
-        multiple: false,
+        multiple: true,
         filters: [{ name: t("docs.uploadFilter"), extensions: ["pdf","doc","docx","ppt","pptx","xls","xlsx","png","jpg","jpeg","webp","gif","bmp","html","md","markdown","txt"] }],
       });
-      if (selected) await doUpload(selected as string);
+      if (selected) {
+        const files = Array.isArray(selected) ? selected : [selected];
+        for (const f of files) await doUpload(f as string);
+      }
     } catch (e) { console.error(e); }
   }, [kbId, doUpload, t]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    // Tauri drag-drop gives us file paths via dataTransfer
     const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      // On Windows/Tauri, we may get the path from the file object
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        // @ts-expect-error Tauri adds `path` to File objects
-        const path = f.path as string | undefined;
-        if (path) {
-          doUpload(path);
-          break; // single file for now
-        }
-      }
+    for (let i = 0; i < files.length; i++) {
+      // @ts-expect-error Tauri adds `path` to File objects
+      const path = files[i].path as string | undefined;
+      if (path) doUpload(path);
     }
   }, [doUpload]);
 
@@ -142,6 +155,16 @@ export function KBSettings() {
     }
   };
 
+  const handleReindexDoc = async (doc: Document) => {
+    if (!kbId) return;
+    await reindexDocument(kbId, doc.id, doc.name);
+  };
+
+  const handleReindexAll = async () => {
+    if (!kbId) return;
+    await reindexAll(kbId);
+  };
+
   // ── Render ──
 
   if (!kb) {
@@ -150,6 +173,7 @@ export function KBSettings() {
 
   const doneCount = documents.filter((d) => d.parse_status === "done").length;
   const totalChunks = documents.reduce((sum, d) => sum + d.chunk_count, 0);
+  const hasIndexedDocs = documents.some((d) => d.chunk_count > 0);
 
   return (
     <div className="flex flex-col h-full">
@@ -158,15 +182,51 @@ export function KBSettings() {
         <div className="flex items-center gap-4">
           <FolderOpen className="w-10 h-10 text-primary shrink-0" />
           <div className="flex-1 min-w-0">
-            <h2 className="text-2xl font-bold truncate">{kb.name}</h2>
+            {editingName ? (
+              <div className="flex items-center gap-2">
+                <input
+                  autoFocus
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditingName(false); }}
+                  onBlur={commitRename}
+                  className="text-2xl font-bold bg-background border rounded-lg px-3 py-1 w-full max-w-md outline-none ring-1 ring-primary"
+                />
+                <button onClick={commitRename} className="p-1.5 hover:bg-green-50 rounded-md text-green-600" title={t("kb.rename")}>
+                  <Check className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <h2 className="text-2xl font-bold truncate flex items-center gap-2">
+                {kb.name}
+                <button onClick={startRename} className="p-1 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground" title={t("kb.rename")}>
+                  <Pencil className="w-4 h-4" />
+                </button>
+              </h2>
+            )}
             {kb.description && <p className="text-muted-foreground text-sm truncate">{kb.description}</p>}
+            {kb.embedding_model && (
+              <p className="text-xs text-muted-foreground mt-0.5">{t("docs.embeddingModel", { model: kb.embedding_model })}</p>
+            )}
           </div>
-          <button
-            onClick={() => navigate(`/kb/${kbId}/search`)}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:opacity-90"
-          >
-            <Search className="w-4 h-4" />{t("nav.search")}
-          </button>
+          <div className="flex items-center gap-2">
+            {hasIndexedDocs && (
+              <button
+                onClick={handleReindexAll}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-sm font-medium hover:bg-amber-100 transition-colors"
+                title={t("docs.reindexAll")}
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                {t("docs.reindexAll")}
+              </button>
+            )}
+            <button
+              onClick={() => navigate(`/kb/${kbId}/search`)}
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:opacity-90"
+            >
+              <Search className="w-4 h-4" />{t("nav.search")}
+            </button>
+          </div>
         </div>
 
         {/* Stats pills */}
@@ -199,18 +259,9 @@ export function KBSettings() {
               : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30"
           }`}
         >
-          {uploading ? (
-            <div className="flex items-center justify-center gap-2 text-muted-foreground">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-sm">{t("parse.parsing")}...</span>
-            </div>
-          ) : (
-            <>
-              <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-              <p className="text-sm font-medium">{t("docs.upload")}</p>
-              <p className="text-xs text-muted-foreground mt-1">{t("docs.emptyHint")}</p>
-            </>
-          )}
+          <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+          <p className="text-sm font-medium">{t("docs.upload")}</p>
+          <p className="text-xs text-muted-foreground mt-1">{t("docs.emptyHint")}</p>
         </div>
 
         {/* Document list */}
@@ -234,6 +285,8 @@ export function KBSettings() {
             {documents.map((doc) => {
               const status = STATUS_MAP[doc.parse_status] || STATUS_MAP.pending;
               const isParseFailed = doc.parse_status === "failed";
+              const isIndexing = indexing[doc.id] || indexingIds.has(doc.id);
+              const isIndexed = !isIndexing && doc.chunk_count > 0;
               return (
                 <div
                   key={doc.id}
@@ -245,7 +298,7 @@ export function KBSettings() {
                     <FileText className="w-5 h-5 text-primary shrink-0" />
                     <div className="min-w-0">
                       <p className="font-medium text-sm truncate">{doc.name}</p>
-                      <p className="text-xs text-muted-foreground flex items-center gap-2">
+                      <p className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
                         <span>{(doc.file_size / 1024).toFixed(1)} KB</span>
                         <span>·</span>
                         <span className="flex items-center gap-1">{status.icon}{t(status.labelKey)}</span>
@@ -253,6 +306,12 @@ export function KBSettings() {
                           <>
                             <span>·</span>
                             <span>{doc.chunk_count} {t("kb.chunks")}</span>
+                          </>
+                        )}
+                        {doc.embedding_model && (
+                          <>
+                            <span>·</span>
+                            <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">{doc.embedding_model}</span>
                           </>
                         )}
                         {isParseFailed && doc.parse_error && (
@@ -266,24 +325,34 @@ export function KBSettings() {
                   </div>
                   <div className="flex items-center gap-1.5 ml-3 shrink-0">
                     {/* Indexing in progress */}
-                    {indexing[doc.id] && (
+                    {isIndexing && (
                       <span className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs font-medium">
                         <Loader2 className="w-3 h-3 animate-spin" />
                         {t("docs.indexing")}
                       </span>
                     )}
                     {/* Indexed */}
-                    {!indexing[doc.id] && doc.chunk_count > 0 && (
+                    {isIndexed && (
                       <span className="flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
                         <Database className="w-3 h-3" />
                         {doc.chunk_count} {t("kb.chunks")}
                       </span>
                     )}
                     {/* Done parsing but no content (empty doc or index error) */}
-                    {!indexing[doc.id] && doc.parse_status === "done" && doc.chunk_count === 0 && (
+                    {!isIndexing && doc.parse_status === "done" && doc.chunk_count === 0 && (
                       <span className="px-2 py-1 bg-muted text-muted-foreground rounded text-xs">
                         {t("docs.empty")}
                       </span>
+                    )}
+                    {/* Re-index button */}
+                    {isIndexed && (
+                      <button
+                        onClick={() => handleReindexDoc(doc)}
+                        className="p-1.5 hover:bg-amber-50 rounded-md text-muted-foreground hover:text-amber-600"
+                        title={t("docs.reindex")}
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
                     )}
                     <button
                       onClick={() => navigate(`/kb/${kbId}/documents/${doc.id}`)}

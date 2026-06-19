@@ -31,24 +31,25 @@ class BackendConfig(BaseSettings):
         env_file = ".env"
 
     def load_from_settings_json(self) -> "BackendConfig":
-        """Load additional settings from the Tauri app's settings.json."""
+        """Load settings from settings.json, trying data_dir first then default dir."""
+        search_paths = []
         if self.knowledge_base_data_dir:
-            settings_path = Path(self.knowledge_base_data_dir) / "settings.json"
+            search_paths.append(Path(self.knowledge_base_data_dir) / "settings.json")
+        search_paths.append(Path.home() / ".local-knowledge-base" / "settings.json")
+
+        for settings_path in search_paths:
             if settings_path.exists():
                 with open(settings_path) as f:
                     data = json.load(f)
                 for key, value in data.items():
                     if hasattr(self, key) and value:
                         setattr(self, key, value)
+                return self
         return self
 
 
-_config: BackendConfig | None = None
-
-
 def get_config() -> BackendConfig:
-    global _config
-    if _config is None:
-        _config = BackendConfig()
-        _config.load_from_settings_json()
-    return _config
+    # Always reload from settings.json so config changes take effect without restart
+    config = BackendConfig()
+    config.load_from_settings_json()
+    return config

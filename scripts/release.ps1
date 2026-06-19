@@ -50,7 +50,7 @@ Pop-Location
 Write-Host "`n[4/5] Building local-kb-mcp.exe..." -ForegroundColor Yellow
 Push-Location $Root\apps\mcp-server
 uv sync --extra build
-.venv\Scripts\python.exe -m PyInstaller --onefile --noconsole --name local-kb-mcp --paths src build_mcp.py
+.venv\Scripts\python.exe -m PyInstaller --onefile --console --hide-console hide-early --name local-kb-mcp --paths src --copy-metadata fastmcp build_mcp.py
 $mcpExe = "$Root\apps\mcp-server\dist\local-kb-mcp.exe"
 if (-not (Test-Path $mcpExe)) {
     Write-Warning "PyInstaller MCP build failed, users can use uvx from source"

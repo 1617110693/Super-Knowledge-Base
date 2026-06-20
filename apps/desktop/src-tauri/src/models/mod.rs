@@ -34,13 +34,32 @@ pub struct Document {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "lowercase")] // Serialize as lowercase; Deserialize is case-insensitive below
 pub enum ParseStatus {
     Pending,
     Parsing,
     Done,
     Failed,
+}
+
+impl<'de> Deserialize<'de> for ParseStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_lowercase().as_str() {
+            "pending" => Ok(ParseStatus::Pending),
+            "parsing" => Ok(ParseStatus::Parsing),
+            "done" => Ok(ParseStatus::Done),
+            "failed" => Ok(ParseStatus::Failed),
+            _ => Err(serde::de::Error::unknown_variant(
+                &s,
+                &["pending", "parsing", "done", "failed"],
+            )),
+        }
+    }
 }
 
 /// Document content with parsed markdown

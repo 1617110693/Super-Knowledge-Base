@@ -7,7 +7,7 @@ datas += copy_metadata('fastmcp')
 
 a = Analysis(
     ['build_mcp.py'],
-    pathex=['src'],
+    pathex=[],
     binaries=[],
     datas=datas,
     hiddenimports=[],
@@ -39,5 +39,4 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    hide_console='hide-early',
 )

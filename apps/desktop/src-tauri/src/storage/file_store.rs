@@ -233,9 +233,25 @@ impl FileStore {
             if entry.file_type()?.is_dir() {
                 let meta_path = entry.path().join("metadata.json");
                 if meta_path.exists() {
-                    let data = std::fs::read_to_string(&meta_path)?;
-                    let doc: Document = serde_json::from_str(&data)?;
-                    documents.push(doc);
+                    match std::fs::read_to_string(&meta_path) {
+                        Ok(data) => match serde_json::from_str::<Document>(&data) {
+                            Ok(doc) => documents.push(doc),
+                            Err(e) => {
+                                eprintln!(
+                                    "[WARN] Skipping document with invalid metadata.json: {} — {}",
+                                    meta_path.display(),
+                                    e
+                                );
+                            }
+                        },
+                        Err(e) => {
+                            eprintln!(
+                                "[WARN] Skipping document with unreadable metadata.json: {} — {}",
+                                meta_path.display(),
+                                e
+                            );
+                        }
+                    }
                 }
             }
         }

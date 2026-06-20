@@ -31,8 +31,12 @@ export async function createKB(
   return invoke("create_kb", { name, description });
 }
 
-export async function renameKB(kbId: string, name: string): Promise<KnowledgeBase> {
-  return invoke("rename_kb", { kbId, name });
+export async function updateKB(
+  kbId: string,
+  name: string | null,
+  description: string | null,
+): Promise<KnowledgeBase> {
+  return invoke("update_kb", { kbId, name, description });
 }
 
 export async function copyKB(kbId: string): Promise<KnowledgeBase> {

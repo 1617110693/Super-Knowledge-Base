@@ -85,7 +85,7 @@ pub fn run() {
             settings::update_settings,
             // Knowledge base commands
             knowledge_base::create_kb,
-            knowledge_base::rename_kb,
+            knowledge_base::update_kb,
             knowledge_base::copy_kb,
             knowledge_base::delete_kb,
             knowledge_base::list_kbs,

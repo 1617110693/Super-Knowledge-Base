@@ -16,15 +16,15 @@ A local-first desktop knowledge base application designed for AI agent integrati
 - **Auto-parse + auto-index pipeline**: upload → parse → index is fully automatic
 - **Markdown & plain text** files are indexed instantly without MinerU
 - **Large PDF auto-split**: PDFs exceeding 200 pages or 200MB are automatically split into parts before parsing
-- **MinerU integration** for high-quality document parsing (requires token):
-  - 🎯 **Precise mode**: Token auth, ≤200MB, ≤200 pages, tables/formulas
-  - HTML files automatically use `MinerU-HTML` parser
+- **MinerU integration** for high-quality document parsing:
+  - 🎯 **Precise mode**: Token auth, ≤200MB, ≤200 pages, tables/formulas. Auto model selection (vlm for PDF/images, pipeline for Office docs, MinerU-HTML for HTML)
+  - ⚡ **Agent mode**: No token needed, ≤10MB, ≤20 pages, native Office parsing — primary for small files
 - **Markdown preview** with LaTeX math rendering (KaTeX)
 - **Real-time status indicators**: pending → parsing → done/failed
 
 ### 🔍 Knowledge Management
 - **Multiple knowledge bases** with independent indexes
-- **KB operations**: create, rename, copy (with LanceDB data), delete
+- **KB operations**: create, rename, edit description, copy (with LanceDB data), delete
 - **KB-level embedding model binding** — ensures index consistency; warns on mismatch
 - **One-click re-index** for individual documents or entire KB (with backup)
 - **Per-document re-index** button for model migration
@@ -39,16 +39,19 @@ A local-first desktop knowledge base application designed for AI agent integrati
 - **100% provider-agnostic** — you control the models
 
 ### 🔌 MCP Server (Model Context Protocol)
-- **5 tools** for AI agents:
+- **8 tools** for AI agents:
   - `search_knowledge_base` — Hybrid search with reranking
   - `list_knowledge_bases` — List all KBs with stats, detect orphans
   - `get_document` — Full document retrieval with optional chunk details
   - `create_knowledge_base` — Create new KB via agent
   - `delete_knowledge_base` — Delete KB and all data
-  - `rename_knowledge_base` — Rename a KB
+  - `rename_knowledge_base` — Rename a KB and update its description
+  - `add_document` — Import text content or parse local files (PDF/DOCX/PPTX/XLSX/images/HTML) via MinerU
+  - `delete_document` — Remove a document and its chunks from a KB
 - **stdio transport** — runs as a subprocess
 - **Reads `settings.json`** for API keys (no duplicate config needed)
-- **No dependency** on the desktop app — reads LanceDB directly
+- **No dependency** on the desktop app — reads/writes LanceDB directly
+- **Auto-syncs** with the desktop app's document registry (`metadata.json`, `knowledge_bases.json`)
 - Designed for **Claude Code**, works with any MCP client
 
 ### 🎨 Desktop UI
@@ -258,7 +261,9 @@ Or use **"Copy MCP Config"** to copy the JSON to clipboard. The config auto-dete
 | `get_document` | Full document text with optional chunk details |
 | `create_knowledge_base` | Create a new knowledge base |
 | `delete_knowledge_base` | Delete a KB and all its data |
-| `rename_knowledge_base` | Rename a knowledge base |
+| `rename_knowledge_base` | Rename a KB and optionally update its description |
+| `add_document` | Import text or parse files (PDF/DOCX/PPTX/XLSX/images/HTML) via MinerU |
+| `delete_document` | Delete a document and all its chunks |
 
 ---
 
@@ -318,7 +323,8 @@ All data is stored locally under `~/.local-knowledge-base/` by default (configur
 ├── settings.json              # App configuration
 ├── knowledge_bases.json       # KB metadata registry
 ├── kb_{uuid}/                 # Knowledge base
-│   └── docs/{doc-id}/         # Documents (original + parsed)
+│   └── docs/
+│       └── {doc-id}/           # Document (metadata.json + full.md)
 └── lancedb_data/              # Vector indexes
 ```
 
@@ -340,7 +346,7 @@ No. Agent mode works without a token (≤10MB, ≤20 pages). For larger files, g
 
 ### Can the MCP server run without the desktop app?
 
-Yes. The MCP server accesses LanceDB directly. Just set `KNOWLEDGE_BASE_DATA_DIR`.
+Yes. The MCP server accesses LanceDB directly. Just set `KNOWLEDGE_BASE_DATA_DIR`. It can also import documents via `add_document` with `file_path` — all MinerU formats are supported (PDF, DOCX, PPTX, XLSX, images, HTML).
 
 ---
 

@@ -7,6 +7,13 @@ Build a standalone .exe:
 import sys
 from pathlib import Path
 
+# Force UTF-8 for stdout/stderr — the MCP protocol uses JSON over stdout,
+# and PyInstaller on Windows defaults to cp936 which corrupts non-ASCII
+# characters (e.g. Chinese/Japanese/Korean text in tool responses).
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8")
+
 _base = Path(__file__).resolve().parent
 
 # Ensure the src directory AND venv site-packages are on the path

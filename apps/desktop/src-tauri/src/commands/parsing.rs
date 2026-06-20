@@ -47,14 +47,16 @@ pub async fn start_parsing(
         .map(|m| m.len())
         .unwrap_or(0);
 
-    // Choose parse mode
-    let mode = if !settings.mineru_token.is_empty() && file_size <= 200 * 1024 * 1024 {
-        ParseMode::Precise {
-            token: settings.mineru_token.clone(),
+    // Choose parse mode: Agent first for small files (fast, native Office
+    // parsers, no token needed).  Precise API only for large files or when
+    // Agent fails — the Agent API is limited to 10 MB / 20 pages.
+    let mode = if file_size <= 10 * 1024 * 1024 {
+        ParseMode::Agent {
             file_path: original_path,
         }
-    } else if file_size <= 10 * 1024 * 1024 {
-        ParseMode::Agent {
+    } else if !settings.mineru_token.is_empty() && file_size <= 200 * 1024 * 1024 {
+        ParseMode::Precise {
+            token: settings.mineru_token.clone(),
             file_path: original_path,
         }
     } else {

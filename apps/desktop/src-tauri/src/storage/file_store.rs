@@ -65,14 +65,25 @@ impl FileStore {
         Ok(kb)
     }
 
-    pub fn rename_kb(&self, kb_id: &str, new_name: String) -> CommandResult<KnowledgeBase> {
+    /// Update KB name and/or description.  Pass `None` to keep the current value.
+    pub fn update_kb(
+        &self,
+        kb_id: &str,
+        name: Option<String>,
+        description: Option<String>,
+    ) -> CommandResult<KnowledgeBase> {
         let mut registry = self.load_registry()?;
         let kb = registry
             .knowledge_bases
             .iter_mut()
             .find(|kb| kb.id == kb_id)
             .ok_or_else(|| AppError::NotFound(format!("Knowledge base not found: {}", kb_id)))?;
-        kb.name = new_name;
+        if let Some(n) = name {
+            kb.name = n;
+        }
+        if let Some(d) = description {
+            kb.description = d;
+        }
         kb.updated_at = Utc::now();
         let result = kb.clone();
         self.save_registry(&registry)?;

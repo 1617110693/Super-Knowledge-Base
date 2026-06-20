@@ -11,6 +11,9 @@ from typing import List, Optional
 
 import httpx
 import lancedb
+import pyarrow as pa
+
+from .chunker import RecursiveChunker
 
 
 class LanceDBSearcher:
@@ -271,3 +274,111 @@ class LanceDBSearcher:
     def close(self):
         self._http.close()
         self._db = None
+
+    # ── Document management ──
+
+    def _get_schema(self, embedding_dim: int) -> pa.Schema:
+        """LanceDB table schema for knowledge base chunks."""
+        return pa.schema(
+            [
+                pa.field("chunk_id", pa.string()),
+                pa.field("doc_id", pa.string()),
+                pa.field("kb_id", pa.string()),
+                pa.field("doc_name", pa.string()),
+                pa.field("content", pa.string()),
+                pa.field("chunk_index", pa.int32()),
+                pa.field("page_number", pa.int32()),
+                pa.field("chunk_strategy", pa.string()),
+                pa.field("metadata_json", pa.string()),
+                pa.field("vector", pa.list_(pa.float32(), embedding_dim)),
+            ]
+        )
+
+    def ensure_table(self, kb_id: str, embedding_dim: int) -> bool:
+        """Make sure the LanceDB table for *kb_id* exists; create if not.
+
+        Returns True if the table was newly created.
+        """
+        name = self._table_name(kb_id)
+        if name in self.db.table_names():
+            return False
+        schema = self._get_schema(embedding_dim)
+        self.db.create_table(name, schema=schema, mode="create")
+        try:
+            self.db.open_table(name).create_fts_index("content")
+        except Exception:
+            pass
+        return True
+
+    def add_document(
+        self,
+        kb_id: str,
+        doc_id: str,
+        doc_name: str,
+        content: str,
+        chunk_size: int = 512,
+        chunk_overlap: int = 50,
+    ) -> dict:
+        """Chunk, embed, and store a document in the knowledge base.
+
+        Returns a dict with doc_id, chunk_count, and status.
+        """
+        table_name = self._table_name(kb_id)
+        if table_name not in self.db.table_names():
+            return {"doc_id": doc_id, "chunk_count": 0, "status": "no_table"}
+
+        # Chunk the content
+        chunker = RecursiveChunker(chunk_size, chunk_overlap)
+        chunks = chunker.split(
+            content, metadata={"doc_id": doc_id, "doc_name": doc_name}
+        )
+
+        if not chunks:
+            return {"doc_id": doc_id, "chunk_count": 0, "status": "empty_content"}
+
+        # Embed all chunks
+        texts = [c.content for c in chunks]
+        vectors = self._embed(texts)
+
+        # Delete old chunks for this document (re-index scenario)
+        table = self.db.open_table(table_name)
+        try:
+            table.delete(f"doc_id = '{doc_id}'")
+        except Exception:
+            pass
+
+        # Insert new rows
+        rows = []
+        for chunk, vector in zip(chunks, vectors):
+            rows.append({
+                "chunk_id": f"{doc_id}-chunk-{chunk.chunk_index}",
+                "doc_id": doc_id,
+                "kb_id": kb_id,
+                "doc_name": doc_name,
+                "content": chunk.content,
+                "chunk_index": chunk.chunk_index,
+                "page_number": chunk.metadata.get("page", 0),
+                "chunk_strategy": "recursive",
+                "metadata_json": json.dumps(chunk.metadata),
+                "vector": [float(v) for v in vector],
+            })
+
+        table.add(rows)
+        return {"doc_id": doc_id, "doc_name": doc_name, "chunk_count": len(rows), "status": "indexed"}
+
+    def delete_document(self, kb_id: str, doc_id: str) -> dict:
+        """Remove all chunks for a document from the knowledge base.
+
+        Returns a dict with doc_id and status.
+        """
+        table_name = self._table_name(kb_id)
+        if table_name not in self.db.table_names():
+            return {"doc_id": doc_id, "status": "no_table"}
+
+        table = self.db.open_table(table_name)
+        try:
+            table.delete(f"doc_id = '{doc_id}'")
+        except Exception:
+            return {"doc_id": doc_id, "status": "delete_failed"}
+
+        return {"doc_id": doc_id, "status": "deleted"}

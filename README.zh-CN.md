@@ -16,15 +16,15 @@
 - **自动解析 + 自动索引**：上传 → 解析 → 索引全自动
 - **Markdown / 纯文本** 文件无需 MinerU，即时索引
 - **超大 PDF 自动分割**：超过 200 页或 200MB 的 PDF 自动切分为多个部分后解析
-- **MinerU 集成**，高质量文档解析（需 token）：
-  - 🎯 精准模式：Token 认证，≤200MB，≤200 页，支持表格/公式
-  - HTML 文件自动使用 `MinerU-HTML` 解析器
+- **MinerU 集成**，高质量文档解析：
+  - 🎯 精准模式：Token 认证，≤200MB，≤200 页，支持表格/公式。自动选择模型（PDF/图片→vlm，Office→pipeline，HTML→MinerU-HTML）
+  - ⚡ Agent 模式：无需 token，≤10MB，≤20 页，原生 Office 解析 — 小文件首选
 - **Markdown 预览**，支持 LaTeX 数学公式渲染（KaTeX）
 - **实时状态指示**：等待中 → 解析中 → 已完成/失败
 
 ### 🔍 知识管理
 - **多知识库**，独立索引
-- **KB 操作**：创建、重命名、拷贝（含向量数据）、删除
+- **KB 操作**：创建、重命名、编辑描述、拷贝（含向量数据）、删除
 - **KB 级 embedding 模型绑定** — 保证索引一致性，模型不匹配时告警
 - **一键重新索引**（单文档 / 全库），自动备份原有数据
 - **智能分块**策略：递归分块（推荐）、语义分块、定长分块
@@ -38,16 +38,19 @@
 - **100% 厂商无关** — 模型由你掌控
 
 ### 🔌 MCP 服务器
-- **6 个工具**供 AI Agent 调用：
+- **8 个工具**供 AI Agent 调用：
   - `search_knowledge_base` — 混合搜索 + 重排序
   - `list_knowledge_bases` — 列出所有 KB 及统计，检测孤立数据
   - `get_document` — 全文检索，可选分块详情
   - `create_knowledge_base` — 创建新 KB
   - `delete_knowledge_base` — 删除 KB 及数据
-  - `rename_knowledge_base` — 重命名 KB
+  - `rename_knowledge_base` — 重命名 KB 并可选更新描述
+  - `add_document` — 导入文本内容或解析本地文件（PDF/DOCX/PPTX/XLSX/图片/HTML）
+  - `delete_document` — 删除文档及其所有块
 - **stdio 传输** — 作为子进程运行
 - **从 `settings.json` 读取 API 密钥** — 无需重复配置
-- **不依赖桌面应用** — 直接读取 LanceDB
+- **不依赖桌面应用** — 直接读写 LanceDB
+- **自动同步**桌面应用的文档注册表（`metadata.json`、`knowledge_bases.json`）
 - 专为 **Claude Code** 设计，兼容任何 MCP 客户端
 
 ### 🎨 桌面界面
@@ -253,7 +256,9 @@ MCP 服务器让 AI Agent（尤其是 **Claude Code**）能够搜索和查询你
 | `get_document` | 获取文档全文，可选分块详情 |
 | `create_knowledge_base` | 创建新知识库 |
 | `delete_knowledge_base` | 删除知识库及全部数据 |
-| `rename_knowledge_base` | 重命名知识库 |
+| `rename_knowledge_base` | 重命名 KB 并可选更新描述 |
+| `add_document` | 导入文本或解析文件（PDF/DOCX/PPTX/XLSX/图片/HTML） |
+| `delete_document` | 删除文档及其所有块 |
 
 ---
 
@@ -308,7 +313,8 @@ npx tsc --noEmit --project apps/desktop/tsconfig.json
 ├── settings.json              # 应用配置
 ├── knowledge_bases.json       # KB 元数据注册表
 ├── kb_{uuid}/                 # 知识库
-│   └── docs/{doc-id}/         # 文档（原始 + 解析后）
+│   └── docs/
+│       └── {doc_id}/           # 文档（metadata.json + full.md）
 └── lancedb_data/              # 向量索引
 ```
 
@@ -330,7 +336,7 @@ npx tsc --noEmit --project apps/desktop/tsconfig.json
 
 ### MCP 服务器可以不启动桌面应用独立运行吗？
 
-可以。MCP 服务器直接读取 LanceDB，只需设置 `KNOWLEDGE_BASE_DATA_DIR` 环境变量。
+可以。MCP 服务器直接读写 LanceDB，只需设置 `KNOWLEDGE_BASE_DATA_DIR` 环境变量。也可通过 `add_document` + `file_path` 直接导入文档——支持所有 MinerU 格式（PDF/DOCX/PPTX/XLSX/图片/HTML）。
 
 ---
 

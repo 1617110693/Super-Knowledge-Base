@@ -45,3 +45,6 @@ Thumbs.db
 
 # App data (generated at runtime)
 app_data/
+
+
+.codegraph/

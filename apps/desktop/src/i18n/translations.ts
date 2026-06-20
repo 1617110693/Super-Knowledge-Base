@@ -65,6 +65,8 @@ export const translations = {
   "docs.embeddingModel": { en: "Embedding: {model}", "zh-CN": "嵌入模型: {model}" },
   "docs.uploadFilter": { en: "Documents", "zh-CN": "文档文件" },
   "kb.rename": { en: "Rename", "zh-CN": "重命名" },
+  "kb.addDescription": { en: "Add description...", "zh-CN": "添加描述..." },
+  "kb.editDescription": { en: "Edit description", "zh-CN": "编辑描述" },
   "kb.copy": { en: "Copy KB", "zh-CN": "拷贝知识库" },
   "kb.embeddingMismatch": { en: "Embedding mismatch: this KB uses \"{kbModel}\" (dim {kbDim}), current settings use \"{settingsModel}\". Change settings or Re-index All.", "zh-CN": "Embedding 不匹配：此知识库使用 \"{kbModel}\" (维度 {kbDim})，当前设置为 \"{settingsModel}\"。请修改设置或一键重新索引。" },
 

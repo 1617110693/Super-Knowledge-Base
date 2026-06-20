@@ -23,7 +23,7 @@ export function KBSettings() {
   const { kbId } = useParams<{ kbId: string }>();
   const navigate = useNavigate();
   const { t } = useI18n();
-  const { knowledgeBases, documents, loadKBs, loadDocuments, uploadDocument, deleteDocument, refreshDocument, setActiveKB, renameKB, copyKB, reindexDocument, reindexAll, indexingIds } = useKBStore();
+  const { knowledgeBases, documents, loadKBs, loadDocuments, uploadDocument, deleteDocument, refreshDocument, setActiveKB, updateKB, copyKB, reindexDocument, reindexAll, indexingIds } = useKBStore();
   const [dragOver, setDragOver] = useState(false);
   const uploadingRef = useRef(false);
   const [indexing, setIndexing] = useState<Record<string, boolean>>({});
@@ -96,7 +96,9 @@ export function KBSettings() {
     return () => clearInterval(interval);
   }, [documents, kbId, refreshDocument]);
 
-  // ── Rename handlers ──
+  // ── Edit KB name / description ──
+  const [editingDesc, setEditingDesc] = useState(false);
+  const [descDraft, setDescDraft] = useState("");
 
   const startRename = () => {
     if (kb) {
@@ -107,9 +109,24 @@ export function KBSettings() {
 
   const commitRename = async () => {
     if (kbId && nameDraft.trim() && nameDraft.trim() !== kb?.name) {
-      await renameKB(kbId, nameDraft.trim());
+      await updateKB(kbId, nameDraft.trim(), null);
     }
     setEditingName(false);
+  };
+
+  const startEditDesc = () => {
+    if (kb) {
+      setDescDraft(kb.description || "");
+      setEditingDesc(true);
+    }
+  };
+
+  const commitDesc = async () => {
+    const newDesc = descDraft.trim();
+    if (kbId && newDesc !== (kb?.description || "")) {
+      await updateKB(kbId, null, newDesc || null);
+    }
+    setEditingDesc(false);
   };
 
   // ── Upload ──
@@ -217,7 +234,29 @@ export function KBSettings() {
                 </button>
               </h2>
             )}
-            {kb.description && <p className="text-muted-foreground text-sm truncate">{kb.description}</p>}
+            {editingDesc ? (
+              <div className="flex items-center gap-2 mt-1">
+                <input
+                  autoFocus
+                  value={descDraft}
+                  onChange={(e) => setDescDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitDesc(); if (e.key === "Escape") setEditingDesc(false); }}
+                  onBlur={commitDesc}
+                  placeholder={t("kb.description")}
+                  className="text-sm bg-background border rounded-lg px-2 py-1 w-full max-w-md outline-none ring-1 ring-primary"
+                />
+                <button onClick={commitDesc} className="p-1 hover:bg-green-50 rounded-md text-green-600 shrink-0" title={t("kb.rename")}>
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-sm truncate flex items-center gap-1">
+                {kb.description || <span className="text-muted-foreground/40 italic">{t("kb.addDescription")}</span>}
+                <button onClick={startEditDesc} className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground" title={t("kb.editDescription")}>
+                  <Pencil className="w-3 h-3" />
+                </button>
+              </p>
+            )}
             {kb.embedding_model && (
               <p className="text-xs text-muted-foreground mt-0.5">
                 <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium">{kb.embedding_model}</span>

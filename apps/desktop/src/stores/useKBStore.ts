@@ -13,7 +13,7 @@ interface KBState {
   loadKBs: () => Promise<void>;
   loadDocuments: (kbId: string) => Promise<void>;
   createKB: (name: string, description: string) => Promise<void>;
-  renameKB: (kbId: string, name: string) => Promise<void>;
+  updateKB: (kbId: string, name: string | null, description: string | null) => Promise<void>;
   copyKB: (kbId: string) => Promise<void>;
   deleteKB: (kbId: string) => Promise<void>;
   setActiveKB: (kb: KnowledgeBase | null) => void;
@@ -43,7 +43,9 @@ export const useKBStore = create<KBState>((set, get) => ({
   },
 
   loadDocuments: async (kbId: string) => {
-    set({ loading: true, error: null });
+    // Clear old documents immediately so we never show stale data
+    // from a previously selected KB on error.
+    set({ loading: true, error: null, documents: [] });
     try {
       const docs = await tauriBridge.listDocuments(kbId);
       set({ documents: docs, loading: false });
@@ -57,11 +59,11 @@ export const useKBStore = create<KBState>((set, get) => ({
     set((s) => ({ knowledgeBases: [...s.knowledgeBases, kb] }));
   },
 
-  renameKB: async (kbId: string, name: string) => {
-    const kb = await tauriBridge.renameKB(kbId, name);
+  updateKB: async (kbId: string, name: string | null, description: string | null) => {
+    const updated = await tauriBridge.updateKB(kbId, name, description);
     set((s) => ({
-      knowledgeBases: s.knowledgeBases.map((k) => (k.id === kbId ? { ...k, ...kb } : k)),
-      activeKB: s.activeKB?.id === kbId ? { ...s.activeKB, name } : s.activeKB,
+      knowledgeBases: s.knowledgeBases.map((k) => (k.id === kbId ? { ...k, ...updated } : k)),
+      activeKB: s.activeKB?.id === kbId ? { ...s.activeKB, ...updated } : s.activeKB,
     }));
   },
 

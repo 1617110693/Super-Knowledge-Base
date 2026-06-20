@@ -13,12 +13,13 @@ pub async fn create_kb(
 }
 
 #[tauri::command]
-pub async fn rename_kb(
+pub async fn update_kb(
     state: State<'_, AppState>,
     kb_id: String,
-    name: String,
+    name: Option<String>,
+    description: Option<String>,
 ) -> CommandResult<KnowledgeBase> {
-    state.file_store.rename_kb(&kb_id, name)
+    state.file_store.update_kb(&kb_id, name, description)
 }
 
 #[tauri::command]

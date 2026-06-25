@@ -18,13 +18,18 @@ export async function pythonFetch<T>(
 ): Promise<T> {
   const base = await getBaseUrl();
   const url = `${base}/api/v1${path}`;
-  const resp = await fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+  } catch (e) {
+    throw new Error(`Cannot reach backend at ${url}. Is the backend running? (${e})`);
+  }
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(`Python backend error (${resp.status}): ${text}`);

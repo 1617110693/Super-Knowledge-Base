@@ -72,7 +72,7 @@ pub async fn upload_document(
         let port = *state.python_port.lock().unwrap();
         let client = reqwest::Client::new();
         let split_url = format!("http://127.0.0.1:{}/api/v1/utils/split-pdf", port);
-        if let Ok(resp) = client
+        match client
             .post(&split_url)
             .json(&serde_json::json!({
                 "file_path": dest_path.to_string_lossy(),
@@ -83,39 +83,47 @@ pub async fn upload_document(
             .send()
             .await
         {
-            if let Ok(result) = resp.json::<serde_json::Value>().await {
-                if result["split"].as_bool().unwrap_or(false) {
-                    if let Some(part_paths) = result["parts"].as_array() {
-                        // Replace main doc's file with part1 (first split part)
-                        if let Some(first_part) = part_paths.first().and_then(|v| v.as_str()) {
-                            let _ = std::fs::copy(first_part, &dest_path);
-                        }
-                        // Derive part names from original filename
-                        let name_stem = Path::new(&file_name)
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or(&file_name);
-                        // Create additional part docs for parts[1..]
-                        for (i, part_path) in part_paths.iter().skip(1).enumerate() {
-                            if let Some(p) = part_path.as_str() {
-                                let part_num = i + 2; // parts[1] is part2
-                                let part_name = format!("{}_part{}.pdf", name_stem, part_num);
-                                let part_size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
-                                if let Ok(part_doc) = state.file_store.add_document(
-                                    &kb_id, part_name, "pdf".to_string(), part_size,
-                                ) {
-                                    let part_dest = state
-                                        .file_store
-                                        .get_doc_dir(&kb_id, &part_doc.id)
-                                        .join("original.pdf");
-                                    if std::fs::copy(p, &part_dest).is_ok() {
-                                        parts.push(part_doc);
+            Ok(resp) => {
+                match resp.json::<serde_json::Value>().await {
+                    Ok(result) => {
+                        if result["split"].as_bool().unwrap_or(false) {
+                            if let Some(part_paths) = result["parts"].as_array() {
+                                // Replace main doc's file with part1 (first split part)
+                                if let Some(first_part) = part_paths.first().and_then(|v| v.as_str()) {
+                                    let _ = std::fs::copy(first_part, &dest_path);
+                                }
+                                let name_stem = Path::new(&file_name)
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or(&file_name);
+                                for (i, part_path) in part_paths.iter().skip(1).enumerate() {
+                                    if let Some(p) = part_path.as_str() {
+                                        let part_num = i + 2;
+                                        let part_name = format!("{}_part{}.pdf", name_stem, part_num);
+                                        let part_size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+                                        if let Ok(part_doc) = state.file_store.add_document(
+                                            &kb_id, part_name, "pdf".to_string(), part_size,
+                                        ) {
+                                            let part_dest = state
+                                                .file_store
+                                                .get_doc_dir(&kb_id, &part_doc.id)
+                                                .join("original.pdf");
+                                            if std::fs::copy(p, &part_dest).is_ok() {
+                                                parts.push(part_doc);
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                    Err(e) => {
+                        eprintln!("[upload] Failed to parse split-pdf response: {}", e);
+                    }
                 }
+            }
+            Err(e) => {
+                eprintln!("[upload] Cannot reach split-pdf at {}: {}", split_url, e);
             }
         }
     }

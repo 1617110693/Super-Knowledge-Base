@@ -23,12 +23,14 @@ export interface Document {
   parse_error?: string;
   chunk_count: number;
   embedding_model: string;
+  path?: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface DocumentContent {
   id: string;
+  name: string;
   markdown: string;
   metadata: Record<string, unknown>;
 }
@@ -61,6 +63,7 @@ export interface ChatMessage {
 export interface SearchResult {
   chunk_id: string;
   doc_id: string;
+  kb_id: string;
   doc_name: string;
   content: string;
   score: number;
@@ -80,6 +83,14 @@ export interface SearchRequest {
   filters?: {
     doc_id?: string;
   };
+}
+
+export interface SearchAllRequest {
+  kb_ids?: string[];
+  query: string;
+  search_type: "hybrid" | "vector" | "fts";
+  top_k: number;
+  rerank: boolean;
 }
 
 export interface AppSettings {

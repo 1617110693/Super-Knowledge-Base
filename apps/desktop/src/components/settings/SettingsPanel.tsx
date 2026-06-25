@@ -10,7 +10,7 @@ import { ConfirmDialog } from "../common/ConfirmDialog";
 
 export function SettingsPanel() {
   const { t } = useI18n();
-  const { settings, loadSettings, saveSettings, pythonRunning, startPython } = useSettingsStore();
+  const { settings, loadSettings, saveSettings, pythonRunning, startPython, restartPython } = useSettingsStore();
   const [form, setForm] = useState<AppSettings>(settings);
   const [saved, setSaved] = useState(false);
   const [claudeStatus, setClaudeStatus] = useState<{ success: boolean; message: string } | null>(null);
@@ -322,7 +322,11 @@ export function SettingsPanel() {
         <div className="flex items-center gap-3 mb-4">
           <span className={`w-2 h-2 rounded-full ${pythonRunning ? "bg-green-500" : "bg-red-500"}`} />
           <span className="text-sm">{pythonRunning ? t("settings.running") : t("settings.stopped")}</span>
-          {!pythonRunning && (
+          {pythonRunning ? (
+            <button onClick={restartPython} className="px-3 py-1 border rounded text-xs hover:bg-muted transition-colors">
+              {t("settings.restartBackend")}
+            </button>
+          ) : (
             <button onClick={startPython} className="px-3 py-1 bg-primary text-primary-foreground rounded text-xs">
               {t("settings.startBackend")}
             </button>

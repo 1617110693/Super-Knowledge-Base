@@ -2,9 +2,10 @@ import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useKBStore, type SortMode } from "../../stores/useKBStore";
 import { useI18n } from "../../i18n";
-import { Plus, Trash2, FolderOpen, BookOpen, FileText, Layers, Pin, PinOff, Grid3X3, AlignJustify, LayoutGrid, RefreshCw, Search, X } from "lucide-react";
+import { Plus, Trash2, FolderOpen, BookOpen, FileText, Layers, Pin, PinOff, Grid3X3, AlignJustify, LayoutGrid, RefreshCw, Search } from "lucide-react";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import type { KnowledgeBase } from "../../types";
+import { GlobalSearchDialog } from "../search/GlobalSearchDialog";
 
 function useSortOptions() {
   const { t } = useI18n();
@@ -25,16 +26,11 @@ export function KBDashboard() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
 
   useEffect(() => { loadKBs(); }, []);
 
-  const sortedKBs = useMemo(() => {
-    const sorted = getSortedKBs();
-    if (!searchQuery.trim()) return sorted;
-    const q = searchQuery.toLowerCase();
-    return sorted.filter(kb => kb.name.toLowerCase().includes(q));
-  }, [knowledgeBases, sortMode, searchQuery]);
+  const sortedKBs = useMemo(() => getSortedKBs(), [knowledgeBases, sortMode]);
   const sortOptions = useSortOptions();
 
   const handleCreate = async () => {
@@ -184,21 +180,6 @@ export function KBDashboard() {
 
       {knowledgeBases.length > 0 && (
         <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <div className="flex items-center gap-1.5 border rounded-md px-2 py-1.5 bg-card text-muted-foreground text-xs sm:w-auto sm:min-w-[180px]">
-            <Search className="w-3 h-3 shrink-0" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Filter by name..."
-              className="bg-transparent outline-none flex-1 min-w-0"
-            />
-            {searchQuery && (
-              <button onClick={() => setSearchQuery("")} className="text-muted-foreground/40 hover:text-muted-foreground shrink-0">
-                <X className="w-3 h-3" />
-              </button>
-            )}
-          </div>
           <div className="flex items-center border rounded-md overflow-hidden">
             <button onClick={() => setViewMode("card")}
               className={`p-1.5 transition-colors ${viewMode === "card" ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}
@@ -225,6 +206,13 @@ export function KBDashboard() {
           <span className="text-xs text-muted-foreground ml-auto">
             {t("nav.knowledgeBaseCount").replace("{count}", String(sortedKBs.length))}
           </span>
+          <button
+            onClick={() => setGlobalSearchOpen(true)}
+            className="p-1.5 border rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            title={t("search.searchAllTitle")}
+          >
+            <Search className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 
@@ -232,7 +220,7 @@ export function KBDashboard() {
         <div className="text-center py-16">
           <BookOpen className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
           <p className="text-muted-foreground text-lg">
-            {searchQuery ? "No knowledge bases match your filter" : t("kb.empty")}
+            {t("kb.empty")}
           </p>
           <p className="text-muted-foreground text-sm mt-1">{t("kb.emptyHint")}</p>
         </div>
@@ -259,6 +247,8 @@ export function KBDashboard() {
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      <GlobalSearchDialog open={globalSearchOpen} onClose={() => setGlobalSearchOpen(false)} />
     </div>
   );
 }

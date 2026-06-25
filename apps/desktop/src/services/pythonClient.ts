@@ -1,7 +1,7 @@
 /**
  * Python backend HTTP client — communicates with the FastAPI service.
  */
-import type { SearchRequest, SearchResult, ChatRequest, ChatMessage } from "../types";
+import type { SearchRequest, SearchAllRequest, SearchResult, ChatRequest, ChatMessage } from "../types";
 
 let _baseUrl: string | null = null;
 
@@ -38,6 +38,15 @@ export async function search(
   req: SearchRequest
 ): Promise<{ results: SearchResult[]; total: number; search_time_ms: number }> {
   return pythonFetch("/search", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export async function searchAll(
+  req: SearchAllRequest
+): Promise<{ results: SearchResult[]; total: number; search_time_ms: number }> {
+  return pythonFetch("/search-all", {
     method: "POST",
     body: JSON.stringify(req),
   });

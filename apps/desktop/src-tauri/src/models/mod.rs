@@ -32,6 +32,9 @@ pub struct Document {
     pub chunk_count: u32,
     #[serde(default)]
     pub embedding_model: String,
+    /// Optional path for folder hierarchy (e.g., "数学" or "数学/线性代数")
+    #[serde(default, alias = "folder")]
+    pub path: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -68,6 +71,7 @@ impl<'de> Deserialize<'de> for ParseStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentContent {
     pub id: String,
+    pub name: String,
     pub markdown: String,
     pub metadata: serde_json::Value,
 }

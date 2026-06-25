@@ -86,13 +86,20 @@ pub async fn upload_document(
             if let Ok(result) = resp.json::<serde_json::Value>().await {
                 if result["split"].as_bool().unwrap_or(false) {
                     if let Some(part_paths) = result["parts"].as_array() {
-                        for part_path in part_paths.iter().skip(1) {
+                        // Replace main doc's file with part1 (first split part)
+                        if let Some(first_part) = part_paths.first().and_then(|v| v.as_str()) {
+                            let _ = std::fs::copy(first_part, &dest_path);
+                        }
+                        // Derive part names from original filename
+                        let name_stem = Path::new(&file_name)
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(&file_name);
+                        // Create additional part docs for parts[1..]
+                        for (i, part_path) in part_paths.iter().skip(1).enumerate() {
                             if let Some(p) = part_path.as_str() {
-                                let part_name = Path::new(p)
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("part.pdf")
-                                    .to_string();
+                                let part_num = i + 2; // parts[1] is part2
+                                let part_name = format!("{}_part{}.pdf", name_stem, part_num);
                                 let part_size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
                                 if let Ok(part_doc) = state.file_store.add_document(
                                     &kb_id, part_name, "pdf".to_string(), part_size,
@@ -137,6 +144,56 @@ pub async fn delete_document(
         .await;
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn rename_document(
+    state: State<'_, AppState>,
+    kb_id: String,
+    doc_id: String,
+    new_name: String,
+) -> CommandResult<Document> {
+    if new_name.trim().is_empty() {
+        return Err(AppError::InvalidInput("Document name cannot be empty".to_string()));
+    }
+    state.file_store.rename_document(&kb_id, &doc_id, new_name.trim())
+}
+
+#[tauri::command]
+pub async fn set_document_path(
+    state: State<'_, AppState>,
+    kb_id: String,
+    doc_id: String,
+    path: Option<String>,
+) -> CommandResult<Document> {
+    state.file_store.set_document_path(&kb_id, &doc_id, path.as_deref())
+}
+
+#[tauri::command]
+pub async fn list_paths(
+    state: State<'_, AppState>,
+    kb_id: String,
+) -> CommandResult<Vec<String>> {
+    state.file_store.list_paths(&kb_id)
+}
+
+#[tauri::command]
+pub async fn delete_path(
+    state: State<'_, AppState>,
+    kb_id: String,
+    path: String,
+) -> CommandResult<u32> {
+    state.file_store.delete_path(&kb_id, &path)
+}
+
+#[tauri::command]
+pub async fn rename_path(
+    state: State<'_, AppState>,
+    kb_id: String,
+    old_path: String,
+    new_path: String,
+) -> CommandResult<u32> {
+    state.file_store.rename_path(&kb_id, &old_path, &new_path)
 }
 
 #[tauri::command]
@@ -228,4 +285,15 @@ pub async fn save_document_chunks(
     state.file_store.update_kb_embedding(&kb_id, &embedding_model, embedding_dim)?;
     let doc = state.file_store.update_document_chunks(&kb_id, &doc_id, chunk_count, embedding_model)?;
     Ok(doc)
+}
+
+#[tauri::command]
+pub async fn save_document_content(
+    state: State<'_, AppState>,
+    kb_id: String,
+    doc_id: String,
+    content: String,
+) -> CommandResult<()> {
+    state.file_store.save_parsed_markdown(&kb_id, &doc_id, &content)?;
+    Ok(())
 }

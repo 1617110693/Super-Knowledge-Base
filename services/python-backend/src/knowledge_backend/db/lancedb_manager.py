@@ -186,6 +186,7 @@ class LanceDBManager:
                 {
                     "chunk_id": r.get("chunk_id", ""),
                     "doc_id": r.get("doc_id", ""),
+                    "kb_id": r.get("kb_id", ""),
                     "doc_name": r.get("doc_name", ""),
                     "content": r.get("content", ""),
                     "score": score,

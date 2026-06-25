@@ -419,6 +419,7 @@ impl FileStore {
             parse_error: None,
             chunk_count: 0,
             embedding_model: String::new(),
+            path: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -443,6 +444,93 @@ impl FileStore {
         }
         self.update_kb_after_doc_change(kb_id, -1, 0)?;
         Ok(())
+    }
+
+    pub fn rename_document(&self, kb_id: &str, doc_id: &str, new_name: &str) -> CommandResult<Document> {
+        let mut doc = self.get_document(kb_id, doc_id)?;
+        doc.name = new_name.to_string();
+        doc.updated_at = Utc::now();
+        self.save_document_meta(&doc)?;
+        Ok(doc)
+    }
+
+    pub fn set_document_path(&self, kb_id: &str, doc_id: &str, path: Option<&str>) -> CommandResult<Document> {
+        let mut doc = self.get_document(kb_id, doc_id)?;
+        doc.path = path.map(|f| f.to_string());
+        doc.updated_at = Utc::now();
+        self.save_document_meta(&doc)?;
+        Ok(doc)
+    }
+
+    /// Build a folder tree from all document paths. Returns sorted list of unique paths.
+    /// Paths like "数学", "数学/线性代数" represent nested folders.
+    pub fn list_paths(&self, kb_id: &str) -> CommandResult<Vec<String>> {
+        let docs = self.list_documents(kb_id)?;
+        let mut paths: Vec<String> = docs
+            .iter()
+            .filter_map(|d| d.path.clone())
+            .flat_map(|p| {
+                // For path "a/b/c", also include "a" and "a/b" as folder entries
+                let mut parts: Vec<String> = Vec::new();
+                for segment in p.split('/') {
+                    if !segment.is_empty() {
+                        parts.push(segment.to_string());
+                        // this will be collected below
+                    }
+                }
+                let mut all: Vec<String> = Vec::new();
+                for i in 1..=parts.len() {
+                    all.push(parts[..i].join("/"));
+                }
+                all
+            })
+            .collect();
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+
+    pub fn delete_path(&self, kb_id: &str, path: &str) -> CommandResult<u32> {
+        let docs = self.list_documents(kb_id)?;
+        let prefix = format!("{}/", path);
+        let mut count = 0u32;
+        for doc in docs {
+            let matches = doc.path.as_deref() == Some(path)
+                || doc.path.as_deref().map_or(false, |p| p.starts_with(&prefix));
+            if matches {
+                let mut d = doc;
+                d.path = None;
+                d.updated_at = Utc::now();
+                self.save_document_meta(&d)?;
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    pub fn rename_path(&self, kb_id: &str, old_path: &str, new_path: &str) -> CommandResult<u32> {
+        let docs = self.list_documents(kb_id)?;
+        let prefix = format!("{}/", old_path);
+        let mut count = 0u32;
+        for doc in docs {
+            if doc.path.as_deref() == Some(old_path) {
+                let mut d = doc;
+                d.path = Some(new_path.to_string());
+                d.updated_at = Utc::now();
+                self.save_document_meta(&d)?;
+                count += 1;
+            } else if let Some(ref p) = doc.path {
+                if p.starts_with(&prefix) {
+                    let rest = p[prefix.len()..].to_string();
+                    let mut d = doc;
+                    d.path = Some(format!("{}/{}", new_path, rest));
+                    d.updated_at = Utc::now();
+                    self.save_document_meta(&d)?;
+                    count += 1;
+                }
+            }
+        }
+        Ok(count)
     }
 
     pub fn list_documents(&self, kb_id: &str) -> CommandResult<Vec<Document>> {
@@ -513,8 +601,32 @@ impl FileStore {
             serde_json::json!({})
         };
 
+        // Try to read document metadata to get the name
+        let doc_meta_path = doc_dir.join("metadata.json");
+        let name = if doc_meta_path.exists() {
+            let data = std::fs::read_to_string(&doc_meta_path).unwrap_or_default();
+            let doc: Document = serde_json::from_str(&data).unwrap_or_else(|_| Document {
+                id: doc_id.to_string(),
+                kb_id: "".to_string(),
+                name: doc_id.to_string(),
+                file_type: "".to_string(),
+                file_size: 0,
+                parse_status: crate::models::ParseStatus::Done,
+                parse_error: None,
+                chunk_count: 0,
+                embedding_model: "".to_string(),
+                path: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            });
+            doc.name
+        } else {
+            doc_id.to_string()
+        };
+
         Ok(crate::models::DocumentContent {
             id: doc_id.to_string(),
+            name,
             markdown,
             metadata,
         })

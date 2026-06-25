@@ -39,32 +39,35 @@ pub async fn get_mcp_config_json(
     state: State<'_, AppState>,
 ) -> CommandResult<String> {
     let data_dir = state.file_store.root_dir().to_string_lossy().to_string();
+    let is_dev = std::env::var("CARGO_MANIFEST_DIR").is_ok();
 
-    // Production: check for bundled sidecar
-    if let Ok(current) = std::env::current_exe() {
-        if let Some(dir) = current.parent() {
-            for name in &[
-                "local-kb-mcp.exe",
-                "local-kb-mcp",
-                "local-kb-mcp-x86_64-pc-windows-msvc.exe",
-                "local-kb-mcp-aarch64-apple-darwin",
-                "local-kb-mcp-x86_64-unknown-linux-gnu",
-            ] {
-                let sidecar = dir.join(name);
-                if sidecar.exists() {
-                    if let Ok(meta) = std::fs::metadata(&sidecar) {
-                        if meta.len() > 1024 {
-                            let config = serde_json::json!({
-                                "mcpServers": {
-                                    "local-knowledge-base": {
-                                        "command": sidecar.to_string_lossy(),
-                                        "env": {
-                                            "KNOWLEDGE_BASE_DATA_DIR": &data_dir,
+    // Production: check for bundled sidecar (only if not in dev mode)
+    if !is_dev {
+        if let Ok(current) = std::env::current_exe() {
+            if let Some(dir) = current.parent() {
+                for name in &[
+                    "local-kb-mcp.exe",
+                    "local-kb-mcp",
+                    "local-kb-mcp-x86_64-pc-windows-msvc.exe",
+                    "local-kb-mcp-aarch64-apple-darwin",
+                    "local-kb-mcp-x86_64-unknown-linux-gnu",
+                ] {
+                    let sidecar = dir.join(name);
+                    if sidecar.exists() {
+                        if let Ok(meta) = std::fs::metadata(&sidecar) {
+                            if meta.len() > 1024 {
+                                let config = serde_json::json!({
+                                    "mcpServers": {
+                                        "local-knowledge-base": {
+                                            "command": sidecar.to_string_lossy(),
+                                            "env": {
+                                                "KNOWLEDGE_BASE_DATA_DIR": &data_dir,
+                                            }
                                         }
                                     }
-                                }
-                            });
-                            return Ok(serde_json::to_string_pretty(&config).unwrap_or_default());
+                                });
+                                return Ok(serde_json::to_string_pretty(&config).unwrap_or_default());
+                            }
                         }
                     }
                 }
@@ -97,27 +100,30 @@ pub async fn configure_claude_mcp(
     let data_dir = state.file_store.root_dir().to_string_lossy().to_string();
 
     // Try to find the MCP server sidecar/script
+    let is_dev = std::env::var("CARGO_MANIFEST_DIR").is_ok();
     let (command, args): (String, Vec<String>) = {
         // Production: check for bundled sidecar next to the exe
-        if let Ok(current) = std::env::current_exe() {
-            if let Some(dir) = current.parent() {
-                for name in &[
-                    "local-kb-mcp.exe",
-                    "local-kb-mcp",
-                    "local-kb-mcp-x86_64-pc-windows-msvc.exe",
-                    "local-kb-mcp-aarch64-apple-darwin",
-                    "local-kb-mcp-x86_64-unknown-linux-gnu",
-                ] {
-                    let sidecar = dir.join(name);
-                    if sidecar.exists() {
-                        if let Ok(meta) = std::fs::metadata(&sidecar) {
-                            if meta.len() > 1024 {
-                                return build_config(
-                                    &sidecar.to_string_lossy(),
-                                    &[],
-                                    &data_dir,
-                                    &settings,
-                                );
+        if !is_dev {
+            if let Ok(current) = std::env::current_exe() {
+                if let Some(dir) = current.parent() {
+                    for name in &[
+                        "local-kb-mcp.exe",
+                        "local-kb-mcp",
+                        "local-kb-mcp-x86_64-pc-windows-msvc.exe",
+                        "local-kb-mcp-aarch64-apple-darwin",
+                        "local-kb-mcp-x86_64-unknown-linux-gnu",
+                    ] {
+                        let sidecar = dir.join(name);
+                        if sidecar.exists() {
+                            if let Ok(meta) = std::fs::metadata(&sidecar) {
+                                if meta.len() > 1024 {
+                                    return build_config(
+                                        &sidecar.to_string_lossy(),
+                                        &[],
+                                        &data_dir,
+                                        &settings,
+                                    );
+                                }
                             }
                         }
                     }
@@ -125,7 +131,7 @@ pub async fn configure_claude_mcp(
             }
         }
 
-        // Dev mode: use `uv run` from the MCP server source tree
+        // Dev mode: use `uv run` from the backend source tree
         let mcp_dir = resolve_mcp_source_dir();
         ("uv".to_string(), vec![
             "run".to_string(),
@@ -139,17 +145,18 @@ pub async fn configure_claude_mcp(
 }
 
 fn resolve_mcp_source_dir() -> PathBuf {
+    // MCP server is now part of the Python backend
     if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
         PathBuf::from(&manifest)
             .join("..").join("..").join("..")
-            .join("apps").join("mcp-server")
+            .join("services").join("python-backend")
     } else if let Ok(exe) = std::env::current_exe() {
         exe.parent().unwrap_or(std::path::Path::new("."))
             .parent().unwrap_or(std::path::Path::new("."))
             .parent().unwrap_or(std::path::Path::new("."))
-            .join("apps").join("mcp-server")
+            .join("services").join("python-backend")
     } else {
-        PathBuf::from("apps/mcp-server")
+        PathBuf::from("services/python-backend")
     }
 }
 

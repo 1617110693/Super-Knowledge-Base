@@ -91,6 +91,34 @@ export async function deleteDocument(
   return invoke("delete_document", { kbId, docId });
 }
 
+export async function renameDocument(
+  kbId: string,
+  docId: string,
+  newName: string
+): Promise<Document> {
+  return invoke("rename_document", { kbId, docId, newName });
+}
+
+export async function setDocumentPath(
+  kbId: string, docId: string, path: string | null
+): Promise<Document> {
+  return invoke("set_document_path", { kbId, docId, path });
+}
+
+export async function listPaths(kbId: string): Promise<string[]> {
+  return invoke("list_paths", { kbId });
+}
+
+export async function deletePath(kbId: string, path: string): Promise<number> {
+  return invoke("delete_path", { kbId, path });
+}
+
+export async function renamePath(
+  kbId: string, oldPath: string, newPath: string
+): Promise<number> {
+  return invoke("rename_path", { kbId, oldPath, newPath });
+}
+
 export async function listDocuments(kbId: string): Promise<Document[]> {
   return invoke("list_documents", { kbId });
 }
@@ -114,6 +142,14 @@ export async function saveDocumentChunks(
   embeddingDim: number,
 ): Promise<Document> {
   return invoke("save_document_chunks", { kbId, docId, chunkCount, embeddingModel, embeddingDim });
+}
+
+export async function saveDocumentContent(
+  kbId: string,
+  docId: string,
+  content: string,
+): Promise<void> {
+  return invoke("save_document_content", { kbId, docId, content });
 }
 
 // ── Parsing ──
@@ -149,6 +185,15 @@ export async function startPythonBackend(): Promise<{
 
 export async function stopPythonBackend(): Promise<void> {
   return invoke("stop_python_backend");
+}
+
+export async function restartPythonBackend(): Promise<{
+  running: boolean;
+  url: string;
+  port: number;
+  error: string | null;
+}> {
+  return invoke("restart_python_backend");
 }
 
 export async function getPythonBackendStatus(): Promise<{

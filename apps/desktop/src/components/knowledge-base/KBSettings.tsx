@@ -5,8 +5,9 @@ import { useI18n } from "../../i18n";
 import { indexDocument } from "../../services/pythonClient";
 import {
   FileText, Layers, Upload, Trash2, Loader2,
-  CheckCircle, XCircle, Clock, Eye, FolderOpen,
+  CheckCircle, XCircle, Clock, Eye,
   Search, Database, Pencil, RefreshCw, Check, FolderSearch, Copy, X, ArrowLeft,
+  Plus, FolderOpen,
 } from "lucide-react";
 import type { Document } from "../../types";
 import { ConfirmDialog } from "../common/ConfirmDialog";
@@ -30,6 +31,18 @@ export function KBSettings() {
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<{ docId: string; docName: string } | null>(null);
   const [deleteKBTarget, setDeleteKBTarget] = useState(false);
+  const [errorDetailTarget, setErrorDetailTarget] = useState<string | null>(null);
+  const [errorCopied, setErrorCopied] = useState(false);
+  const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [paths, setPaths] = useState<string[]>([]);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [pathDocMenu, setPathDocMenu] = useState<string | null>(null);
+  const [deletePathTarget, setDeletePathTarget] = useState<string | null>(null);
+  const [disbandOnly, setDisbandOnly] = useState(false);
 
   // ── Rename KB ──
   const [editingName, setEditingName] = useState(false);
@@ -43,6 +56,15 @@ export function KBSettings() {
       loadDocuments(kbId).finally(() => setLoadingDocs(false));
     }
   }, [kbId]);
+
+  // Load paths when documents change
+  useEffect(() => {
+    if (kbId) {
+      import("../../services/tauriBridge").then(({ listPaths }) => {
+        listPaths(kbId).then(setPaths).catch(() => {});
+      });
+    }
+  }, [kbId, documents]);
 
   const kb = knowledgeBases.find((k) => k.id === kbId);
   useEffect(() => { if (kb) setActiveKB(kb); }, [kb]);
@@ -205,6 +227,90 @@ export function KBSettings() {
     }
   };
 
+  const startDocRename = (doc: Document) => {
+    setRenamingDocId(doc.id);
+    setRenameDraft(doc.name);
+  };
+
+  const commitDocRename = async (doc: Document) => {
+    if (!kbId || !renameDraft.trim() || renameDraft.trim() === doc.name) {
+      setRenamingDocId(null);
+      return;
+    }
+    try {
+      const { renameDocument } = await import("../../services/tauriBridge");
+      const updated = await renameDocument(kbId, doc.id, renameDraft.trim());
+      useKBStore.setState((s) => ({
+        documents: s.documents.map((d) => (d.id === doc.id ? { ...d, ...updated } : d)),
+      }));
+    } catch (e) {
+      console.error("Rename failed:", e);
+    }
+    setRenamingDocId(null);
+  };
+
+  const handleMoveToPath = async (doc: Document, path: string | null) => {
+    if (!kbId) return;
+    try {
+      const { setDocumentPath } = await import("../../services/tauriBridge");
+      const updated = await setDocumentPath(kbId, doc.id, path);
+      useKBStore.setState((s) => ({
+        documents: s.documents.map((d) => (d.id === doc.id ? { ...d, ...updated } : d)),
+      }));
+    } catch (e) { console.error("Move to path failed:", e); }
+    setPathDocMenu(null);
+  };
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) return;
+    const name = newFolderName.trim();
+    const fullPath = newFolderParent ? `${newFolderParent}/${name}` : name;
+    setNewFolderName("");
+    setShowNewFolder(false);
+    setNewFolderParent(null);
+    if (!paths.includes(fullPath)) {
+      setPaths(prev => [...prev, fullPath].sort());
+    }
+  };
+
+  const handleDeletePath = (path: string) => {
+    setDeletePathTarget(path);
+    setDisbandOnly(false);
+  };
+
+  const handleDeleteFolderConfirm = async () => {
+    if (!kbId || !deletePathTarget) return;
+    const path = deletePathTarget;
+    try {
+      if (disbandOnly) {
+        // Just clear the path for all documents in this folder (and sub-folders)
+        const { deletePath } = await import("../../services/tauriBridge");
+        // Use the existing delete_path which sets path to null — but for disband,
+        // we only want to clear path, not delete documents.
+        // Wait, delete_path already only clears paths, it doesn't delete docs.
+        await deletePath(kbId, path);
+      } else {
+        // Delete folder AND all documents inside
+        const prefix = path + "/";
+        const { deleteDocument } = await import("../../services/tauriBridge");
+        const docs = documents.filter(d =>
+          d.path === path || (d.path && d.path.startsWith(prefix))
+        );
+        for (const doc of docs) {
+          await deleteDocument(kbId, doc.id);
+        }
+        const { deletePath } = await import("../../services/tauriBridge");
+        await deletePath(kbId, path);
+      }
+      setPaths(prev => prev.filter(p => p !== path && !p.startsWith(path + "/")));
+      if (selectedPath === path || selectedPath?.startsWith(path + "/")) setSelectedPath(null);
+      await loadDocuments(kbId);
+    } catch (e) { console.error("Delete folder failed:", e); }
+    setDeletePathTarget(null);
+  };
+
+  // (folder tree rendered inline in the explorer list below)
+
   // ── Render ──
 
   if (!kb) {
@@ -354,136 +460,157 @@ export function KBSettings() {
         </div>
       </div>
 
-      {/* Document area */}
-      <div className="flex-1 overflow-auto p-6">
-        {/* Upload zone */}
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-          onClick={handleUploadClick}
-          className={`mb-4 border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
-            dragOver
-              ? "border-primary bg-primary/5"
-              : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30"
-          }`}
-        >
-          <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-          <p className="text-sm font-medium">{t("docs.upload")}</p>
-          <p className="text-xs text-muted-foreground mt-1">{t("docs.emptyHint")}</p>
+      {/* File Manager — Explorer-style single list */}
+      <div className="flex-1 flex flex-col overflow-hidden rounded-xl border">
+        {/* Toolbar */}
+        <div className="flex items-center gap-2 px-4 py-2 border-b bg-card/50 shrink-0">
+          <button onClick={handleUploadClick} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-xs font-medium hover:opacity-90">
+            <Upload className="w-3.5 h-3.5" /> {t("docs.upload")}
+          </button>
+          <button onClick={() => { setShowNewFolder(true); setNewFolderParent(selectedPath); }} className="flex items-center gap-1.5 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-muted transition-colors">
+            <Plus className="w-3.5 h-3.5" /> {t("docs.newFolder")}
+          </button>
+          <button onClick={async () => { if (kbId) { await loadKBs(); await loadDocuments(kbId); } }}
+            className="p-1.5 hover:bg-muted rounded-md text-muted-foreground" title="Refresh">
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+          {/* Breadcrumb */}
+          <div className="flex items-center gap-1 text-xs text-muted-foreground ml-2">
+            <span onClick={() => setSelectedPath(null)} className="cursor-pointer hover:text-foreground">{t("docs.root")}</span>
+            {selectedPath && selectedPath.split("/").map((seg, i, arr) => (
+              <span key={i} className="flex items-center gap-1">
+                <span>/</span>
+                <span onClick={() => setSelectedPath(arr.slice(0, i + 1).join("/"))}
+                  className={`cursor-pointer hover:text-foreground ${i === arr.length - 1 ? "text-foreground font-medium" : ""}`}>
+                  {seg}
+                </span>
+              </span>
+            ))}
+          </div>
+          <span className="text-xs text-muted-foreground ml-auto">
+            {documents.filter(d => (d.path || null) === (selectedPath || null)).length} {t("docs.items")}
+          </span>
         </div>
 
-        {/* Document list */}
-        {documents.length === 0 ? (
-          <div className="text-center py-12">
-            {uploadingRef.current || loadingDocs ? (
-              <>
-                <Loader2 className="w-8 h-8 text-primary mx-auto mb-3 animate-spin" />
-                <p className="text-sm font-medium text-muted-foreground">{t("docs.uploading")}</p>
-                <p className="text-xs text-muted-foreground mt-1">{loadingDocs ? t("docs.loadingHint") : t("docs.parsingHint")}</p>
-              </>
-            ) : (
-              <>
-                <Upload className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
-                <p className="text-sm text-muted-foreground">{t("docs.emptyHint")}</p>
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            {documents.map((doc) => {
-              const status = STATUS_MAP[doc.parse_status] || STATUS_MAP.pending;
-              const isParseFailed = doc.parse_status === "failed";
-              const isIndexing = indexing[doc.id] || indexingIds.has(doc.id);
-              const isIndexed = !isIndexing && doc.chunk_count > 0;
-              return (
-                <div
-                  key={doc.id}
-                  className={`flex items-center justify-between p-3 rounded-lg border bg-card transition-colors ${
-                    isParseFailed ? "border-red-200 bg-red-50/30" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <FileText className="w-5 h-5 text-primary shrink-0" />
-                    <div className="min-w-0">
-                      <p className="font-medium text-sm truncate">{doc.name}</p>
-                      <p className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
-                        <span>{(doc.file_size / 1024).toFixed(1)} KB</span>
-                        <span>·</span>
-                        <span className="flex items-center gap-1">{status.icon}{t(status.labelKey)}</span>
-                        {doc.chunk_count > 0 && (
-                          <>
-                            <span>·</span>
-                            <span>{doc.chunk_count} {t("kb.chunks")}</span>
-                          </>
-                        )}
-                        {isParseFailed && doc.parse_error && (
-                          <>
-                            <span>·</span>
-                            <span className="text-red-500 truncate max-w-[200px]">{doc.parse_error}</span>
-                          </>
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 ml-3 shrink-0">
-                    {/* Indexing in progress */}
-                    {isIndexing && (
-                      <span className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs font-medium">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        {t("docs.indexing")}
-                      </span>
-                    )}
-                    {/* Indexed */}
-                    {isIndexed && (
-                      <span className="flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
-                        <Database className="w-3 h-3" />
-                        {doc.chunk_count} {t("kb.chunks")}
-                      </span>
-                    )}
-                    {/* Done parsing but no content (empty doc or index error) */}
-                    {!isIndexing && doc.parse_status === "done" && doc.chunk_count === 0 && (
-                      <span className="px-2 py-1 bg-muted text-muted-foreground rounded text-xs">
-                        {t("docs.empty")}
-                      </span>
-                    )}
-                    {/* Re-index button */}
-                    {isIndexed && (
-                      <button
-                        onClick={() => handleReindexDoc(doc)}
-                        className="p-1.5 hover:bg-amber-50 rounded-md text-muted-foreground hover:text-amber-600"
-                        title={t("docs.reindex")}
-                      >
-                        <RefreshCw className="w-4 h-4" />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleOpenInExplorer(doc)}
-                      className="p-1.5 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground"
-                      title="Open file location"
-                    >
-                      <FolderSearch className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => navigate(`/kb/${kbId}/documents/${doc.id}`)}
-                      className="p-1.5 hover:bg-muted rounded-md"
-                      title={t("docs.preview")}
-                    >
-                      <Eye className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => setDeleteTarget({ docId: doc.id, docName: doc.name })}
-                      className="p-1.5 hover:bg-red-50 rounded-md text-muted-foreground hover:text-red-500"
-                      title={t("docs.delete")}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+        {/* New folder input (inline) */}
+        {showNewFolder && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 border rounded-md bg-card mx-2 mt-2">
+            <FolderOpen className="w-4 h-4 text-amber-500 shrink-0" />
+            <input autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleCreateFolder(); if (e.key === "Escape") { setShowNewFolder(false); setNewFolderParent(null); } }}
+              placeholder={t("docs.folderName")}
+              className="text-sm bg-background border rounded-md px-2 py-0.5 flex-1 outline-none focus:ring-1 focus:ring-primary" />
+            <button onClick={handleCreateFolder} className="px-3 py-1 bg-primary text-primary-foreground rounded-md text-xs font-medium">{t("kb.createBtn")}</button>
+            <button onClick={() => { setShowNewFolder(false); setNewFolderParent(null); }} className="px-3 py-1 border rounded-md text-xs">{t("kb.cancel")}</button>
           </div>
         )}
+
+        {/* Explorer list */}
+        <div className="flex-1 overflow-auto"
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}>
+          {documents.length === 0 && paths.length === 0 ? (
+            <div className="text-center py-16">
+              {uploadingRef.current || loadingDocs ? (
+                <><Loader2 className="w-8 h-8 text-primary mx-auto mb-3 animate-spin" /><p className="text-sm text-muted-foreground">{t("docs.uploading")}</p></>
+              ) : (
+                <><FolderOpen className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" /><p className="text-sm text-muted-foreground">{t("docs.emptyHint")}</p></>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-0.5 p-2">
+              {/* ".." parent directory */}
+              {selectedPath && (
+                <div className="flex items-center justify-between px-3 py-1.5 border rounded-md bg-card hover:border-primary/50 cursor-pointer transition-colors"
+                  onClick={() => setSelectedPath(selectedPath.includes("/") ? selectedPath.split("/").slice(0, -1).join("/") : null)}>
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <FolderOpen className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span className="text-sm text-muted-foreground">..</span>
+                  </div>
+                </div>
+              )}
+              {/* Sub-folders in current path */}
+              {(() => {
+                const prefix = selectedPath ? selectedPath + "/" : "";
+                const folderNames = paths.filter(p => {
+                  if (!p.startsWith(prefix)) return false;
+                  const rest = p.slice(prefix.length);
+                  return rest.length > 0 && !rest.includes("/");
+                });
+                return folderNames.map(fullPath => {
+                  const name = fullPath.split("/").pop()!;
+                  return (
+                    <div key={`folder-${fullPath}`}
+                      className="flex items-center justify-between px-3 py-1.5 border rounded-md bg-card hover:border-primary/50 cursor-pointer transition-colors"
+                      onDoubleClick={() => setSelectedPath(fullPath)}>
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1" onClick={() => setSelectedPath(fullPath)}>
+                        <FolderOpen className="w-4 h-4 text-amber-500 shrink-0" />
+                        <span className="font-medium text-sm truncate">{name}</span>
+                        <span className="text-[10px] text-muted-foreground/60">{t("docs.folderType")}</span>
+                      </div>
+                      <div className="flex items-center gap-1 ml-2 shrink-0">
+                        <button onClick={(e) => { e.stopPropagation(); setDeletePathTarget(fullPath); }} className="p-1 hover:bg-red-50 rounded-md text-muted-foreground hover:text-red-500" title={t("docs.deleteFolder")}><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+              {/* Documents in current path */}
+              {documents
+                .filter(doc => (doc.path || null) === (selectedPath || null))
+                .map((doc) => {
+                const status = STATUS_MAP[doc.parse_status] || STATUS_MAP.pending;
+                const isParseFailed = doc.parse_status === "failed";
+                const isIndexing = indexing[doc.id] || indexingIds.has(doc.id);
+                const isIndexed = !isIndexing && doc.chunk_count > 0;
+                return (
+                <div key={doc.id}
+                  className={`flex items-center justify-between px-3 py-1.5 border rounded-md bg-card hover:border-primary/50 transition-colors ${isParseFailed ? "border-red-200 bg-red-50/30" : ""}`}>
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <FileText className="w-4 h-4 text-primary shrink-0" />
+                    {renamingDocId === doc.id ? (
+                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        <input autoFocus value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") commitDocRename(doc); if (e.key === "Escape") { setRenamingDocId(null); } }}
+                          onBlur={() => commitDocRename(doc)}
+                          className="text-xs bg-background border rounded px-1.5 py-0.5 w-36 outline-none ring-1 ring-primary" />
+                        <button onClick={() => commitDocRename(doc)} className="p-0.5 hover:bg-green-50 rounded text-green-600"><Check className="w-3 h-3" /></button>
+                      </div>
+                    ) : (
+                      <span className="font-medium text-sm truncate cursor-pointer hover:text-primary" onClick={() => navigate(`/kb/${kbId}/documents/${doc.id}`)} title={doc.name}>{doc.name}</span>
+                    )}
+                    <span className="text-[10px] text-muted-foreground/60 truncate hidden sm:inline">{(doc.file_size / 1024).toFixed(1)} KB · .{doc.file_type}</span>
+                    <span className="text-[10px] text-muted-foreground/60">
+                      {isIndexing ? <span className="text-blue-600">Idx</span>
+                       : isParseFailed ? <span className="text-red-500 cursor-pointer hover:underline" onClick={(e) => { e.stopPropagation(); setErrorDetailTarget(doc.parse_error ?? null); }}>Failed</span>
+                       : isIndexed ? <span className="text-green-600">{doc.chunk_count}c</span>
+                       : <span>{t(status.labelKey)}</span>}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-0.5 ml-2 shrink-0">
+                    {isIndexed && <button onClick={() => handleReindexDoc(doc)} className="p-0.5 hover:bg-amber-50 rounded text-muted-foreground hover:text-amber-600" title={t("docs.reindex")}><RefreshCw className="w-3 h-3" /></button>}
+                    <div className="relative">
+                      <button onClick={(e) => { e.stopPropagation(); setPathDocMenu(pathDocMenu === doc.id ? null : doc.id); }} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.moveToPath")}><FolderOpen className="w-3 h-3" /></button>
+                      {pathDocMenu === doc.id && (
+                        <div className="absolute right-0 top-full mt-1 bg-card border rounded-lg shadow-lg z-20 min-w-[140px] py-1 max-h-40 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                          <button onClick={() => handleMoveToPath(doc, null)} className={`w-full text-left px-2 py-1 text-xs hover:bg-muted ${!doc.path ? "font-medium text-primary" : ""}`}>{t("docs.noPath")}</button>
+                          <div className="border-t my-0.5" />
+                          {paths.map(p => (
+                            <button key={p} onClick={() => handleMoveToPath(doc, p)} className={`w-full text-left px-2 py-1 text-xs hover:bg-muted ${doc.path === p ? "font-medium text-primary" : ""}`} style={{ paddingLeft: `${10 + (p.split("/").length - 1) * 10}px` }}>{p}</button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button onClick={(e) => { e.stopPropagation(); startDocRename(doc); }} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.rename")}><Pencil className="w-3 h-3" /></button>
+                    <button onClick={() => handleOpenInExplorer(doc)} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.openLocation")}><FolderSearch className="w-3 h-3" /></button>
+                    <button onClick={() => setDeleteTarget({ docId: doc.id, docName: doc.name })} className="p-0.5 hover:bg-red-50 rounded-md text-muted-foreground hover:text-red-500" title={t("docs.delete")}><Trash2 className="w-3 h-3" /></button>
+                  </div>
+                </div>
+              );})}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Delete doc confirm dialog */}
@@ -508,6 +635,32 @@ export function KBSettings() {
         onCancel={() => setDeleteKBTarget(false)}
       />
 
+      {/* Delete folder confirm dialog */}
+      {deletePathTarget !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setDeletePathTarget(null)}>
+          <div className="bg-card border rounded-xl shadow-xl max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6">
+              <h3 className="text-lg font-semibold mb-2">{t("docs.deleteFolder")}</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                {t("docs.deleteFolderConfirm", { path: deletePathTarget })}
+              </p>
+              <label className="flex items-center gap-2 mb-4 cursor-pointer">
+                <input type="checkbox" checked={disbandOnly} onChange={(e) => setDisbandOnly(e.target.checked)}
+                  className="rounded w-4 h-4" />
+                <span className="text-sm">{t("docs.disbandOnly")}</span>
+              </label>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => setDeletePathTarget(null)} className="px-4 py-2 border rounded-lg text-sm">{t("kb.cancel")}</button>
+                <button onClick={handleDeleteFolderConfirm}
+                  className={`px-4 py-2 rounded-lg text-sm text-white ${disbandOnly ? "bg-amber-500 hover:bg-amber-600" : "bg-red-500 hover:bg-red-600"}`}>
+                  {disbandOnly ? t("docs.disbandBtn") : t("docs.deleteFolderBtn")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Description reading dialog */}
       {showDescDialog && kb?.description && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowDescDialog(false)}>
@@ -520,6 +673,38 @@ export function KBSettings() {
             </div>
             <div className="p-4 overflow-y-auto flex-1">
               <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">{kb.description}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error detail dialog */}
+      {errorDetailTarget !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setErrorDetailTarget(null)}>
+          <div className="bg-card border rounded-xl shadow-xl max-w-lg w-full mx-4 max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b shrink-0">
+              <h3 className="font-semibold text-red-600">MinerU Parse Error</h3>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={async () => {
+                    if (errorDetailTarget) {
+                      await navigator.clipboard.writeText(errorDetailTarget);
+                      setErrorCopied(true);
+                      setTimeout(() => setErrorCopied(false), 2000);
+                    }
+                  }}
+                  className="p-1.5 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground text-xs flex items-center gap-1"
+                  title={t("app.copyError")}
+                >
+                  {errorCopied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                </button>
+                <button onClick={() => setErrorDetailTarget(null)} className="p-1 hover:bg-muted rounded-md">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">{errorDetailTarget}</p>
             </div>
           </div>
         </div>

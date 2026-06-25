@@ -16,10 +16,12 @@ dependencies = [
     "pydantic-settings>=2.3",
     "sse-starlette>=2.1",
     "pypdf>=4.0",
+    "fastmcp>=1.0",
 ]
 
 [project.scripts]
 knowledge-backend = "knowledge_backend.main:main"
+local-kb-mcp = "knowledge_backend.mcp_server:main"
 
 [project.optional-dependencies]
 build = ["pyinstaller>=6.0"]

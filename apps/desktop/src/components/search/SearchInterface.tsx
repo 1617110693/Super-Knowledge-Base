@@ -3,7 +3,8 @@ import { useParams, useNavigate } from "react-router-dom";
 import { search as searchAPI } from "../../services/pythonClient";
 import { useSettingsStore } from "../../stores/useSettingsStore";
 import { useI18n } from "../../i18n";
-import { Search, Loader2, FileText, ArrowLeft } from "lucide-react";
+import { Search, Loader2, FileText, ArrowLeft, X } from "lucide-react";
+import { MarkdownRenderer } from "../common/MarkdownRenderer";
 import type { SearchResult } from "../../types";
 
 export function SearchInterface() {
@@ -18,6 +19,7 @@ export function SearchInterface() {
   const [rerank, setRerank] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState("");
+  const [selectedChunk, setSelectedChunk] = useState<SearchResult | null>(null);
 
   const handleSearch = async () => {
     if (!query.trim() || !kbId) return;
@@ -77,7 +79,11 @@ export function SearchInterface() {
 
       <div className="space-y-3">
         {results.map((r) => (
-          <div key={r.chunk_id} className="p-4 border rounded-lg bg-card">
+          <div
+            key={r.chunk_id}
+            className="p-4 border rounded-lg bg-card cursor-pointer hover:border-primary/50 transition-colors"
+            onClick={() => setSelectedChunk(r)}
+          >
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <FileText className="w-4 h-4 text-primary" />
@@ -87,13 +93,47 @@ export function SearchInterface() {
                 {(r.score * 100).toFixed(0)}%
               </span>
             </div>
-            <p className="text-sm text-muted-foreground whitespace-pre-wrap line-clamp-5">{r.content}</p>
+            <div className="max-h-32 overflow-hidden relative">
+              <MarkdownRenderer className="prose prose-sm max-w-none dark:prose-invert text-muted-foreground">
+                {r.content}
+              </MarkdownRenderer>
+              <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-card to-transparent pointer-events-none" />
+            </div>
             {r.metadata?.page && (
               <p className="text-xs text-muted-foreground mt-2">{t("search.page")} {r.metadata.page}</p>
             )}
           </div>
         ))}
       </div>
+
+      {/* Chunk detail dialog */}
+      {selectedChunk && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setSelectedChunk(null)}>
+          <div className="bg-card border rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <FileText className="w-5 h-5 text-primary shrink-0" />
+                <div className="min-w-0">
+                  <h3 className="font-semibold text-sm truncate">{selectedChunk.doc_name}</h3>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedChunk.metadata?.page != null && <span>{t("search.page")} {selectedChunk.metadata.page} · </span>}
+                    {selectedChunk.metadata?.chunk_index != null && <span>{t("search.chunkIndex", { index: selectedChunk.metadata.chunk_index })} · </span>}
+                    <span className="font-mono text-primary">{(selectedChunk.score * 100).toFixed(1)}%</span>
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setSelectedChunk(null)} className="p-1 hover:bg-muted rounded-md shrink-0">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1">
+              <MarkdownRenderer className="prose prose-sm max-w-none dark:prose-invert">
+                {selectedChunk.content}
+              </MarkdownRenderer>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

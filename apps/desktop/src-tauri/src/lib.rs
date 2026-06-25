@@ -10,6 +10,8 @@ use commands::{
 use models::settings::AppSettings;
 use storage::file_store::FileStore;
 use tauri::Manager;
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -18,8 +20,6 @@ pub struct AppState {
     pub settings: Mutex<AppSettings>,
     pub file_store: FileStore,
     pub python_port: Mutex<u16>,
-    /// The directory where settings.json lives (~/.local-knowledge-base).
-    /// This is separate from file_store.root_dir() which may be a custom data_dir.
     pub settings_dir: PathBuf,
 }
 
@@ -31,16 +31,13 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
-            // Default data directory: ~/.local-knowledge-base
             let home = std::env::var("HOME")
                 .or_else(|_| std::env::var("USERPROFILE"))
                 .expect("Failed to get home directory");
             let default_dir = std::path::PathBuf::from(&home).join(".local-knowledge-base");
 
-            // Load settings from default location first
             let settings = AppSettings::load(&default_dir).unwrap_or_default();
 
-            // Use custom data_dir if set, otherwise default
             let data_dir = if settings.data_dir.is_empty() {
                 default_dir.clone()
             } else {
@@ -48,18 +45,13 @@ pub fn run() {
             };
             std::fs::create_dir_all(&data_dir).ok();
 
-            // Always ensure default dir exists for settings.json
             if data_dir != default_dir {
                 std::fs::create_dir_all(&default_dir).ok();
             }
 
-            // Initialize file store at the chosen data directory
             let file_store = FileStore::new(data_dir);
-
-            // Allocate Python backend port
             let port = settings.python_port;
 
-            // Manage app state
             app.manage(AppState {
                 settings: Mutex::new(settings),
                 file_store,
@@ -68,11 +60,53 @@ pub fn run() {
             });
             app.manage(python_service::PythonProcess(Mutex::new(None)));
 
-            // Register window close handler to kill Python backend
+            // ── System Tray ──
+            let show_item = MenuItemBuilder::with_id("show", "Show Window").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            let tray_menu = MenuBuilder::new(app)
+                .items(&[&show_item, &quit_item])
+                .build()?;
+
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("Local Knowledge Base")
+                .menu(&tray_menu)
+                .on_menu_event(|app, event| {
+                    match event.id().as_ref() {
+                        "show" => {
+                            if let Some(w) = app.get_webview_window("main") {
+                                w.show().ok();
+                                w.set_focus().ok();
+                            }
+                        }
+                        "quit" => {
+                            python_service::force_kill_backend();
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event {
+                        if let Some(w) = tray.app_handle().get_webview_window("main") {
+                            w.show().ok();
+                            w.set_focus().ok();
+                        }
+                    }
+                })
+                .build(app)?;
+
+            // ── Close → Hide to Tray ──
             if let Some(window) = app.get_webview_window("main") {
+                let w = window.clone();
                 let _ = window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Destroyed = event {
-                        python_service::force_kill_backend();
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        w.hide().ok();
                     }
                 });
             }
@@ -80,10 +114,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // Settings commands
             settings::get_settings,
             settings::update_settings,
-            // Knowledge base commands
             knowledge_base::create_kb,
             knowledge_base::update_kb,
             knowledge_base::copy_kb,
@@ -95,21 +127,25 @@ pub fn run() {
             knowledge_base::clear_all_kbs,
             knowledge_base::export_kbs,
             knowledge_base::import_kbs,
-            // Document commands
             documents::upload_document,
             documents::delete_document,
+            documents::rename_document,
+            documents::set_document_path,
+            documents::list_paths,
+            documents::delete_path,
+            documents::rename_path,
             documents::list_documents,
             documents::get_document_content,
             documents::save_document_chunks,
+            documents::save_document_content,
             documents::reveal_document_in_explorer,
-            // Parsing commands
             parsing::start_parsing,
             parsing::poll_parse_status,
             parsing::cancel_parse_task,
-            // Python service commands
             python_service::get_python_backend_url,
             python_service::start_python_backend,
             python_service::stop_python_backend,
+            python_service::restart_python_backend,
             python_service::get_python_backend_status,
             claude_config::get_mcp_config_json,
             claude_config::configure_claude_mcp,

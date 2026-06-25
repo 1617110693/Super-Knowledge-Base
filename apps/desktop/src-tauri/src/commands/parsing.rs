@@ -42,28 +42,26 @@ pub async fn start_parsing(
         });
     }
 
-    // Check if file is small enough for agent mode
+    // Always use Precise API (requires token, supports up to 200 MB / 200 pages)
     let file_size = std::fs::metadata(&original_path)
         .map(|m| m.len())
         .unwrap_or(0);
 
-    // Choose parse mode: Agent first for small files (fast, native Office
-    // parsers, no token needed).  Precise API only for large files or when
-    // Agent fails — the Agent API is limited to 10 MB / 20 pages.
-    let mode = if file_size <= 10 * 1024 * 1024 {
-        ParseMode::Agent {
-            file_path: original_path,
-        }
-    } else if !settings.mineru_token.is_empty() && file_size <= 200 * 1024 * 1024 {
-        ParseMode::Precise {
-            token: settings.mineru_token.clone(),
-            file_path: original_path,
-        }
-    } else {
+    if settings.mineru_token.is_empty() {
         return Err(AppError::InvalidInput(
-            "File too large for agent mode and no MinerU token configured for precise mode"
-                .to_string(),
+            "MinerU token not configured. Please go to Settings and add your MinerU API token.".to_string(),
         ));
+    }
+    if file_size > 200 * 1024 * 1024 {
+        return Err(AppError::InvalidInput(format!(
+            "File too large: {} bytes. Maximum is 200 MB for Precise mode.",
+            file_size
+        )));
+    }
+
+    let mode = ParseMode::Precise {
+        token: settings.mineru_token.clone(),
+        file_path: original_path,
     };
 
     // Update document status

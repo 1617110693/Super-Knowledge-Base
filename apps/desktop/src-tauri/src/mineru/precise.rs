@@ -26,7 +26,10 @@ pub async fn parse_with_precise(token: &str, file_path: &Path) -> Result<String,
         .and_then(|n| n.to_str())
         .unwrap_or("document.pdf");
 
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| AppError::MinerU(format!("Failed to create HTTP client: {}", e)))?;
 
     // Step 1: Request upload URL
     let batch_response = request_upload_urls(token, &client, file_name).await?;
@@ -46,8 +49,23 @@ async fn request_upload_urls(
     client: &Client,
     file_name: &str,
 ) -> Result<(String, String), AppError> {
-    let is_html = file_name.to_lowercase().ends_with(".html") || file_name.to_lowercase().ends_with(".htm");
-    let model = if is_html { "MinerU-HTML" } else { "vlm" };
+    let lower = file_name.to_lowercase();
+    let is_html = lower.ends_with(".html") || lower.ends_with(".htm");
+
+    // Model selection per MinerU docs:
+    // - vlm: recommended for PDF and images (best quality)
+    // - pipeline: for Office docs (doc/docx/ppt/pptx/xls/xlsx)
+    // - MinerU-HTML: for HTML files
+    let is_office = lower.ends_with(".doc") || lower.ends_with(".docx")
+        || lower.ends_with(".ppt") || lower.ends_with(".pptx")
+        || lower.ends_with(".xls") || lower.ends_with(".xlsx");
+    let model = if is_html {
+        "MinerU-HTML"
+    } else if is_office {
+        "pipeline"
+    } else {
+        "vlm"
+    };
 
     let body = serde_json::json!({
         "files": [

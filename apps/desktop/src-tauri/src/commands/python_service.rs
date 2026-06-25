@@ -16,6 +16,7 @@ pub struct PythonProcess(pub Mutex<Option<Child>>);
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 fn kill_backend_processes() {
+    // Kill the known backend exe (production)
     #[cfg(target_os = "windows")]
     {
         let _ = std::process::Command::new("taskkill")
@@ -32,6 +33,56 @@ fn kill_backend_processes() {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn();
+    }
+}
+
+/// Force-kill a child process tree. On Windows uses taskkill /F /T /PID.
+fn kill_process_tree(child: &mut std::process::Child) {
+    let pid = child.id();
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &format!("-{}", pid)])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+    let _ = child.wait();
+}
+
+/// Kill any process holding the given port (Windows only via netstat)
+fn kill_process_on_port(port: u16) {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(output) = std::process::Command::new("netstat")
+            .args(["-ano", "-p", "TCP"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.contains(&format!(":{}", port)) && line.contains("LISTENING") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if let Some(pid) = parts.last() {
+                        let _ = std::process::Command::new("taskkill")
+                            .args(["/F", "/PID", pid])
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .spawn();
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -60,24 +111,28 @@ pub struct PythonBackendStatus {
     pub error: Option<String>,
 }
 
-/// Find the bundled sidecar .exe, or fall back to uv run from source
+/// Find the backend command: always use uv run in dev, sidecar exe in production
 fn resolve_backend_command() -> (String, Vec<String>) {
-    // Try bundled sidecar first (production) — skip 0-byte dev placeholders
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            // Production sidecars may include target triple suffix
-            for name in &[
-                "knowledge-backend.exe",
-                "knowledge-backend",
-                "knowledge-backend-x86_64-pc-windows-msvc.exe",
-                "knowledge-backend-aarch64-apple-darwin",
-                "knowledge-backend-x86_64-unknown-linux-gnu",
-            ] {
-                let sidecar = dir.join(name);
-                if sidecar.exists() {
-                    if let Ok(meta) = std::fs::metadata(&sidecar) {
-                        if meta.len() > 1024 {
-                            return (sidecar.to_string_lossy().to_string(), vec![]);
+    // Dev mode: CARGO_MANIFEST_DIR is set during `cargo run` / `tauri dev`
+    let is_dev = std::env::var("CARGO_MANIFEST_DIR").is_ok();
+
+    // Production: try bundled sidecar first
+    if !is_dev {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                for name in &[
+                    "knowledge-backend.exe",
+                    "knowledge-backend",
+                    "knowledge-backend-x86_64-pc-windows-msvc.exe",
+                    "knowledge-backend-aarch64-apple-darwin",
+                    "knowledge-backend-x86_64-unknown-linux-gnu",
+                ] {
+                    let sidecar = dir.join(name);
+                    if sidecar.exists() {
+                        if let Ok(meta) = std::fs::metadata(&sidecar) {
+                            if meta.len() > 1024 {
+                                return (sidecar.to_string_lossy().to_string(), vec![]);
+                            }
                         }
                     }
                 }
@@ -85,16 +140,13 @@ fn resolve_backend_command() -> (String, Vec<String>) {
         }
     }
 
-    // Dev mode: use uv run from source tree
+    // Dev mode (or fallback): use uv run from source tree
     let backend_dir: std::path::PathBuf =
-        // CARGO_MANIFEST_DIR = .../apps/desktop/src-tauri (set during cargo run)
         if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
             std::path::PathBuf::from(&manifest)
                 .join("..").join("..").join("..")
                 .join("services").join("python-backend")
-        }
-        // Fallback: exe is in target/debug/ → go up to project root
-        else if let Ok(exe) = std::env::current_exe() {
+        } else if let Ok(exe) = std::env::current_exe() {
             exe.parent().unwrap_or(std::path::Path::new("."))
                 .parent().unwrap_or(std::path::Path::new("."))
                 .parent().unwrap_or(std::path::Path::new("."))
@@ -222,15 +274,53 @@ pub async fn start_python_backend(
 
 #[tauri::command]
 pub async fn stop_python_backend(
+    state: State<'_, AppState>,
     py_state: State<'_, PythonProcess>,
 ) -> CommandResult<()> {
+    let port = *state.python_port.lock().unwrap();
     let mut proc = py_state.0.lock().unwrap();
     if let Some(ref mut child) = *proc {
-        child.kill().ok();
-        child.wait().ok();
+        kill_process_tree(child);
     }
     *proc = None;
+    // Also kill anything still holding the port
+    kill_process_on_port(port);
+    kill_backend_processes();
     Ok(())
+}
+
+#[tauri::command]
+pub async fn restart_python_backend(
+    state: State<'_, AppState>,
+    py_state: State<'_, PythonProcess>,
+) -> CommandResult<PythonBackendStatus> {
+    let port = *state.python_port.lock().unwrap();
+
+    // Force-stop: kill process tree, kill port holder, kill known exe
+    {
+        let mut proc = py_state.0.lock().unwrap();
+        if let Some(ref mut child) = *proc {
+            kill_process_tree(child);
+        }
+        *proc = None;
+    }
+    kill_process_on_port(port);
+    kill_backend_processes();
+
+    // Wait for port to be free
+    for _ in 0..20 {
+        std::thread::sleep(Duration::from_millis(250));
+        // Try to connect — if it fails, port is free
+        if std::net::TcpStream::connect_timeout(
+            &format!("127.0.0.1:{}", port).parse().unwrap(),
+            Duration::from_millis(100),
+        ).is_err() {
+            break; // Port is free
+        }
+    }
+
+    // Start a new one
+    start_python_backend(state, py_state).await
 }
 
 #[tauri::command]

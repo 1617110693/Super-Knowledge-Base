@@ -176,6 +176,7 @@ class LanceDBSearcher:
                 {
                     "chunk_id": r.get("chunk_id", ""),
                     "doc_id": r.get("doc_id", ""),
+                    "kb_id": r.get("kb_id", ""),
                     "doc_name": r.get("doc_name", ""),
                     "content": r.get("content", ""),
                     "score": 1.0 / (1.0 + float(r.get("_distance", 0))),

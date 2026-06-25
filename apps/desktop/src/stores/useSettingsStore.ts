@@ -28,6 +28,7 @@ interface SettingsState {
   loadSettings: () => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
   startPython: () => Promise<void>;
+  restartPython: () => Promise<void>;
   checkPythonStatus: () => Promise<boolean>;
 }
 
@@ -56,6 +57,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   startPython: async () => {
     try {
       const status = await tauriBridge.startPythonBackend();
+      set({
+        pythonRunning: status.running,
+        pythonUrl: status.url,
+        pythonError: status.error || null,
+      });
+    } catch (e) {
+      set({ pythonRunning: false, pythonError: extractError(e) });
+    }
+  },
+
+  restartPython: async () => {
+    set({ pythonRunning: false, pythonError: null });
+    try {
+      const status = await tauriBridge.restartPythonBackend();
       set({
         pythonRunning: status.running,
         pythonUrl: status.url,

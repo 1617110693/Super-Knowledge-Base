@@ -58,6 +58,7 @@ export interface ChatRequest {
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  sources?: SearchResult[];
 }
 
 export interface SearchResult {
@@ -102,6 +103,9 @@ export interface AppSettings {
   rerank_api_base: string;
   rerank_api_key: string;
   rerank_model: string;
+  llm_api_base: string;
+  llm_api_key: string;
+  llm_model: string;
   chunk_strategy: "fixed" | "semantic" | "recursive";
   chunk_size: number;
   chunk_overlap: number;
@@ -118,6 +122,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   rerank_api_base: "https://api.jina.ai/v1",
   rerank_api_key: "",
   rerank_model: "jina-reranker-v2-base-multilingual",
+  llm_api_base: "https://api.openai.com/v1",
+  llm_api_key: "",
+  llm_model: "gpt-4o-mini",
   chunk_strategy: "recursive",
   chunk_size: 512,
   chunk_overlap: 50,

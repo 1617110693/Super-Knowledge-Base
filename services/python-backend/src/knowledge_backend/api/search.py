@@ -65,13 +65,15 @@ def search(req: SearchRequest):
                 new_results = []
                 for rr in reranked[: req.top_k]:
                     if rr.index < len(results):
-                        results[rr.index]["score"] = rr.score
-                        new_results.append(results[rr.index])
+                        r = results[rr.index]
+                        if len(r.get("content", "").strip()) >= 20:
+                            r["score"] = rr.score
+                            new_results.append(r)
                 results = new_results
             except Exception:
-                results = results[: req.top_k]
+                results = [r for r in results[: req.top_k] if len(r.get("content", "").strip()) >= 20]
         else:
-            results = results[: req.top_k]
+            results = [r for r in results[: req.top_k] if len(r.get("content", "").strip()) >= 20]
 
         elapsed = int((time.time() - start) * 1000)
 
@@ -149,13 +151,15 @@ def search_all(req: SearchAllRequest):
                 new_results = []
                 for rr in reranked[: req.top_k]:
                     if rr.index < len(all_results):
-                        all_results[rr.index]["score"] = rr.score
-                        new_results.append(all_results[rr.index])
+                        r = all_results[rr.index]
+                        if len(r.get("content", "").strip()) >= 20:
+                            r["score"] = rr.score
+                            new_results.append(r)
                 all_results = new_results
             except Exception:
-                all_results = all_results[: req.top_k]
+                all_results = [r for r in all_results[: req.top_k] if len(r.get("content", "").strip()) >= 20]
         else:
-            all_results = all_results[: req.top_k]
+            all_results = [r for r in all_results[: req.top_k] if len(r.get("content", "").strip()) >= 20]
 
         elapsed = int((time.time() - start) * 1000)
 

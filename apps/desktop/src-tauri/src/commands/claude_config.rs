@@ -41,16 +41,17 @@ pub async fn get_mcp_config_json(
     let data_dir = state.file_store.root_dir().to_string_lossy().to_string();
     let is_dev = std::env::var("CARGO_MANIFEST_DIR").is_ok();
 
-    // Production: check for bundled sidecar (only if not in dev mode)
+    // Production: find bundled knowledge-backend.exe sidecar.
+    // MCP mode is invoked as: knowledge-backend.exe mcp
     if !is_dev {
         if let Ok(current) = std::env::current_exe() {
             if let Some(dir) = current.parent() {
                 for name in &[
-                    "local-kb-mcp.exe",
-                    "local-kb-mcp",
-                    "local-kb-mcp-x86_64-pc-windows-msvc.exe",
-                    "local-kb-mcp-aarch64-apple-darwin",
-                    "local-kb-mcp-x86_64-unknown-linux-gnu",
+                    "knowledge-backend.exe",
+                    "knowledge-backend",
+                    "knowledge-backend-x86_64-pc-windows-msvc.exe",
+                    "knowledge-backend-aarch64-apple-darwin",
+                    "knowledge-backend-x86_64-unknown-linux-gnu",
                 ] {
                     let sidecar = dir.join(name);
                     if sidecar.exists() {
@@ -60,6 +61,7 @@ pub async fn get_mcp_config_json(
                                     "mcpServers": {
                                         "local-knowledge-base": {
                                             "command": sidecar.to_string_lossy(),
+                                            "args": ["mcp"],
                                             "env": {
                                                 "KNOWLEDGE_BASE_DATA_DIR": &data_dir,
                                             }
@@ -75,13 +77,13 @@ pub async fn get_mcp_config_json(
         }
     }
 
-    // Dev mode: use uv run
+    // Dev mode: use uv run from the backend source tree
     let mcp_dir = resolve_mcp_source_dir();
     let config = serde_json::json!({
         "mcpServers": {
             "local-knowledge-base": {
                 "command": "uv",
-                "args": ["run", "--directory", &mcp_dir.to_string_lossy(), "local-kb-mcp"],
+                "args": ["run", "--directory", &mcp_dir.to_string_lossy(), "knowledge-backend", "mcp"],
                 "env": {
                     "KNOWLEDGE_BASE_DATA_DIR": &data_dir,
                 }
@@ -99,19 +101,18 @@ pub async fn configure_claude_mcp(
 
     let data_dir = state.file_store.root_dir().to_string_lossy().to_string();
 
-    // Try to find the MCP server sidecar/script
     let is_dev = std::env::var("CARGO_MANIFEST_DIR").is_ok();
     let (command, args): (String, Vec<String>) = {
-        // Production: check for bundled sidecar next to the exe
+        // Production: bundled knowledge-backend.exe with "mcp" arg
         if !is_dev {
             if let Ok(current) = std::env::current_exe() {
                 if let Some(dir) = current.parent() {
                     for name in &[
-                        "local-kb-mcp.exe",
-                        "local-kb-mcp",
-                        "local-kb-mcp-x86_64-pc-windows-msvc.exe",
-                        "local-kb-mcp-aarch64-apple-darwin",
-                        "local-kb-mcp-x86_64-unknown-linux-gnu",
+                        "knowledge-backend.exe",
+                        "knowledge-backend",
+                        "knowledge-backend-x86_64-pc-windows-msvc.exe",
+                        "knowledge-backend-aarch64-apple-darwin",
+                        "knowledge-backend-x86_64-unknown-linux-gnu",
                     ] {
                         let sidecar = dir.join(name);
                         if sidecar.exists() {
@@ -119,7 +120,7 @@ pub async fn configure_claude_mcp(
                                 if meta.len() > 1024 {
                                     return build_config(
                                         &sidecar.to_string_lossy(),
-                                        &[],
+                                        &["mcp".to_string()],
                                         &data_dir,
                                         &settings,
                                     );
@@ -131,21 +132,25 @@ pub async fn configure_claude_mcp(
             }
         }
 
-        // Dev mode: use `uv run` from the backend source tree
+        // Dev mode: uv run
         let mcp_dir = resolve_mcp_source_dir();
-        ("uv".to_string(), vec![
-            "run".to_string(),
-            "--directory".to_string(),
-            mcp_dir.to_string_lossy().to_string(),
-            "local-kb-mcp".to_string(),
-        ])
+        (
+            "uv".to_string(),
+            vec![
+                "run".to_string(),
+                "--directory".to_string(),
+                mcp_dir.to_string_lossy().to_string(),
+                "knowledge-backend".to_string(),
+                "mcp".to_string(),
+            ],
+        )
     };
 
     build_config(&command, &args, &data_dir, &settings)
 }
 
 fn resolve_mcp_source_dir() -> PathBuf {
-    // MCP server is now part of the Python backend
+    // MCP server is part of the unified Python backend
     if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
         PathBuf::from(&manifest)
             .join("..").join("..").join("..")

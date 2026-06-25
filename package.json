@@ -1,8 +1,8 @@
 {
   "name": "local-knowledge-base",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "Local Agent Knowledge Base �?desktop app with MCP server integration",
+  "description": "Local Agent Knowledge Base — desktop app with MCP server integration",
   "workspaces": [
     "apps/desktop",
     "packages/*"
@@ -12,7 +12,7 @@
     "tauri": "npm --workspace=desktop run tauri --",
     "build": "npm --workspace=desktop run build",
     "python-backend": "uv run --directory services/python-backend knowledge-backend",
-    "mcp-server": "uv run --directory apps/mcp-server local-kb-mcp"
+    "mcp-server": "uv run --directory services/python-backend knowledge-backend mcp"
   },
   "engines": {
     "node": ">=18"

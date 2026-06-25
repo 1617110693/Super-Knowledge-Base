@@ -1,21 +1,34 @@
 import { useEffect, useState, useMemo } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useParams, useNavigate } from "react-router-dom";
 import { useKBStore } from "../../stores/useKBStore";
 import { useSettingsStore } from "../../stores/useSettingsStore";
+import { useChatStore } from "../../stores/useChatStore";
 import { useI18n } from "../../i18n";
-import { BookOpen, Settings, FolderOpen, AlertCircle, X, Layers, Pin } from "lucide-react";
+import { BookOpen, Settings, FolderOpen, AlertCircle, X, Layers, Pin, MessageSquare, Plus, ChevronDown, ChevronRight, LayoutDashboard, Pencil, Check, Trash2 } from "lucide-react";
 
 export function Sidebar() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { kbId } = useParams();
   const { knowledgeBases, loadKBs, getSortedKBs, sortMode } = useKBStore();
   const { pythonRunning, pythonError } = useSettingsStore();
+  const { conversations, activeConversationId, setActiveConversation, newConversation, deleteConversation, renameConversation } = useChatStore();
   const { t } = useI18n();
   const [showError, setShowError] = useState(false);
+  const [kbExpanded, setKbExpanded] = useState(true);
+  const [chatExpanded, setChatExpanded] = useState(true);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
 
   useEffect(() => { loadKBs(); }, []);
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + "/");
   const sortedKBs = useMemo(() => getSortedKBs(), [knowledgeBases, sortMode]);
+
+  // Show last 5 conversations
+  const recentConversations = useMemo(
+    () => conversations.slice(-5).reverse(),
+    [conversations]
+  );
 
   return (
     <>
@@ -47,38 +60,112 @@ export function Sidebar() {
           )}
         </div>
 
-        {/* Knowledge Bases — scrollable */}
-        <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
-          {/* Dashboard link */}
-          <Link
-            to="/"
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-colors ${
-              isActive("/") && !kbId ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-muted-foreground"
-            }`}
-          >
-            <FolderOpen className="w-4 h-4" />
-            {t("nav.knowledgeBases")}
-          </Link>
-
-          {/* KB list — indented under "知识库" */}
-          {sortedKBs.length > 0 && (
-            <div className="ml-4 border-l border-border/50 pl-2 space-y-0.5 mt-0.5">
-              {sortedKBs.map((kb) => (
+        {/* Scrollable middle section */}
+        <div className="flex-1 overflow-y-auto py-2 px-2 space-y-1">
+          {/* ── 知识库 Section ── */}
+          <div>
+            <button
+              onClick={() => setKbExpanded(!kbExpanded)}
+              className="w-full flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors hover:bg-muted text-muted-foreground"
+            >
+              {kbExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+              <FolderOpen className="w-4 h-4" />
+              <span className="flex-1 text-left">{t("nav.knowledgeBases")}</span>
+            </button>
+            {kbExpanded && (
+              <div className="ml-2 border-l border-border/50 pl-2 space-y-0.5 mt-0.5">
                 <Link
-                  key={kb.id}
-                  to={`/kb/${kb.id}`}
-                  title={kb.description || undefined}
-                  className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md text-sm transition-colors ${
-                    kbId === kb.id ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-muted-foreground"
+                  to="/"
+                  className={`flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-xs transition-colors ${
+                    isActive("/") && !kbId ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-muted-foreground"
                   }`}
                 >
-                  {kb.pinned ? <Pin className="w-2.5 h-2.5 text-amber-500 shrink-0" /> : <Layers className="w-3 h-3 shrink-0" />}
-                  <span className="truncate">{kb.name}</span>
-                  <span className="text-[10px] text-muted-foreground/60 ml-auto shrink-0">{kb.document_count}</span>
+                  <LayoutDashboard className="w-3.5 h-3.5" />
+                  {t("nav.overview")}
                 </Link>
-              ))}
-            </div>
-          )}
+                {sortedKBs.map((kb) => (
+                  <Link
+                    key={kb.id}
+                    to={`/kb/${kb.id}`}
+                    title={kb.description || undefined}
+                    className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md text-sm transition-colors ${
+                      kbId === kb.id ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {kb.pinned ? <Pin className="w-2.5 h-2.5 text-amber-500 shrink-0" /> : <Layers className="w-3 h-3 shrink-0" />}
+                    <span className="truncate">{kb.name}</span>
+                    <span className="text-[10px] text-muted-foreground/60 ml-auto shrink-0">{kb.document_count}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── 对话 Section ── */}
+          <div>
+            <button
+              onClick={() => setChatExpanded(!chatExpanded)}
+              className="w-full flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors hover:bg-muted text-muted-foreground"
+            >
+              {chatExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+              <MessageSquare className="w-4 h-4" />
+              <span className="flex-1 text-left">{t("nav.chat")}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); setChatExpanded(true); const id = newConversation(); navigate(`/chat/${id}`); }}
+                className="p-0.5 hover:bg-background rounded"
+                title={t("chat.new")}
+              >
+                <Plus className="w-3 h-3" />
+              </button>
+            </button>
+            {chatExpanded && (
+              <div className="ml-2 border-l border-border/50 pl-2 space-y-0.5 mt-0.5">
+                {recentConversations.length === 0 ? (
+                  <p className="text-xs text-muted-foreground px-2 py-1">{t("chat.empty")}</p>
+                ) : (
+                  <div className="max-h-[16rem] overflow-y-auto space-y-0.5">
+                    {recentConversations.map((conv) => (
+                      <div key={conv.id} className="group relative">
+                        {renamingId === conv.id ? (
+                          <div className="flex items-center gap-1 px-2 py-1.5">
+                            <input autoFocus value={renameDraft}
+                              onChange={(e) => setRenameDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") { renameConversation(conv.id, renameDraft); setRenamingId(null); }
+                                if (e.key === "Escape") setRenamingId(null);
+                              }}
+                              onBlur={() => { renameConversation(conv.id, renameDraft); setRenamingId(null); }}
+                              className="text-xs bg-background border rounded px-1.5 py-0.5 flex-1 outline-none ring-1 ring-primary" />
+                          </div>
+                        ) : (
+                          <Link
+                            to={`/chat/${conv.id}`}
+                            onClick={() => setActiveConversation(conv.id)}
+                            className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md text-sm transition-colors truncate ${
+                              activeConversationId === conv.id ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-muted-foreground"
+                            }`}
+                          >
+                            <MessageSquare className="w-3 h-3 shrink-0" />
+                            <span className="truncate text-xs flex-1">{conv.title || conv.messages[0]?.content?.slice(0, 30) || t("chat.new")}</span>
+                          </Link>
+                        )}
+                        <div className="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5">
+                          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setRenamingId(conv.id); setRenameDraft(conv.title || ""); }}
+                            className="p-0.5 hover:bg-muted rounded text-muted-foreground/60" title={t("kb.rename")}>
+                            <Pencil className="w-2.5 h-2.5" />
+                          </button>
+                          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteConversation(conv.id); }}
+                            className="p-0.5 hover:bg-red-50 rounded text-muted-foreground/60 hover:text-red-500" title={t("docs.delete")}>
+                            <Trash2 className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Settings — fixed to bottom */}

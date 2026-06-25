@@ -12,6 +12,12 @@ pub struct AppSettings {
     pub rerank_api_base: String,
     pub rerank_api_key: String,
     pub rerank_model: String,
+    #[serde(default)]
+    pub llm_api_base: String,
+    #[serde(default)]
+    pub llm_api_key: String,
+    #[serde(default)]
+    pub llm_model: String,
     pub chunk_strategy: String,
     pub chunk_size: u32,
     pub chunk_overlap: u32,
@@ -30,6 +36,9 @@ impl Default for AppSettings {
             rerank_api_base: "https://api.jina.ai/v1".to_string(),
             rerank_api_key: String::new(),
             rerank_model: "jina-reranker-v2-base-multilingual".to_string(),
+            llm_api_base: "https://api.openai.com/v1".to_string(),
+            llm_api_key: String::new(),
+            llm_model: "gpt-4o-mini".to_string(),
             chunk_strategy: "recursive".to_string(),
             chunk_size: 512,
             chunk_overlap: 50,

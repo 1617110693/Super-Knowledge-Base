@@ -15,7 +15,7 @@ export function MarkdownRenderer({ children, className }: Props) {
     <div className={className}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        rehypePlugins={[[rehypeKatex, { strict: false, throwOnError: false }]]}
         components={{
           a({ href, children: linkChildren, ...props }) {
             const handleClick = (e: React.MouseEvent) => {

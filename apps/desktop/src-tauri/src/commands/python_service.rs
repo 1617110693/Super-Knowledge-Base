@@ -16,20 +16,39 @@ pub struct PythonProcess(pub Mutex<Option<Child>>);
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 fn kill_backend_processes() {
-    // Kill the known backend exe (production)
+    // Kill every possible process name variant of the backend.
+    // Tauri externalBin renames the sidecar to include the target triple
+    // (e.g. knowledge-backend-x86_64-pc-windows-msvc.exe), so we must
+    // cover the simple name, the triple-suffixed name, and legacy names.
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/IM", "knowledge-backend.exe"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn();
+        for name in &[
+            "knowledge-backend.exe",
+            "knowledge-backend-x86_64-pc-windows-msvc.exe",
+            "knowledge-backend-aarch64-apple-darwin",
+            "knowledge-backend-x86_64-unknown-linux-gnu",
+            // legacy MCP-only exe (pre-merge)
+            "local-kb-mcp.exe",
+            "local-kb-mcp-x86_64-pc-windows-msvc.exe",
+        ] {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/IM", name])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn();
+        }
     }
     #[cfg(not(target_os = "windows"))]
     {
+        // pkill -f matches the pattern anywhere in the command line
         let _ = std::process::Command::new("pkill")
             .args(["-9", "-f", "knowledge-backend"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        let _ = std::process::Command::new("pkill")
+            .args(["-9", "-f", "local-kb-mcp"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn();

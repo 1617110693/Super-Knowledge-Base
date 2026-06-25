@@ -6,6 +6,7 @@ import { KBSettings } from "./components/knowledge-base/KBSettings";
 import { DocumentPreview } from "./components/documents/DocumentPreview";
 import { SearchInterface } from "./components/search/SearchInterface";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
+import { ChatPage } from "./components/chat/ChatPage";
 
 function App() {
   return (
@@ -16,6 +17,8 @@ function App() {
           <Route path="kb/:kbId" element={<KBSettings />} />
           <Route path="kb/:kbId/documents/:docId" element={<DocumentPreview />} />
           <Route path="kb/:kbId/search" element={<SearchInterface />} />
+          <Route path="chat/:convId" element={<ChatPage />} />
+          <Route path="chat" element={<ChatPage />} />
           <Route path="settings" element={<SettingsPanel />} />
         </Route>
       </Routes>

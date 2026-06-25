@@ -87,13 +87,15 @@ def search_knowledge_base(
                 new_results = []
                 for rr in reranked[:top_k]:
                     if rr.index < len(results):
-                        results[rr.index]["score"] = rr.score
-                        new_results.append(results[rr.index])
+                        r = results[rr.index]
+                        if len(r.get("content", "").strip()) >= 20:
+                            r["score"] = rr.score
+                            new_results.append(r)
                 results = new_results
             except Exception:
-                results = results[:top_k]
+                results = [r for r in results[:top_k] if len(r.get("content", "").strip()) >= 20]
         else:
-            results = results[:top_k]
+            results = [r for r in results[:top_k] if len(r.get("content", "").strip()) >= 20]
 
         return results
     finally:
@@ -351,18 +353,9 @@ def add_document(
         except MinerUError as e:
             return {"error": f"MinerU parse failed: {e}"}
 
-    # Write document to KB directory
+    # Write document markdown to KB directory (metadata saved only after indexing)
     doc_dir = Path(DATA_DIR) / f"kb_{kb_id}" / "docs" / doc_id
     doc_dir.mkdir(parents=True, exist_ok=True)
-
-    meta = {
-        "id": doc_id, "kb_id": kb_id, "name": doc_name,
-        "file_type": file_type, "file_size": len(markdown_content.encode("utf-8")),
-        "parse_status": "done", "parse_error": None,
-        "chunk_count": 0, "embedding_model": "",
-        "created_at": now, "updated_at": now,
-    }
-    (doc_dir / "metadata.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     (doc_dir / "full.md").write_text(markdown_content, encoding="utf-8")
 
     # Index: chunk + embed
@@ -372,9 +365,11 @@ def add_document(
     embedder = OpenAICompatibleEmbedder(
         _config.embedding_api_base, _config.embedding_api_key, _config.embedding_model,
     )
-    chunk_texts = [c.content for c in chunks]
-    vectors = embedder.embed_batch(chunk_texts)
-    embedder.close()
+    try:
+        chunk_texts = [c.content for c in chunks]
+        vectors = embedder.embed(chunk_texts)
+    finally:
+        embedder.close()
 
     db = _get_db()
     try:
@@ -384,7 +379,7 @@ def add_document(
             db.create_table(kb_id, embedding_dim)
             table = db.get_table(kb_id)
 
-        # Delete old chunks for this doc
+        # Delete old chunks for this doc (re-index scenario)
         try:
             table.delete(f"doc_id = '{doc_id}'")
         except Exception:
@@ -408,12 +403,18 @@ def add_document(
     finally:
         db.close()
 
+    # Only write metadata AFTER successful indexing — prevents orphaned docs
+    meta = {
+        "id": doc_id, "kb_id": kb_id, "name": doc_name,
+        "file_type": file_type, "file_size": len(markdown_content.encode("utf-8")),
+        "parse_status": "done", "parse_error": None,
+        "chunk_count": len(chunks), "embedding_model": _config.embedding_model,
+        "created_at": now, "updated_at": now,
+    }
+    (doc_dir / "metadata.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+
     # Update registry counts
     _update_kb_counts(kb_id)
-
-    meta["chunk_count"] = len(chunks)
-    meta["embedding_model"] = _config.embedding_model
-    (doc_dir / "metadata.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
     return {"doc_id": doc_id, "name": doc_name, "chunk_count": len(chunks), "status": "indexed"}
 

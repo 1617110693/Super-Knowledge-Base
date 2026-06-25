@@ -290,6 +290,25 @@ export function SettingsPanel() {
         )}
       </section>
 
+      {/* LLM for Chat */}
+      <section className="mb-8">
+        <h3 className="text-lg font-semibold mb-4 border-b pb-2">{t("settings.llm")}</h3>
+        {[
+          { l: t("settings.apiBase"), k: "llm_api_base", ph: "https://api.openai.com/v1" },
+          { l: t("settings.apiKey"), k: "llm_api_key", ph: "" },
+          { l: t("settings.model"), k: "llm_model", ph: "gpt-4o-mini" },
+        ].map(({ l, k, ph }) => (
+          <div key={k} className="mb-3">
+            <label className="block text-sm font-medium mb-1">{l}</label>
+            <input type={k.includes("key") ? "password" : "text"}
+              value={(form as any)[k] || ""}
+              onChange={(e) => update(k as any, e.target.value)}
+              placeholder={ph}
+              className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+          </div>
+        ))}
+      </section>
+
       {/* Chunking */}
       <section className="mb-8">
         <h3 className="text-lg font-semibold mb-4 border-b pb-2">{t("settings.chunking")}</h3>

@@ -121,79 +121,167 @@ class LanceDBManager:
                 table, query_vector, query_text, top_k, doc_id_filter
             )
 
+    # CJK Unicode ranges
+    _CJK_RANGES = [
+        (0x4E00, 0x9FFF), (0x3400, 0x4DBF), (0xF900, 0xFAFF),
+        (0x2E80, 0x2EFF), (0x3000, 0x303F), (0x31C0, 0x31EF),
+    ]
+
+    @classmethod
+    def _has_cjk(cls, text: str) -> bool:
+        return any(
+            any(lo <= ord(ch) <= hi for lo, hi in cls._CJK_RANGES)
+            for ch in text
+        )
+
+    @classmethod
+    def _cjk_bigrams(cls, text: str) -> list[str]:
+        """Split CJK text into character bigrams for keyword matching."""
+        chars = [ch for ch in text if cls._has_cjk(ch)]
+        if len(chars) < 2:
+            return chars
+        return [chars[i] + chars[i + 1] for i in range(len(chars) - 1)]
+
+    def _keyword_search(self, table, query_text: str, top_k: int, doc_id_filter: Optional[str] = None) -> List[dict]:
+        """Chinese-aware keyword search: uses bigram matching for CJK, falls back to FTS for non-CJK."""
+        try:
+            # Try built-in FTS first (works well for English)
+            try:
+                results = table.search(query_text, query_type="fts").limit(top_k * 2)
+                if doc_id_filter:
+                    results = results.where(f"doc_id = '{doc_id_filter}'")
+                fts_results = results.limit(top_k * 2).to_list()
+                if fts_results:
+                    return self._format_results(fts_results[:top_k], "fts")
+            except Exception:
+                pass
+
+            # Chinese bigram fallback: load content into memory and match
+            if self._has_cjk(query_text):
+                bigrams = self._cjk_bigrams(query_text)
+                if not bigrams:
+                    return []
+
+                # Get all chunks and score by bigram match count
+                try:
+                    scan = table.search().limit(10000)
+                    if doc_id_filter:
+                        scan = scan.where(f"doc_id = '{doc_id_filter}'")
+                    all_rows = scan.to_list()
+                except Exception:
+                    return []
+
+                scored = []
+                query_lower = query_text.lower()
+                for r in all_rows:
+                    content = r.get("content", "")
+                    score = 0.0
+                    # Count bigram matches
+                    for bg in bigrams:
+                        if bg in content:
+                            score += 1.0
+                    # Bonus for exact substring match
+                    if query_text in content:
+                        score += len(query_text) * 0.5
+                    # Also check case-insensitive for ASCII portions
+                    ascii_part = "".join(ch for ch in query_text if ord(ch) < 128).strip()
+                    if ascii_part and ascii_part.lower() in content.lower():
+                        score += len(ascii_part) * 0.3
+
+                    if score > 0:
+                        scored.append((r, score / max(len(bigrams), 1)))
+
+                scored.sort(key=lambda x: x[1], reverse=True)
+                return self._format_results([r for r, _ in scored[:top_k]], "fts")
+            return []
+        except Exception:
+            return []
+
     def _vector_search(self, table, query_vector, top_k, doc_id_filter):
-        results = table.search(query_vector).limit(top_k * 2)
+        results = table.search(query_vector).metric("cosine").limit(top_k * 2)
         if doc_id_filter:
             results = results.where(f"doc_id = '{doc_id_filter}'")
         return self._format_results(results.limit(top_k).to_list(), "vector")
 
     def _fts_search(self, table, query_text, top_k, doc_id_filter):
-        try:
-            results = table.search(query_text, query_type="fts").limit(top_k * 2)
-            if doc_id_filter:
-                results = results.where(f"doc_id = '{doc_id_filter}'")
-            return self._format_results(results.limit(top_k).to_list(), "fts")
-        except Exception:
-            return []
+        return self._keyword_search(table, query_text, top_k, doc_id_filter)
 
     def _hybrid_search(
         self, table, query_vector, query_text, top_k, doc_id_filter
     ):
-        vector_results = self._vector_search(
-            table, query_vector, top_k, doc_id_filter
-        )
+        """Keyword-first hybrid: FTS provides the primary ranking.
+        Vector results only boost items also found by keyword, or fill gaps."""
+        fts_results = []
         if query_text:
-            fts_results = self._fts_search(table, query_text, top_k, doc_id_filter)
-            return self._merge_hybrid_results(vector_results, fts_results, top_k)
-        return vector_results
+            fts_results = self._fts_search(table, query_text, top_k * 2, doc_id_filter)
+
+        # If keyword has good results, use keyword-first ranking
+        if fts_results:
+            fts_ids = {r["chunk_id"] for r in fts_results}
+            # Get vector results to find semantic matches that keyword missed
+            vector_results = self._vector_search(table, query_vector, top_k * 2, doc_id_filter)
+            # Separate: overlap (keyword + vector agree) vs vector-only
+            overlap = [r for r in vector_results if r["chunk_id"] in fts_ids]
+            vector_only = [r for r in vector_results if r["chunk_id"] not in fts_ids]
+
+            # Base: keyword results (already sorted by keyword score)
+            merged = list(fts_results)
+            merged_ids = set(r["chunk_id"] for r in merged)
+
+            # Boost items that keyword AND vector agree on
+            for r in overlap:
+                if r["score"] > 0.5:  # only boost if vector is confident
+                    for m in merged:
+                        if m["chunk_id"] == r["chunk_id"]:
+                            m["score"] = m["score"] * 1.5  # significant boost
+                            break
+
+            # Append vector-only if we have space (low-confidence semantic matches)
+            vector_only.sort(key=lambda x: x.get("score", 0), reverse=True)
+            for r in vector_only:
+                if len(merged) >= top_k:
+                    break
+                if r.get("score", 0) > 0.7:  # only add if vector is very confident
+                    r["score"] = r["score"] * 0.5  # de-weighted
+                    merged.append(r)
+
+            merged.sort(key=lambda x: x.get("score", 0), reverse=True)
+            return merged[:top_k]
+
+        # No keyword results: fall back to vector only
+        return self._vector_search(table, query_vector, top_k, doc_id_filter)
 
     def _merge_hybrid_results(self, vector_results, fts_results, top_k):
-        scores: dict[str, float] = {}
-        items: dict[str, dict] = {}
-
-        for r in vector_results:
-            cid = r["chunk_id"]
-            scores[cid] = r.get("score", 0) * 0.7
-            items[cid] = r
-        for r in fts_results:
-            cid = r["chunk_id"]
-            s = r.get("score", 0) * 0.3
-            if cid in scores:
-                scores[cid] += s
-                items[cid]["score"] = scores[cid]
-            else:
-                scores[cid] = s
-                items[cid] = {**r, "score": s}
-
-        merged = sorted(
-            items.values(), key=lambda x: x.get("score", 0), reverse=True
-        )
-        return merged[:top_k]
+        """Legacy merge — kept for API compatibility, not used by new hybrid."""
+        return fts_results[:top_k]
 
     def _format_results(self, raw_results: List[dict], source: str) -> List[dict]:
         formatted = []
         for i, r in enumerate(raw_results):
+            content = r.get("content", "")
             metadata = {}
             try:
                 metadata = json.loads(r.get("metadata_json", "{}"))
             except (json.JSONDecodeError, TypeError):
                 pass
             # _distance is a dissimilarity measure (lower = better match).
-            # Convert to a 0–1 similarity score where higher = better.
+            # For cosine: range [0, 2] where 0=identical, 2=opposite.
+            # Convert to 0–1 similarity: (2.0 - distance) / 2.0
             distance = float(r.get("_distance", 0))
-            score = 1.0 / (1.0 + distance)
+            score = (2.0 - distance) / 2.0
             formatted.append(
                 {
                     "chunk_id": r.get("chunk_id", ""),
                     "doc_id": r.get("doc_id", ""),
                     "kb_id": r.get("kb_id", ""),
                     "doc_name": r.get("doc_name", ""),
-                    "content": r.get("content", ""),
+                    "content": content,
                     "score": score,
                     "metadata": metadata,
                 }
             )
-        return formatted
+        # Post-filter: remove parsing artifact chunks (< 20 meaningful chars like "$$")
+        return [r for r in formatted if len(r["content"].strip()) >= 20]
 
     def get_kb_stats(self, kb_id: str) -> dict:
         table = self.get_table(kb_id)

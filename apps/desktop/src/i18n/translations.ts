@@ -128,6 +128,13 @@ export const translations = {
   "chat.placeholder": { en: "Ask a question about your documents...", "zh-CN": "向文档提问…" },
   "chat.empty": { en: "Ask questions about your documents", "zh-CN": "向你的文档提问" },
   "chat.sources": { en: "Sources", "zh-CN": "来源" },
+  "chat.new": { en: "New Chat", "zh-CN": "新对话" },
+  "chat.newConversation": { en: "New Conversation", "zh-CN": "新对话" },
+  "chat.emptyHint": { en: "Start a conversation with the AI assistant", "zh-CN": "开始与 AI 助手对话" },
+  "chat.delete": { en: "Delete conversation", "zh-CN": "删除对话" },
+  "chat.noKb": { en: "No KB (general chat)", "zh-CN": "无知识库（通用对话）" },
+  "chat.selectKbHint": { en: "Select a knowledge base above to enable RAG search.", "zh-CN": "在上方选择一个知识库以启用 RAG 检索。" },
+  "chat.noApiKey": { en: "Please configure the LLM API Key in Settings first.", "zh-CN": "请先在设置中配置 LLM API Key。" },
 
   // Settings
   "settings.title": { en: "Settings", "zh-CN": "设置" },

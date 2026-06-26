@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { ChatMessage, SearchResult, ToolCall } from "../types";
+import { loadChatConversations, saveChatConversations } from "../services/tauriBridge";
 
 export interface Conversation {
   id: string;
@@ -13,7 +14,9 @@ interface ChatState {
   conversations: Conversation[];
   activeConversationId: string | null;
   streaming: boolean;
+  loaded: boolean;
 
+  load: () => Promise<void>;
   newConversation: () => string;
   setActiveConversation: (id: string) => void;
   addMessage: (convId: string, msg: ChatMessage) => void;
@@ -24,23 +27,27 @@ interface ChatState {
   renameConversation: (id: string, title: string) => void;
 }
 
-function loadConversations(): Conversation[] {
-  try {
-    const data = localStorage.getItem("chatConversations");
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveConversations(convs: Conversation[]) {
-  localStorage.setItem("chatConversations", JSON.stringify(convs));
+function persistConversations(convs: Conversation[]) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  saveChatConversations(convs as any).catch(console.error);
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
-  conversations: loadConversations(),
+  conversations: [],
   activeConversationId: null,
   streaming: false,
+  loaded: false,
+
+  load: async () => {
+    if (get().loaded) return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const convs = await loadChatConversations();
+      set({ conversations: convs as any, loaded: true });
+    } catch {
+      set({ loaded: true });
+    }
+  },
 
   newConversation: () => {
     const id = crypto.randomUUID();
@@ -52,7 +59,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       updatedAt: new Date().toISOString(),
     };
     const conversations = [conv, ...get().conversations];
-    saveConversations(conversations);
+    persistConversations(conversations);
     set({ conversations, activeConversationId: id });
     return id;
   },
@@ -66,12 +73,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...c,
         messages: [...c.messages, msg],
         updatedAt: new Date().toISOString(),
-        // Auto-title from first user message
         title: c.title || (msg.role === "user" ? msg.content.slice(0, 40) : ""),
       };
       return updated;
     });
-    saveConversations(conversations);
+    persistConversations(conversations);
     set({ conversations });
   },
 
@@ -84,7 +90,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       return { ...c, messages, updatedAt: new Date().toISOString() };
     });
-    saveConversations(conversations);
+    persistConversations(conversations);
     set({ conversations });
   },
 
@@ -99,13 +105,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       return { ...c, messages, updatedAt: new Date().toISOString() };
     });
-    saveConversations(conversations);
+    persistConversations(conversations);
     set({ conversations });
   },
 
   deleteConversation: (id) => {
     const conversations = get().conversations.filter((c) => c.id !== id);
-    saveConversations(conversations);
+    persistConversations(conversations);
     set({
       conversations,
       activeConversationId: get().activeConversationId === id ? null : get().activeConversationId,
@@ -113,7 +119,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   clearAll: () => {
-    saveConversations([]);
+    persistConversations([]);
     set({ conversations: [], activeConversationId: null });
   },
 
@@ -121,7 +127,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const conversations = get().conversations.map((c) =>
       c.id === id ? { ...c, title } : c
     );
-    saveConversations(conversations);
+    persistConversations(conversations);
     set({ conversations });
   },
 }));

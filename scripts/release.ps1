@@ -3,7 +3,7 @@
 # Prerequisites: python, uv, node, rust
 # Usage: .\scripts\release.ps1 [version]
 
-param([string]$Version = "2.0.0")
+param([string]$Version = "2.5.0")
 
 $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot + "\.."

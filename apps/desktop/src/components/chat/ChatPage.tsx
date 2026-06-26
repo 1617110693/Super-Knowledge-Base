@@ -114,8 +114,15 @@ export function ChatPage() {
       const kbNames = selectedKbIds.length > 0
         ? selectedKbIds.map((id) => knowledgeBases.find((kb) => kb.id === id)?.name || id).join(", ")
         : "";
+      const ragInstr = `You have access to knowledge bases: ${kbNames}.
+
+HOW TO ANSWER QUESTIONS (RAG-first workflow):
+1. Use search_knowledge_base to find the most relevant chunks across all KBs. This is your PRIMARY tool for answering questions — it returns precise, pre-chunked content.
+2. If you need more context around a result, use get_chunk_by_index with neighboring chunk_index values, or search_knowledge_base with context_window > 0.
+3. DO NOT use get_document or get_document_chunks to answer questions — documents can be hundreds of pages and will overflow context. These tools are for browsing/document management, not Q&A.
+4. get_document_summary gives you a document's structure (headings, chunk count) without loading content — use it to understand what a document covers.`;
       const systemMsg = selectedKbIds.length > 0
-        ? `You have access to knowledge bases: ${kbNames}. Use search_knowledge_base to find information. ${citeInstr} ${mathInstr}`
+        ? `${ragInstr}\n\n${citeInstr}\n\n${mathInstr}`
         : `You are a helpful assistant. ${mathInstr}`;
 
       // Build conversation history including tool messages

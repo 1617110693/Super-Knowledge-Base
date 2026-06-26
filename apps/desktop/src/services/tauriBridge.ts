@@ -222,3 +222,22 @@ export async function configureClaudeMCP(): Promise<{
 }> {
   return invoke("configure_claude_mcp");
 }
+
+// ── Chat Conversations ──
+
+export interface ChatConversation {
+  id: string;
+  title: string;
+  messages: Array<Record<string, unknown>>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function loadChatConversations(): Promise<ChatConversation[]> {
+  return invoke("load_chat_conversations");
+}
+
+export async function saveChatConversations(conversations: ChatConversation[]): Promise<void> {
+  // Strip to plain objects to satisfy Tauri's serialization
+  return invoke("save_chat_conversations", { conversations: JSON.parse(JSON.stringify(conversations)) });
+}

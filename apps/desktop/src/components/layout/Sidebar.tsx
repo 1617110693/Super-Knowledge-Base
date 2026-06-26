@@ -12,7 +12,8 @@ export function Sidebar() {
   const { kbId } = useParams();
   const { knowledgeBases, loadKBs, getSortedKBs, sortMode } = useKBStore();
   const { pythonRunning, pythonError } = useSettingsStore();
-  const { conversations, activeConversationId, setActiveConversation, newConversation, deleteConversation, renameConversation } = useChatStore();
+  const { conversations, activeConversationId, setActiveConversation, newConversation, deleteConversation, renameConversation, load: loadChats } = useChatStore();
+  useEffect(() => { loadChats(); }, [loadChats]);
   const { t } = useI18n();
   const [showError, setShowError] = useState(false);
   const [kbExpanded, setKbExpanded] = useState(true);

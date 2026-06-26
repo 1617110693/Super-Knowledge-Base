@@ -54,10 +54,15 @@ def search_knowledge_base(
     doc_id_filter: Optional[str] = None,
     context_window: int = 0,
 ) -> list[dict]:
-    """Search a knowledge base with hybrid (vector + BM25) search and optional reranking.
+    """PRIMARY tool for Q&A. Hybrid search (vector + BM25 + optional rerank) on a single KB.
 
-    Set context_window > 0 to include neighboring chunks (prev/next) for each result,
-    giving more surrounding context around each hit."""
+    Use this FIRST for any question — it returns the most relevant chunks.
+    Set context_window > 0 to also get neighboring chunks for each hit.
+    Use doc_id_filter to restrict to a specific document after discovering its relevance.
+
+    After searching, use get_chunk_by_index if you need more adjacent context,
+    or get_document_summary to understand the source document's structure.
+    Do NOT use get_document for Q&A — documents can be hundreds of pages."""
     db = _get_db()
     try:
         embedder = OpenAICompatibleEmbedder(
@@ -119,10 +124,11 @@ def search_all_knowledge_bases(
     rerank: bool = True,
     context_window: int = 0,
 ) -> list[dict]:
-    """Search across all knowledge bases (or specified ones) and return top results.
+    """Search across ALL knowledge bases (or specified ones). Returns top results.
 
-    Use this to find information without knowing which KB contains it.
-    If kb_ids is omitted, searches all available KBs."""
+    Use this when you don't know which KB contains relevant information.
+    After finding results, use the returned kb_id with search_knowledge_base
+    for deeper search within that KB, or get_document_summary to explore a document."""
     db = _get_db()
     try:
         embedder = OpenAICompatibleEmbedder(
@@ -293,9 +299,10 @@ def list_documents(kb_id: str) -> list[dict]:
 
 @mcp.tool
 def get_document(kb_id: str, doc_id: str, include_chunks: bool = False, max_chars: int = 30000) -> dict:
-    """Get document content. Content is truncated if it exceeds max_chars (0 = no limit).
+    """Get raw document content. Truncated if exceeds max_chars (0=no limit).
 
-    Prefer get_document_summary first to get an overview before loading full content."""
+    ⚠️ NOT for Q&A — use search_knowledge_base to find relevant chunks instead.
+    Only use this for document management tasks (editing, reviewing full structure)."""
     doc_dir = Path(DATA_DIR) / f"kb_{kb_id}" / "docs" / doc_id
     if not doc_dir.exists():
         return {"error": f"Document not found: {doc_id}"}
@@ -353,11 +360,11 @@ def get_document(kb_id: str, doc_id: str, include_chunks: bool = False, max_char
 
 @mcp.tool
 def get_document_summary(kb_id: str, doc_id: str) -> dict:
-    """Get a structured summary of a document WITHOUT loading full content.
+    """Get document structure WITHOUT loading content: metadata, heading outline, first/last chunk previews.
 
-    Returns metadata, heading outline (table of contents), total chunk count,
-    and a preview of the first and last few chunks. Use this BEFORE get_document
-    to decide whether and how to load the full document."""
+    Use this after search_knowledge_base to understand what a document covers,
+    or to decide which chunks to fetch next. Not a substitute for search — use
+    search_knowledge_base first, then use this to explore a specific document's structure."""
     import re
 
     doc_dir = Path(DATA_DIR) / f"kb_{kb_id}" / "docs" / doc_id
@@ -751,7 +758,10 @@ def get_document_chunks(kb_id: str, doc_id: str, limit: int = 0) -> dict:
 
     limit: 0 = all chunks, N > 0 = first N chunks, N < 0 = last |N| chunks.
     Use a positive limit to preview the document without overwhelming context.
-    Use a negative limit to see the ending chunks."""
+    Use a negative limit to see the ending chunks.
+
+    Not for Q&A — use search_knowledge_base to find relevant content first.
+    Use this to explore a document's structure after search results point to it."""
     doc_dir = Path(DATA_DIR) / f"kb_{kb_id}" / "docs" / doc_id
     if not doc_dir.exists():
         return {"error": f"Document not found: {doc_id}"}

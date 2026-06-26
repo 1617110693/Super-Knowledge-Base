@@ -5,7 +5,7 @@ mod models;
 mod storage;
 
 use commands::{
-    claude_config, documents, knowledge_base, parsing, python_service, settings,
+    chat, claude_config, documents, knowledge_base, parsing, python_service, settings,
 };
 use models::settings::AppSettings;
 use storage::file_store::FileStore;
@@ -158,6 +158,8 @@ pub fn run() {
             python_service::get_python_backend_status,
             claude_config::get_mcp_config_json,
             claude_config::configure_claude_mcp,
+            chat::load_chat_conversations,
+            chat::save_chat_conversations,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

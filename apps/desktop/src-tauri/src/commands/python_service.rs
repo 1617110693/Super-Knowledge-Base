@@ -28,8 +28,8 @@ fn kill_backend_processes() {
             "knowledge-backend-aarch64-apple-darwin",
             "knowledge-backend-x86_64-unknown-linux-gnu",
             // legacy MCP-only exe (pre-merge)
-            "local-kb-mcp.exe",
-            "local-kb-mcp-x86_64-pc-windows-msvc.exe",
+            "skb-mcp.exe",
+            "skb-mcp-x86_64-pc-windows-msvc.exe",
         ] {
             let _ = std::process::Command::new("taskkill")
                 .args(["/F", "/IM", name])
@@ -48,7 +48,7 @@ fn kill_backend_processes() {
             .stderr(std::process::Stdio::null())
             .spawn();
         let _ = std::process::Command::new("pkill")
-            .args(["-9", "-f", "local-kb-mcp"])
+            .args(["-9", "-f", "skb-mcp"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn();

@@ -11,7 +11,7 @@ from .api import documents, knowledge_bases, search, settings, utils
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Local Knowledge Base - Python Backend",
+        title="SKB - Python Backend",
         version="0.1.0",
         description="Embedding, vector search, and RAG service",
     )

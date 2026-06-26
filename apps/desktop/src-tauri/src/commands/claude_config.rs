@@ -59,7 +59,7 @@ pub async fn get_mcp_config_json(
                             if meta.len() > 1024 {
                                 let config = serde_json::json!({
                                     "mcpServers": {
-                                        "local-knowledge-base": {
+                                        "skb": {
                                             "command": sidecar.to_string_lossy(),
                                             "args": ["mcp"],
                                             "env": {
@@ -81,7 +81,7 @@ pub async fn get_mcp_config_json(
     let mcp_dir = resolve_mcp_source_dir();
     let config = serde_json::json!({
         "mcpServers": {
-            "local-knowledge-base": {
+            "skb": {
                 "command": "uv",
                 "args": ["run", "--directory", &mcp_dir.to_string_lossy(), "knowledge-backend", "mcp"],
                 "env": {
@@ -182,7 +182,7 @@ fn build_config(
     }
 
     let mcp_config = serde_json::json!({
-        "local-knowledge-base": entry
+        "skb": entry
     });
 
     // Load existing config or create new
@@ -201,7 +201,7 @@ fn build_config(
     if existing.get("mcpServers").is_none() {
         existing["mcpServers"] = serde_json::json!({});
     }
-    existing["mcpServers"]["local-knowledge-base"] = mcp_config["local-knowledge-base"].clone();
+    existing["mcpServers"]["skb"] = mcp_config["skb"].clone();
 
     // Write back
     let content = serde_json::to_string_pretty(&existing)

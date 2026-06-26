@@ -47,6 +47,7 @@ def split_pdf(req: SplitRequest) -> SplitResult:
         needs_split = True
 
     if not needs_split:
+        _close_reader(reader)
         return SplitResult(original=req.file_path, parts=[req.file_path], split=False)
 
     parts = []
@@ -54,19 +55,36 @@ def split_pdf(req: SplitRequest) -> SplitResult:
     parent = path.parent
     part_num = 0
 
-    for start in range(0, page_count, req.max_pages):
-        part_num += 1
-        writer = PdfWriter()
-        end = min(start + req.max_pages, page_count)
-        for i in range(start, end):
-            writer.add_page(reader.pages[i])
+    try:
+        for start in range(0, page_count, req.max_pages):
+            part_num += 1
+            writer = PdfWriter()
+            end = min(start + req.max_pages, page_count)
+            for i in range(start, end):
+                writer.add_page(reader.pages[i])
 
-        part_path = parent / f"{base}_part{part_num}.pdf"
-        with open(part_path, "wb") as f:
-            writer.write(f)
-        parts.append(str(part_path))
+            part_path = parent / f"{base}_part{part_num}.pdf"
+            with open(part_path, "wb") as f:
+                writer.write(f)
+            parts.append(str(part_path))
+    finally:
+        _close_reader(reader)
 
     return SplitResult(original=req.file_path, parts=parts, split=True)
+
+
+def _close_reader(reader):
+    """Release file handles held by pypdf's PdfReader.
+
+    On Windows, an open file stream prevents the file from being overwritten
+    or deleted until the process exits, even after the PdfReader goes out of
+    scope.  Explicitly closing the stream avoids the lock.
+    """
+    try:
+        if hasattr(reader, "stream") and reader.stream:
+            reader.stream.close()
+    except Exception:
+        pass
 
 
 @router.post("/utils/clean-orphans")

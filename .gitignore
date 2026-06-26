@@ -21,7 +21,6 @@ src-tauri/target/
 # Build output
 apps/desktop/dist/
 apps/desktop/src-tauri/binaries/
-apps/mcp-server/build/
 services/python-backend/build/
 *.pkg
 

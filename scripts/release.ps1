@@ -1,4 +1,4 @@
-# Local Knowledge Base — Full Release Build
+# SKB (Super Knowledge Base) — Full Release Build
 # Produces a single Tauri installer containing everything.
 # Prerequisites: python, uv, node, rust
 # Usage: .\scripts\release.ps1 [version]
@@ -23,11 +23,11 @@ function Invoke-Native([ScriptBlock]$ScriptBlock) {
     }
 }
 
-Write-Host "=== Building Local Knowledge Base v$Version ===" -ForegroundColor Cyan
+Write-Host "=== Building SKB v$Version ===" -ForegroundColor Cyan
 
 # 0. Kill any running backend processes that would lock files
 Write-Host "`n[0/4] Stopping running processes..." -ForegroundColor Yellow
-@("local-kb-mcp", "knowledge-backend") | ForEach-Object {
+@("skb-mcp", "knowledge-backend") | ForEach-Object {
     try { Stop-Process -Name $_ -Force -ErrorAction SilentlyContinue } catch {}
 }
 $defaultPort = 17390
@@ -108,7 +108,7 @@ Pop-Location
 Write-Host "`n[4/4] Copying sidecar + building desktop installer..." -ForegroundColor Yellow
 $binDir = "$Root\apps\desktop\src-tauri\binaries"
 # Remove old MCP-only exe if present from a previous release
-Remove-Item -Force "$binDir\local-kb-mcp*" -ErrorAction SilentlyContinue
+Remove-Item -Force "$binDir\skb-mcp*" -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 Copy-Item $backendExe "$binDir\knowledge-backend-x86_64-pc-windows-msvc.exe" -Force
 Write-Host "  Copied knowledge-backend to Tauri binaries" -ForegroundColor Green

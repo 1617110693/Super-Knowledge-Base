@@ -1,4 +1,4 @@
-# Local Agent Knowledge Base
+# SKB — Super Knowledge Base
 
 A local-first desktop knowledge base for AI agents. Built with **Tauri v2 + React + Python**, supports **OpenAI-compatible embedding & rerank models**, **MinerU document parsing**, ships with an **MCP server** for Claude Code, and includes an **LLM Chat (RAG)** module.
 
@@ -74,7 +74,7 @@ A local-first desktop knowledge base for AI agents. Built with **Tauri v2 + Reac
 
 ```bash
 git clone https://github.com/1617110693/Local-Agent-Knowledge-Base.git
-cd local-knowledge-base
+cd super-knowledge-base
 npm install
 cd services/python-backend && uv sync && cd ../..
 npm run tauri dev
@@ -95,10 +95,10 @@ Open the app → Settings → click **"Configure Claude Code MCP"** to auto-gene
 ```json
 {
   "mcpServers": {
-    "local-knowledge-base": {
+    "skb": {
       "command": "uv",
       "args": ["run", "--directory", "/path/to/services/python-backend", "knowledge-backend", "mcp"],
-      "env": { "KNOWLEDGE_BASE_DATA_DIR": "~/.local-knowledge-base" }
+      "env": { "KNOWLEDGE_BASE_DATA_DIR": "~/.super-knowledge-base" }
     }
   }
 }
@@ -120,7 +120,7 @@ Open the app → Settings → click **"Configure Claude Code MCP"** to auto-gene
 ## Project Structure
 
 ```
-local-knowledge-base/
+super-knowledge-base/
 ├── apps/desktop/              # Tauri v2 + React app
 │   ├── src-tauri/             # Rust backend
 │   └── src/                   # React frontend
@@ -130,10 +130,10 @@ local-knowledge-base/
 
 ## Data Storage
 
-All data stored locally at `~/.local-knowledge-base/`:
+All data stored locally at `~/.super-knowledge-base/`:
 
 ```
-~/.local-knowledge-base/
+~/.super-knowledge-base/
 ├── settings.json              # App configuration
 ├── knowledge_bases.json       # KB registry
 ├── kb_{uuid}/                 # Knowledge base
@@ -143,4 +143,4 @@ All data stored locally at `~/.local-knowledge-base/`:
 
 ## License
 
-MIT © 2026 Local Knowledge Base Contributors
+MIT © 2026 SKB Contributors

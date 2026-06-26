@@ -1,7 +1,7 @@
 [project]
 name = "knowledge-backend"
 version = "2.0.0"
-description = "Python backend service for Local Knowledge Base"
+description = "Python backend service for SKB (Super Knowledge Base)"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
@@ -21,7 +21,7 @@ dependencies = [
 
 [project.scripts]
 knowledge-backend = "knowledge_backend.main:main"
-local-kb-mcp = "knowledge_backend.mcp_server:main"
+skb-mcp = "knowledge_backend.mcp_server:main"
 
 [project.optional-dependencies]
 build = ["pyinstaller>=6.0"]

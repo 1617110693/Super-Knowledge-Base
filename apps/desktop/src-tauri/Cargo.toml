@@ -1,13 +1,13 @@
 [package]
-name = "local-knowledge-base"
+name = "super-knowledge-base"
 version = "0.1.0"
-description = "Local Agent Knowledge Base Desktop App"
-authors = ["Local Knowledge Base Contributors"]
+description = "SKB — Super Knowledge Base Desktop App"
+authors = ["SKB Contributors"]
 edition = "2021"
 license = "MIT"
 
 [lib]
-name = "local_knowledge_base_lib"
+name = "super_knowledge_base_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -26,4 +26,5 @@ tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 thiserror = "1"
 chrono = { version = "0.4", features = ["serde"] }
+open = "5"
 zip = "2.2"

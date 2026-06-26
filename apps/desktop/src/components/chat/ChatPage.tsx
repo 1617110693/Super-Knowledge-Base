@@ -6,7 +6,7 @@ import { useSettingsStore } from "../../stores/useSettingsStore";
 import { useI18n } from "../../i18n";
 import { CHAT_TOOLS, toolLabel } from "../../services/toolDefinitions";
 import { executeToolCall } from "../../services/toolExecutor";
-import { Send, Loader2, Trash2, MessageSquare, User, Bot, Layers, FileText, X, ChevronDown, ChevronUp, Search, Copy, Check, RefreshCw, Square, ArrowDown, ArrowDownToLine } from "lucide-react";
+import { Send, Loader2, Trash2, MessageSquare, User, Bot, Layers, FileText, X, ChevronDown, ChevronUp, Search, Copy, Check, RefreshCw, Square, ArrowDown, ArrowDownToLine, Eye } from "lucide-react";
 import { MarkdownRenderer } from "../common/MarkdownRenderer";
 import type { ChatMessage, SearchResult, ToolCall } from "../../types";
 
@@ -39,7 +39,7 @@ export function ChatPage() {
   const [showKbDropdown, setShowKbDropdown] = useState(false);
   const [previewChunk, setPreviewChunk] = useState<SearchResult | null>(null);
   const [toolStatus, setToolStatus] = useState("");
-  const [sourcesExpanded, setSourcesExpanded] = useState(true);
+  const [sourcesExpanded, setSourcesExpanded] = useState(false);
   const [copiedMsgIdx, setCopiedMsgIdx] = useState<number | null>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -109,12 +109,13 @@ export function ChatPage() {
         return;
       }
 
-      const mathInstr = "Wrap ALL math in $…$ (inline) or $$…$$ (block). Examples: $\\alpha$, $\\mathbb{P}$, $x^2$, $$\\vec{x}^T A \\vec{y}$$. NEVER output raw LaTeX without $ delimiters.";
+      const mathInstr = "Wrap ALL math in $..$ or $$..$$. Single symbols too: $x$, $\\alpha$, $A$. Display equations: $$A^T A$$. No bare LaTeX.";
+      const citeInstr = "Cite with [N] for single chunks, [M-N] for consecutive ranges. Example: 'the theorem states [3] that...' or 'as shown in [3-5]...'";
       const kbNames = selectedKbIds.length > 0
         ? selectedKbIds.map((id) => knowledgeBases.find((kb) => kb.id === id)?.name || id).join(", ")
         : "";
       const systemMsg = selectedKbIds.length > 0
-        ? `You are a helpful assistant with access to knowledge bases: ${kbNames}. Use the search_knowledge_base tool to find relevant information before answering. Use get_document to read full documents when needed. Use list_knowledge_bases to discover available knowledge. When using information from a search result, cite it with its [index] number. ${mathInstr}`
+        ? `You have access to knowledge bases: ${kbNames}. Use search_knowledge_base to find information. ${citeInstr} ${mathInstr}`
         : `You are a helpful assistant. ${mathInstr}`;
 
       // Build conversation history including tool messages
@@ -242,7 +243,7 @@ export function ChatPage() {
                 maxSearchResultChars: settings.max_search_result_chars || 2000,
                 maxDocumentChars: settings.max_document_chars || 30000,
                 maxChunkChars: settings.max_chunk_chars || 800,
-              }, selectedKbIds.length > 0 ? selectedKbIds : undefined, contextWindow);
+              }, selectedKbIds.length > 0 ? selectedKbIds : undefined, contextWindow, allSources.length);
               allSources = [...allSources, ...newSources];
               messages.push({
                 role: "tool",
@@ -432,7 +433,13 @@ export function ChatPage() {
                     streaming && i === messages.length - 1 ? (
                       <div className="whitespace-pre-wrap break-words">{msg.content}</div>
                     ) : (
-                      <MarkdownRenderer className="prose prose-sm max-w-none dark:prose-invert text-sm">{msg.content}</MarkdownRenderer>
+                      <MarkdownRenderer
+                        className="prose prose-sm max-w-none dark:prose-invert text-sm"
+                        sources={msg.sources}
+                        onSourceClick={(s) => setPreviewChunk(s as SearchResult)}
+                      >
+                        {msg.content}
+                      </MarkdownRenderer>
                     )
                   ) : msg.role === "assistant" && msg.tool_calls && !msg.content ? (
                     <div className="flex items-center gap-2 text-muted-foreground text-xs">
@@ -549,12 +556,28 @@ export function ChatPage() {
                 <div className="min-w-0">
                   <h3 className="font-semibold text-sm truncate">{previewChunk.doc_name}</h3>
                   <p className="text-xs text-muted-foreground">
-                    {previewChunk.metadata?.page != null && <span>{t("search.page")} {previewChunk.metadata.page} · </span>}
+                    {((previewChunk.metadata?.page ?? 0) > 0) && <span>{t("search.page")} {previewChunk.metadata.page} · </span>}
+                    {previewChunk.metadata?.chunk_index != null && <span>Chunk #{previewChunk.metadata.chunk_index} · </span>}
                     <span className="font-mono text-primary">{(previewChunk.score * 100).toFixed(1)}%</span>
                   </p>
                 </div>
               </div>
-              <button onClick={() => setPreviewChunk(null)} className="p-1 hover:bg-muted rounded-md shrink-0"><X className="w-5 h-5" /></button>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={() => {
+                    setPreviewChunk(null);
+                    const ci = previewChunk.metadata?.chunk_index;
+                    const ciParam = ci != null ? `?ci=${ci}` : "";
+                    navigate(`/kb/${previewChunk.kb_id}/documents/${previewChunk.doc_id}${ciParam}`);
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border hover:bg-muted transition-colors"
+                  title="Open full document"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  {t("chat.viewFullDoc")}
+                </button>
+                <button onClick={() => setPreviewChunk(null)} className="p-1 hover:bg-muted rounded-md shrink-0"><X className="w-5 h-5" /></button>
+              </div>
             </div>
             <div className="p-6 overflow-y-auto flex-1">
               <MarkdownRenderer className="prose prose-sm max-w-none dark:prose-invert">{previewChunk.content}</MarkdownRenderer>

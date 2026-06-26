@@ -34,6 +34,30 @@ interface KBState {
   getSortedKBs: () => KnowledgeBase[];
 }
 
+// Group child documents (split parts) under their parents in the flat list.
+// Parts are sorted by name for consistent ordering.
+function groupParts(docs: Document[]): Document[] {
+  const partDocs = docs.filter(d => d.parent_doc_id);
+  const parentDocs = docs.filter(d => !d.parent_doc_id);
+  return parentDocs.map(parent => {
+    const parts = partDocs
+      .filter(p => p.parent_doc_id === parent.id)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return parts.length > 0 ? { ...parent, parts } : parent;
+  });
+}
+
+// Recursively find a document by ID in a tree (including nested parts) and merge updates.
+function updateDocInTree(docs: Document[], id: string, updates: Partial<Document>): Document[] {
+  return docs.map(doc => {
+    if (doc.id === id) return { ...doc, ...updates };
+    if (doc.parts?.length) {
+      return { ...doc, parts: updateDocInTree(doc.parts, id, updates) };
+    }
+    return doc;
+  });
+}
+
 export const useKBStore = create<KBState>((set, get) => ({
   knowledgeBases: [],
   activeKB: null,
@@ -60,7 +84,7 @@ export const useKBStore = create<KBState>((set, get) => ({
     set({ loading: true, error: null, documents: [] });
     try {
       const docs = await tauriBridge.listDocuments(kbId);
-      set({ documents: docs, loading: false });
+      set({ documents: groupParts(docs), loading: false });
     } catch (e) {
       set({ error: String(e), loading: false });
     }
@@ -121,15 +145,22 @@ export const useKBStore = create<KBState>((set, get) => ({
     const uploadResult = await tauriBridge.uploadDocument(kbId, filePath);
     const doc = uploadResult.document;
     const allDocs = [doc, ...uploadResult.parts];
-    set((s) => ({ documents: [...allDocs, ...s.documents] }));
+    // Keep flat list during processing so per-doc status updates work;
+    // will regroup after the parse+index loop.
+    set((s) => ({ documents: groupParts([...allDocs, ...s.documents]) }));
 
-    // 3. Parse each document
-    for (const d of allDocs) {
+    // 3. Parse each document (skip main doc if it has parts — parts are parsed instead)
+    const docsToParse = allDocs.filter(doc => {
+      // If this doc has child parts, skip parsing the main doc (it's the original large file)
+      if (allDocs.some(p => p.parent_doc_id === doc.id)) return false;
+      return true;
+    });
+    for (const d of docsToParse) {
       try {
         await tauriBridge.startParsing(kbId, d.id);
         const parsed = await tauriBridge.pollParseStatus(kbId, d.id);
         set((s) => ({
-          documents: s.documents.map((dd) => (dd.id === d.id ? parsed : dd)),
+          documents: updateDocInTree(s.documents, d.id, parsed),
         }));
 
         // 4. Index (if parsing succeeded)
@@ -149,9 +180,10 @@ export const useKBStore = create<KBState>((set, get) => ({
             });
             await saveDocumentChunks(kbId, d.id, result.chunk_count, result.embedding_model, result.embedding_dim);
             set((s) => ({
-              documents: s.documents.map((dd) =>
-                dd.id === d.id ? { ...dd, chunk_count: result.chunk_count, embedding_model: result.embedding_model } : dd
-              ),
+              documents: updateDocInTree(s.documents, d.id, {
+                chunk_count: result.chunk_count,
+                embedding_model: result.embedding_model,
+              } as Partial<Document>),
               knowledgeBases: s.knowledgeBases.map((k) =>
                 k.id === kbId ? { ...k, embedding_model: result.embedding_model, embedding_dim: result.embedding_dim } : k
               ),
@@ -166,19 +198,30 @@ export const useKBStore = create<KBState>((set, get) => ({
         }
       } catch { /* parse failed, keep original doc */ }
     }
+    // Re-group after all parsing completes
+    set((s) => ({ documents: groupParts(s.documents) }));
   },
 
   deleteDocument: async (kbId: string, docId: string) => {
     await tauriBridge.deleteDocument(kbId, docId);
-    set((s) => ({
-      documents: s.documents.filter((d) => d.id !== docId),
-    }));
+    set((s) => {
+      // Remove from top level or from nested parts
+      const docs = s.documents
+        .filter(d => d.id !== docId)
+        .map(d => {
+          if (d.parts?.length) {
+            return { ...d, parts: d.parts.filter(p => p.id !== docId) };
+          }
+          return d;
+        });
+      return { documents: docs };
+    });
   },
 
   refreshDocument: async (kbId: string, docId: string) => {
     const doc = await tauriBridge.pollParseStatus(kbId, docId);
     set((s) => ({
-      documents: s.documents.map((d) => (d.id === docId ? doc : d)),
+      documents: updateDocInTree(s.documents, docId, doc),
     }));
   },
 
@@ -198,9 +241,10 @@ export const useKBStore = create<KBState>((set, get) => ({
       // Reload KBs from registry to get updated chunk_count totals
       await get().loadKBs();
       set((s) => ({
-        documents: s.documents.map((d) =>
-          d.id === docId ? { ...d, chunk_count: result.chunk_count, embedding_model: result.embedding_model } : d
-        ),
+        documents: updateDocInTree(s.documents, docId, {
+          chunk_count: result.chunk_count,
+          embedding_model: result.embedding_model,
+        } as Partial<Document>),
         indexingIds: new Set([...s.indexingIds].filter((id) => id !== docId)),
       }));
     } catch (e) {

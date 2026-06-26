@@ -408,6 +408,7 @@ impl FileStore {
         name: String,
         file_type: String,
         file_size: u64,
+        parent_doc_id: Option<String>,
     ) -> CommandResult<Document> {
         let doc = Document {
             id: Uuid::new_v4().to_string(),
@@ -420,6 +421,7 @@ impl FileStore {
             chunk_count: 0,
             embedding_model: String::new(),
             path: None,
+            parent_doc_id,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -438,11 +440,22 @@ impl FileStore {
     }
 
     pub fn remove_document(&self, kb_id: &str, doc_id: &str) -> CommandResult<()> {
+        // Cascade: also remove child documents (split parts)
+        let children = self.get_child_documents(kb_id, doc_id).unwrap_or_default();
+        let child_count = children.len() as i32;
+        for child in &children {
+            let child_dir = self.get_doc_dir(kb_id, &child.id);
+            if child_dir.exists() {
+                std::fs::remove_dir_all(&child_dir)?;
+            }
+        }
+
         let doc_dir = self.get_doc_dir(kb_id, doc_id);
         if doc_dir.exists() {
             std::fs::remove_dir_all(&doc_dir)?;
         }
-        self.update_kb_after_doc_change(kb_id, -1, 0)?;
+        // Account for main doc + all children
+        self.update_kb_after_doc_change(kb_id, -(1 + child_count), 0)?;
         Ok(())
     }
 
@@ -459,6 +472,15 @@ impl FileStore {
         doc.path = path.map(|f| f.to_string());
         doc.updated_at = Utc::now();
         self.save_document_meta(&doc)?;
+
+        // Propagate path to child documents (split parts)
+        let children = self.get_child_documents(kb_id, doc_id).unwrap_or_default();
+        for mut child in children {
+            child.path = path.map(|f| f.to_string());
+            child.updated_at = Utc::now();
+            self.save_document_meta(&child)?;
+        }
+
         Ok(doc)
     }
 
@@ -584,6 +606,15 @@ impl FileStore {
         Ok(doc)
     }
 
+    /// Get all child documents (split parts) for a given parent document
+    pub fn get_child_documents(&self, kb_id: &str, parent_doc_id: &str) -> CommandResult<Vec<Document>> {
+        let all_docs = self.list_documents(kb_id)?;
+        Ok(all_docs
+            .into_iter()
+            .filter(|d| d.parent_doc_id.as_deref() == Some(parent_doc_id))
+            .collect())
+    }
+
     pub fn get_document_content(&self, kb_id: &str, doc_id: &str) -> CommandResult<crate::models::DocumentContent> {
         let doc_dir = self.get_doc_dir(kb_id, doc_id);
         let md_path = doc_dir.join("full.md");
@@ -616,6 +647,7 @@ impl FileStore {
                 chunk_count: 0,
                 embedding_model: "".to_string(),
                 path: None,
+                parent_doc_id: None,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             });
@@ -673,6 +705,20 @@ impl FileStore {
         self.save_registry(&registry)?;
 
         Ok(doc)
+    }
+
+    /// Update just the file_size of a document (used after PDF split replaces the file).
+    pub fn update_document_file_size(
+        &self,
+        kb_id: &str,
+        doc_id: &str,
+        file_size: u64,
+    ) -> CommandResult<()> {
+        let mut doc = self.get_document(kb_id, doc_id)?;
+        doc.file_size = file_size;
+        doc.updated_at = Utc::now();
+        self.save_document_meta(&doc)?;
+        Ok(())
     }
 
     pub fn save_parsed_markdown(

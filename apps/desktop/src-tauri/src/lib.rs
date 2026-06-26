@@ -34,7 +34,7 @@ pub fn run() {
             let home = std::env::var("HOME")
                 .or_else(|_| std::env::var("USERPROFILE"))
                 .expect("Failed to get home directory");
-            let default_dir = std::path::PathBuf::from(&home).join(".local-knowledge-base");
+            let default_dir = std::path::PathBuf::from(&home).join(".super-knowledge-base");
 
             let settings = AppSettings::load(&default_dir).unwrap_or_default();
 
@@ -69,7 +69,7 @@ pub fn run() {
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("Local Knowledge Base")
+                .tooltip("SKB")
                 .menu(&tray_menu)
                 .on_menu_event(|app, event| {
                     match event.id().as_ref() {
@@ -139,6 +139,7 @@ pub fn run() {
             documents::save_document_chunks,
             documents::save_document_content,
             documents::reveal_document_in_explorer,
+            documents::open_document_file,
             parsing::start_parsing,
             parsing::poll_parse_status,
             parsing::cancel_parse_task,

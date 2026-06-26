@@ -7,7 +7,7 @@ import {
   FileText, Layers, Upload, Trash2, Loader2,
   CheckCircle, XCircle, Clock, Eye,
   Search, Database, Pencil, RefreshCw, Check, FolderSearch, Copy, X, ArrowLeft,
-  Plus, FolderOpen,
+  Plus, FolderOpen, ChevronRight, ChevronDown, ExternalLink,
 } from "lucide-react";
 import type { Document } from "../../types";
 import { ConfirmDialog } from "../common/ConfirmDialog";
@@ -18,6 +18,27 @@ const STATUS_MAP: Record<string, { icon: React.ReactNode; labelKey: "parse.pendi
   done: { icon: <CheckCircle className="w-4 h-4 text-green-500" />, labelKey: "parse.done" },
   failed: { icon: <XCircle className="w-4 h-4 text-red-500" />, labelKey: "parse.failed" },
 };
+
+// Flatten document tree (parents + nested parts) for polling & counting
+function flatDocsList(docs: Document[]): Document[] {
+  return docs.flatMap(d => [d, ...(d.parts ? flatDocsList(d.parts) : [])]);
+}
+
+// Update a document by ID in the nested tree
+function updateDocInTreeLocal(docs: Document[], id: string, updates: Partial<Document>): Document[] {
+  return docs.map(doc => {
+    if (doc.id === id) return { ...doc, ...updates };
+    if (doc.parts?.length) return { ...doc, parts: updateDocInTreeLocal(doc.parts, id, updates) };
+    return doc;
+  });
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  }
+  return (bytes / 1024).toFixed(1) + " KB";
+}
 
 /** Combined KB workspace: overview stats + document management + search entry */
 export function KBSettings() {
@@ -43,6 +64,18 @@ export function KBSettings() {
   const [pathDocMenu, setPathDocMenu] = useState<string | null>(null);
   const [deletePathTarget, setDeletePathTarget] = useState<string | null>(null);
   const [disbandOnly, setDisbandOnly] = useState(false);
+  const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
+
+  // Flatten document tree (parents + nested parts) for polling & counting
+  const allDocs = flatDocsList(documents);
+
+  // Update helper for nested parts — used by polling loop
+  const updateDocNested = (docs: Document[], id: string, updates: Partial<Document>): Document[] =>
+    docs.map(doc => {
+      if (doc.id === id) return { ...doc, ...updates };
+      if (doc.parts?.length) return { ...doc, parts: updateDocNested(doc.parts, id, updates) };
+      return doc;
+    });
 
   // ── Rename KB ──
   const [editingName, setEditingName] = useState(false);
@@ -74,14 +107,16 @@ export function KBSettings() {
   useEffect(() => {
     if (!kbId) return;
     const interval = setInterval(async () => {
+      const currentDocs = useKBStore.getState().documents;
+      const flat = flatDocsList(currentDocs);
       // Refresh docs still being parsed by MinerU
-      for (const doc of documents) {
+      for (const doc of flat) {
         if (doc.parse_status === "parsing") {
           refreshDocument(kbId, doc.id);
         }
       }
       // When parsing finishes, trigger index once
-      for (const doc of documents) {
+      for (const doc of flat) {
         if (
           doc.parse_status === "done" &&
           doc.chunk_count === 0 &&
@@ -102,9 +137,10 @@ export function KBSettings() {
             });
             await saveDocumentChunks(kbId, doc.id, result.chunk_count, result.embedding_model, result.embedding_dim);
             useKBStore.setState((s) => ({
-              documents: s.documents.map((d) =>
-                d.id === doc.id ? { ...d, chunk_count: result.chunk_count, embedding_model: result.embedding_model } : d
-              ),
+              documents: updateDocInTreeLocal(s.documents, doc.id, {
+                chunk_count: result.chunk_count,
+                embedding_model: result.embedding_model,
+              } as Partial<Document>),
               knowledgeBases: s.knowledgeBases.map((k) =>
                 k.id === kbId ? { ...k, embedding_model: result.embedding_model, embedding_dim: result.embedding_dim } : k
               ),
@@ -118,7 +154,7 @@ export function KBSettings() {
       }
     }, 3000);
     return () => clearInterval(interval);
-  }, [documents, kbId, refreshDocument]);
+  }, [kbId, refreshDocument]);
 
   // ── Edit KB name / description ──
   const [editingDesc, setEditingDesc] = useState(false);
@@ -217,6 +253,16 @@ export function KBSettings() {
     await reindexAll(kbId);
   };
 
+  const handleOpenFile = async (doc: Document) => {
+    if (!kbId) return;
+    try {
+      const { openDocumentFile } = await import("../../services/tauriBridge");
+      await openDocumentFile(kbId, doc.id);
+    } catch (e) {
+      console.error("Failed to open file:", e);
+    }
+  };
+
   const handleOpenInExplorer = async (doc: Document) => {
     if (!kbId) return;
     try {
@@ -241,7 +287,7 @@ export function KBSettings() {
       const { renameDocument } = await import("../../services/tauriBridge");
       const updated = await renameDocument(kbId, doc.id, renameDraft.trim());
       useKBStore.setState((s) => ({
-        documents: s.documents.map((d) => (d.id === doc.id ? { ...d, ...updated } : d)),
+        documents: updateDocInTreeLocal(s.documents, doc.id, updated),
       }));
     } catch (e) {
       console.error("Rename failed:", e);
@@ -255,7 +301,7 @@ export function KBSettings() {
       const { setDocumentPath } = await import("../../services/tauriBridge");
       const updated = await setDocumentPath(kbId, doc.id, path);
       useKBStore.setState((s) => ({
-        documents: s.documents.map((d) => (d.id === doc.id ? { ...d, ...updated } : d)),
+        documents: updateDocInTreeLocal(s.documents, doc.id, updated),
       }));
     } catch (e) { console.error("Move to path failed:", e); }
     setPathDocMenu(null);
@@ -317,9 +363,9 @@ export function KBSettings() {
     return <div className="p-6 text-center text-muted-foreground">{t("overview.notFound")}</div>;
   }
 
-  const doneCount = documents.filter((d) => d.parse_status === "done").length;
-  const totalChunks = documents.reduce((sum, d) => sum + d.chunk_count, 0);
-  const hasIndexedDocs = documents.some((d) => d.chunk_count > 0);
+  const doneCount = allDocs.filter((d) => d.parse_status === "done").length;
+  const totalChunks = allDocs.reduce((sum, d) => sum + d.chunk_count, 0);
+  const hasIndexedDocs = allDocs.some((d) => d.chunk_count > 0);
 
   return (
     <div className="flex flex-col h-full">
@@ -560,52 +606,145 @@ export function KBSettings() {
               {documents
                 .filter(doc => (doc.path || null) === (selectedPath || null))
                 .map((doc) => {
+                const hasParts = doc.parts && doc.parts.length > 0;
+                const isExpanded = expandedDocs.has(doc.id);
+                const isPart = !!doc.parent_doc_id;
                 const status = STATUS_MAP[doc.parse_status] || STATUS_MAP.pending;
                 const isParseFailed = doc.parse_status === "failed";
                 const isIndexing = indexing[doc.id] || indexingIds.has(doc.id);
                 const isIndexed = !isIndexing && doc.chunk_count > 0;
+                // Extract part number from name like "xxx_part2.pdf"
+                const partMatch = doc.name.match(/_part(\d+)/);
+                const partNum = partMatch ? parseInt(partMatch[1]) : null;
+
                 return (
-                <div key={doc.id}
-                  className={`flex items-center justify-between px-3 py-1.5 border rounded-md bg-card hover:border-primary/50 transition-colors ${isParseFailed ? "border-red-200 bg-red-50/30" : ""}`}>
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    <FileText className="w-4 h-4 text-primary shrink-0" />
-                    {renamingDocId === doc.id ? (
-                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                        <input autoFocus value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter") commitDocRename(doc); if (e.key === "Escape") { setRenamingDocId(null); } }}
-                          onBlur={() => commitDocRename(doc)}
-                          className="text-xs bg-background border rounded px-1.5 py-0.5 w-36 outline-none ring-1 ring-primary" />
-                        <button onClick={() => commitDocRename(doc)} className="p-0.5 hover:bg-green-50 rounded text-green-600"><Check className="w-3 h-3" /></button>
-                      </div>
-                    ) : (
-                      <span className="font-medium text-sm truncate cursor-pointer hover:text-primary" onClick={() => navigate(`/kb/${kbId}/documents/${doc.id}`)} title={doc.name}>{doc.name}</span>
-                    )}
-                    <span className="text-[10px] text-muted-foreground/60 truncate hidden sm:inline">{(doc.file_size / 1024).toFixed(1)} KB · .{doc.file_type}</span>
-                    <span className="text-[10px] text-muted-foreground/60">
-                      {isIndexing ? <span className="text-blue-600">Idx</span>
-                       : isParseFailed ? <span className="text-red-500 cursor-pointer hover:underline" onClick={(e) => { e.stopPropagation(); setErrorDetailTarget(doc.parse_error ?? null); }}>Failed</span>
-                       : isIndexed ? <span className="text-green-600">{doc.chunk_count}c</span>
-                       : <span>{t(status.labelKey)}</span>}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-0.5 ml-2 shrink-0">
-                    {isIndexed && <button onClick={() => handleReindexDoc(doc)} className="p-0.5 hover:bg-amber-50 rounded text-muted-foreground hover:text-amber-600" title={t("docs.reindex")}><RefreshCw className="w-3 h-3" /></button>}
-                    <div className="relative">
-                      <button onClick={(e) => { e.stopPropagation(); setPathDocMenu(pathDocMenu === doc.id ? null : doc.id); }} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.moveToPath")}><FolderOpen className="w-3 h-3" /></button>
-                      {pathDocMenu === doc.id && (
-                        <div className="absolute right-0 top-full mt-1 bg-card border rounded-lg shadow-lg z-20 min-w-[140px] py-1 max-h-40 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-                          <button onClick={() => handleMoveToPath(doc, null)} className={`w-full text-left px-2 py-1 text-xs hover:bg-muted ${!doc.path ? "font-medium text-primary" : ""}`}>{t("docs.noPath")}</button>
-                          <div className="border-t my-0.5" />
-                          {paths.map(p => (
-                            <button key={p} onClick={() => handleMoveToPath(doc, p)} className={`w-full text-left px-2 py-1 text-xs hover:bg-muted ${doc.path === p ? "font-medium text-primary" : ""}`} style={{ paddingLeft: `${10 + (p.split("/").length - 1) * 10}px` }}>{p}</button>
-                          ))}
+                <div key={doc.id}>
+                  <div
+                    className={`flex items-center justify-between px-3 py-1.5 border rounded-md transition-colors ${
+                      isPart ? "bg-muted/30 border-dashed ml-6" : "bg-card hover:border-primary/50"
+                    } ${isParseFailed ? "border-red-200 bg-red-50/30" : ""}`}
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                      {/* Expand/collapse chevron for parent docs with parts */}
+                      {hasParts && (
+                        <button
+                          onClick={() => {
+                            setExpandedDocs(prev => {
+                              const next = new Set(prev);
+                              if (next.has(doc.id)) next.delete(doc.id); else next.add(doc.id);
+                              return next;
+                            });
+                          }}
+                          className="p-0.5 hover:bg-muted rounded shrink-0"
+                        >
+                          {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                        </button>
+                      )}
+                      <FileText className={`w-4 h-4 shrink-0 ${isPart ? "text-muted-foreground" : "text-primary"}`} />
+                      {renamingDocId === doc.id ? (
+                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          <input autoFocus value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") commitDocRename(doc); if (e.key === "Escape") { setRenamingDocId(null); } }}
+                            onBlur={() => commitDocRename(doc)}
+                            className="text-xs bg-background border rounded px-1.5 py-0.5 w-36 outline-none ring-1 ring-primary" />
+                          <button onClick={() => commitDocRename(doc)} className="p-0.5 hover:bg-green-50 rounded text-green-600"><Check className="w-3 h-3" /></button>
+                        </div>
+                      ) : (
+                        <span
+                          className={`font-medium text-sm truncate cursor-pointer hover:text-primary ${isPart ? "text-muted-foreground" : ""}`}
+                          onClick={() => {
+                            if (hasParts) {
+                              // Toggle expand for parent docs
+                              setExpandedDocs(prev => {
+                                const next = new Set(prev);
+                                if (next.has(doc.id)) next.delete(doc.id); else next.add(doc.id);
+                                return next;
+                              });
+                            } else {
+                              navigate(`/kb/${kbId}/documents/${doc.id}`);
+                            }
+                          }}
+                          title={doc.name}
+                        >
+                          {isPart ? t("docs.partBadge", { n: partNum ?? "?" }) : doc.name}
+                        </span>
+                      )}
+                      {/* Part count badge for parents */}
+                      {hasParts && (
+                        <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-medium">
+                          {t("docs.partCount", { n: doc.parts!.length })}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-muted-foreground/60 truncate hidden sm:inline">{formatFileSize(doc.file_size)} · .{doc.file_type}</span>
+                      <span className="text-[10px] text-muted-foreground/60">
+                        {hasParts ? "" :
+                         isIndexing ? <span className="text-blue-600">Idx</span>
+                         : isParseFailed ? <span className="text-red-500 cursor-pointer hover:underline" onClick={(e) => { e.stopPropagation(); setErrorDetailTarget(doc.parse_error ?? null); }}>Failed</span>
+                         : isIndexed ? <span className="text-green-600">{doc.chunk_count}c</span>
+                         : <span>{t(status.labelKey)}</span>}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-0.5 ml-2 shrink-0">
+                      {isIndexed && <button onClick={() => handleReindexDoc(doc)} className="p-0.5 hover:bg-amber-50 rounded text-muted-foreground hover:text-amber-600" title={t("docs.reindex")}><RefreshCw className="w-3 h-3" /></button>}
+                      {/* Move to path: only for non-part documents */}
+                      {!isPart && (
+                        <div className="relative">
+                          <button onClick={(e) => { e.stopPropagation(); setPathDocMenu(pathDocMenu === doc.id ? null : doc.id); }} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.moveToPath")}><FolderOpen className="w-3 h-3" /></button>
+                          {pathDocMenu === doc.id && (
+                            <div className="absolute right-0 top-full mt-1 bg-card border rounded-lg shadow-lg z-20 min-w-[140px] py-1 max-h-40 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                              <button onClick={() => handleMoveToPath(doc, null)} className={`w-full text-left px-2 py-1 text-xs hover:bg-muted ${!doc.path ? "font-medium text-primary" : ""}`}>{t("docs.noPath")}</button>
+                              <div className="border-t my-0.5" />
+                              {paths.map(p => (
+                                <button key={p} onClick={() => handleMoveToPath(doc, p)} className={`w-full text-left px-2 py-1 text-xs hover:bg-muted ${doc.path === p ? "font-medium text-primary" : ""}`} style={{ paddingLeft: `${10 + (p.split("/").length - 1) * 10}px` }}>{p}</button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
+                      <button onClick={(e) => { e.stopPropagation(); startDocRename(doc); }} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.rename")}><Pencil className="w-3 h-3" /></button>
+                      <button onClick={() => handleOpenFile(doc)} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.openFile")}><ExternalLink className="w-3 h-3" /></button>
+                      <button
+                        onClick={() => setDeleteTarget({ docId: doc.id, docName: doc.name })}
+                        className="p-0.5 hover:bg-red-50 rounded-md text-muted-foreground hover:text-red-500" title={t("docs.delete")}><Trash2 className="w-3 h-3" /></button>
                     </div>
-                    <button onClick={(e) => { e.stopPropagation(); startDocRename(doc); }} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.rename")}><Pencil className="w-3 h-3" /></button>
-                    <button onClick={() => handleOpenInExplorer(doc)} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.openLocation")}><FolderSearch className="w-3 h-3" /></button>
-                    <button onClick={() => setDeleteTarget({ docId: doc.id, docName: doc.name })} className="p-0.5 hover:bg-red-50 rounded-md text-muted-foreground hover:text-red-500" title={t("docs.delete")}><Trash2 className="w-3 h-3" /></button>
                   </div>
+                  {/* Expanded parts list */}
+                  {hasParts && isExpanded && doc.parts!.map(part => {
+                    const pStatus = STATUS_MAP[part.parse_status] || STATUS_MAP.pending;
+                    const pIsFailed = part.parse_status === "failed";
+                    const pIsIndexing = indexing[part.id] || indexingIds.has(part.id);
+                    const pIsIndexed = !pIsIndexing && part.chunk_count > 0;
+                    const pMatch = part.name.match(/_part(\d+)/);
+                    const pNum = pMatch ? parseInt(pMatch[1]) : null;
+                    return (
+                      <div key={part.id}
+                        className="flex items-center justify-between px-3 py-1.5 border rounded-md bg-muted/30 border-dashed hover:border-primary/50 transition-colors ml-6 mt-0.5"
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                          <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          <span className="font-medium text-sm truncate cursor-pointer hover:text-primary text-muted-foreground"
+                            onClick={() => navigate(`/kb/${kbId}/documents/${part.id}`)}
+                            title={part.name}
+                          >
+                            {t("docs.partBadge", { n: pNum ?? "?" })}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground/60 truncate hidden sm:inline">{formatFileSize(part.file_size)}</span>
+                          <span className="text-[10px] text-muted-foreground/60">
+                            {pIsIndexing ? <span className="text-blue-600">Idx</span>
+                             : pIsFailed ? <span className="text-red-500 cursor-pointer hover:underline" onClick={(e) => { e.stopPropagation(); setErrorDetailTarget(part.parse_error ?? null); }}>Failed</span>
+                             : pIsIndexed ? <span className="text-green-600">{part.chunk_count}c</span>
+                             : <span>{t(pStatus.labelKey)}</span>}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-0.5 ml-2 shrink-0">
+                          {pIsIndexed && <button onClick={() => handleReindexDoc(part)} className="p-0.5 hover:bg-amber-50 rounded text-muted-foreground hover:text-amber-600" title={t("docs.reindex")}><RefreshCw className="w-3 h-3" /></button>}
+                          <button onClick={(e) => { e.stopPropagation(); startDocRename(part); }} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.rename")}><Pencil className="w-3 h-3" /></button>
+                          <button onClick={() => handleOpenFile(part)} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.openFile")}><ExternalLink className="w-3 h-3" /></button>
+                          <button onClick={() => setDeleteTarget({ docId: part.id, docName: part.name })} className="p-0.5 hover:bg-red-50 rounded-md text-muted-foreground hover:text-red-500" title={t("docs.delete")}><Trash2 className="w-3 h-3" /></button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               );})}
             </div>
@@ -617,7 +756,14 @@ export function KBSettings() {
       <ConfirmDialog
         open={deleteTarget !== null}
         title={t("docs.delete")}
-        message={`${t("docs.delete")}: ${deleteTarget?.docName ?? ""}`}
+        message={(() => {
+          if (!deleteTarget) return "";
+          const targetDoc = allDocs.find(d => d.id === deleteTarget.docId);
+          const partCount = targetDoc?.parts?.length ?? 0;
+          return partCount > 0
+            ? t("docs.deleteParentConfirm", { n: partCount })
+            : `${t("docs.delete")}: ${deleteTarget.docName}`;
+        })()}
         confirmLabel={t("docs.delete")}
         cancelLabel={t("kb.cancel")}
         onConfirm={handleDeleteConfirm}

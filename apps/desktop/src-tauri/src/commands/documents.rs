@@ -54,10 +54,10 @@ pub async fn upload_document(
         )));
     }
 
-    // Create document entry
+    // Create document entry (main doc keeps the original file; parts created below)
     let doc = state
         .file_store
-        .add_document(&kb_id, file_name.clone(), extension.clone(), file_size)?;
+        .add_document(&kb_id, file_name.clone(), extension.clone(), file_size, None)?;
 
     // Copy original file to document directory
     let dest_path = state
@@ -88,21 +88,22 @@ pub async fn upload_document(
                     Ok(result) => {
                         if result["split"].as_bool().unwrap_or(false) {
                             if let Some(part_paths) = result["parts"].as_array() {
-                                // Replace main doc's file with part1 (first split part)
-                                if let Some(first_part) = part_paths.first().and_then(|v| v.as_str()) {
-                                    let _ = std::fs::copy(first_part, &dest_path);
-                                }
                                 let name_stem = Path::new(&file_name)
                                     .file_stem()
                                     .and_then(|s| s.to_str())
                                     .unwrap_or(&file_name);
-                                for (i, part_path) in part_paths.iter().skip(1).enumerate() {
+                                // Create ALL parts (including part1) as child documents.
+                                // The main doc keeps the complete original file so users can
+                                // still open/preview it; each part is independently parseable.
+                                let parent_id = &doc.id;
+                                for (i, part_path) in part_paths.iter().enumerate() {
                                     if let Some(p) = part_path.as_str() {
-                                        let part_num = i + 2;
+                                        let part_num = i + 1;
                                         let part_name = format!("{}_part{}.pdf", name_stem, part_num);
                                         let part_size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
                                         if let Ok(part_doc) = state.file_store.add_document(
                                             &kb_id, part_name, "pdf".to_string(), part_size,
+                                            Some(parent_id.clone()),
                                         ) {
                                             let part_dest = state
                                                 .file_store
@@ -137,19 +138,31 @@ pub async fn delete_document(
     kb_id: String,
     doc_id: String,
 ) -> CommandResult<()> {
-    // Remove document from file store
+    // Collect child doc IDs before removing (remove_document cascades)
+    let child_ids: Vec<String> = state
+        .file_store
+        .get_child_documents(&kb_id, &doc_id)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
+
+    // Remove document from file store (cascades to children)
     state.file_store.remove_document(&kb_id, &doc_id)?;
 
-    // Also clean up vector chunks from LanceDB via Python backend
+    // Clean up vector chunks from LanceDB via Python backend
     let port = *state.python_port.lock().unwrap();
-    let url = format!("http://127.0.0.1:{}/api/v1/delete-chunks", port);
     let client = reqwest::Client::new();
-    let _ = client
-        .post(&url)
-        .json(&serde_json::json!({"kb_id": kb_id, "doc_id": doc_id}))
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await;
+    let all_ids = std::iter::once(doc_id.clone()).chain(child_ids.into_iter());
+    for id in all_ids {
+        let url = format!("http://127.0.0.1:{}/api/v1/delete-chunks", port);
+        let _ = client
+            .post(&url)
+            .json(&serde_json::json!({"kb_id": kb_id, "doc_id": id}))
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await;
+    }
 
     Ok(())
 }
@@ -278,6 +291,31 @@ pub async fn reveal_document_in_explorer(
     }
 
     Ok(path_str)
+}
+
+#[tauri::command]
+pub async fn open_document_file(
+    state: State<'_, AppState>,
+    kb_id: String,
+    doc_id: String,
+) -> CommandResult<String> {
+    let doc = state.file_store.get_document(&kb_id, &doc_id)?;
+    let doc_dir = state.file_store.get_doc_dir(&kb_id, &doc_id);
+    let original_path = doc_dir.join(format!("original.{}", doc.file_type));
+
+    if !original_path.exists() {
+        return Err(AppError::NotFound(format!(
+            "Original file not found for document: {}",
+            doc.name
+        )));
+    }
+
+    // Open with OS default application
+    open::that(&original_path).map_err(|e| {
+        AppError::PythonBackend(format!("Failed to open file: {}", e))
+    })?;
+
+    Ok(original_path.to_string_lossy().to_string())
 }
 
 #[tauri::command]

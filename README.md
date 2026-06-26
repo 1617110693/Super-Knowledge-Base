@@ -1,4 +1,4 @@
-# Local Agent Knowledge Base
+# SKB — Super Knowledge Base
 
 面向 AI Agent 的本地优先桌面知识库。基于 **Tauri v2 + React + Python** 构建，支持 **OpenAI 兼容的嵌入与重排序模型**、**MinerU 文档解析**，内置 **MCP 服务器** 用于 Claude Code 集成，侧边栏集成 **LLM 对话（RAG）** 模块。
 
@@ -74,7 +74,7 @@
 
 ```bash
 git clone https://github.com/1617110693/Local-Agent-Knowledge-Base.git
-cd local-knowledge-base
+cd super-knowledge-base
 npm install
 cd services/python-backend && uv sync && cd ../..
 npm run tauri dev
@@ -95,10 +95,10 @@ npm run tauri dev
 ```json
 {
   "mcpServers": {
-    "local-knowledge-base": {
+    "skb": {
       "command": "uv",
       "args": ["run", "--directory", "/path/to/services/python-backend", "knowledge-backend", "mcp"],
-      "env": { "KNOWLEDGE_BASE_DATA_DIR": "~/.local-knowledge-base" }
+      "env": { "KNOWLEDGE_BASE_DATA_DIR": "~/.super-knowledge-base" }
     }
   }
 }
@@ -120,7 +120,7 @@ npm run tauri dev
 ## 项目结构
 
 ```
-local-knowledge-base/
+super-knowledge-base/
 ├── apps/desktop/              # Tauri v2 + React 应用
 │   ├── src-tauri/             # Rust 后端
 │   └── src/                   # React 前端
@@ -130,10 +130,10 @@ local-knowledge-base/
 
 ## 数据存储
 
-所有数据本地存储在 `~/.local-knowledge-base/`：
+所有数据本地存储在 `~/.super-knowledge-base/`：
 
 ```
-~/.local-knowledge-base/
+~/.super-knowledge-base/
 ├── settings.json              # 应用配置
 ├── knowledge_bases.json       # 知识库注册表
 ├── kb_{uuid}/                 # 知识库
@@ -143,4 +143,4 @@ local-knowledge-base/
 
 ## 许可证
 
-MIT © 2026 Local Knowledge Base Contributors
+MIT © 2026 SKB Contributors

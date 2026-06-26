@@ -134,6 +134,10 @@ export async function revealDocumentInExplorer(kbId: string, docId: string): Pro
   return invoke("reveal_document_in_explorer", { kbId, docId });
 }
 
+export async function openDocumentFile(kbId: string, docId: string): Promise<string> {
+  return invoke("open_document_file", { kbId, docId });
+}
+
 export async function saveDocumentChunks(
   kbId: string,
   docId: string,

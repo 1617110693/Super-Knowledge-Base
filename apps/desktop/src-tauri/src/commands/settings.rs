@@ -17,7 +17,7 @@ pub async fn update_settings(
     let mut settings = state.settings.lock().unwrap();
     *settings = new_settings.clone();
 
-    // Save to canonical location (~/.local-knowledge-base) for app restart
+    // Save to canonical location (~/.super-knowledge-base) for app restart
     let settings_dir = state.settings_dir.clone();
     std::fs::create_dir_all(&settings_dir).ok();
     settings.save(&settings_dir).map_err(|e| crate::error::AppError::Internal(e.to_string()))?;

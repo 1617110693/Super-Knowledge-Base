@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { I18nContext, createT } from "./index";
 import type { Lang } from "./translations";
 
-const STORAGE_KEY = "local-kb-lang";
+const STORAGE_KEY = "skb-lang";
 
 function getInitialLang(): Lang {
   try {

@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    local_knowledge_base_lib::run()
+    super_knowledge_base_lib::run()
 }

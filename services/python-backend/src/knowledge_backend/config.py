@@ -35,7 +35,7 @@ class BackendConfig(BaseSettings):
         search_paths = []
         if self.knowledge_base_data_dir:
             search_paths.append(Path(self.knowledge_base_data_dir) / "settings.json")
-        search_paths.append(Path.home() / ".local-knowledge-base" / "settings.json")
+        search_paths.append(Path.home() / ".super-knowledge-base" / "settings.json")
 
         for settings_path in search_paths:
             if settings_path.exists():

@@ -1,7 +1,7 @@
 export type Lang = "en" | "zh-CN";
 
 export const translations = {
-  "app.title": { en: "Local Knowledge Base", "zh-CN": "本地知识库" },
+  "app.title": { en: "SKB", "zh-CN": "SKB" },
   "app.backendReady": { en: "Ready", "zh-CN": "就绪" },
   "app.backendOffline": { en: "Offline", "zh-CN": "离线" },
   "app.viewError": { en: "View error details", "zh-CN": "查看错误详情" },
@@ -82,6 +82,11 @@ export const translations = {
   "docs.tableActions": { en: "Actions", "zh-CN": "操作" },
   "docs.folderType": { en: "folder", "zh-CN": "文件夹" },
   "docs.openLocation": { en: "Open file location", "zh-CN": "打开文件位置" },
+  "docs.openFile": { en: "Open Original File", "zh-CN": "打开原文件" },
+  "docs.partCount": { en: "{n} part(s)", "zh-CN": "{n} 个分片" },
+  "docs.partBadge": { en: "Part {n}", "zh-CN": "分片 {n}" },
+  "docs.cannotMovePart": { en: "Parts cannot be moved individually. Move the parent document instead.", "zh-CN": "分片不能单独移动，请移动主文档。" },
+  "docs.deleteParentConfirm": { en: "This will also delete all {n} part documents. Continue?", "zh-CN": "这将同时删除所有 {n} 个分片文档。确定继续？" },
   "docs.noFolders": { en: "No folders", "zh-CN": "暂无文件夹" },
   "docs.deleteFolderConfirm": { en: "Delete folder \"{path}\"? Files inside will also be deleted unless you check \"Disband only\".", "zh-CN": "删除文件夹 \"{path}\"？其中的文件将被一同删除，除非勾选\"仅解散文件夹\"。" },
   "docs.disbandOnly": { en: "Disband only (keep files, remove folder)", "zh-CN": "仅解散文件夹（保留文件，移除文件夹标记）" },
@@ -142,6 +147,7 @@ export const translations = {
   "chat.placeholder": { en: "Ask a question about your documents...", "zh-CN": "向文档提问…" },
   "chat.empty": { en: "Ask questions about your documents", "zh-CN": "向你的文档提问" },
   "chat.sources": { en: "Sources", "zh-CN": "来源" },
+  "chat.viewFullDoc": { en: "View full document", "zh-CN": "查看完整文档" },
   "chat.new": { en: "New Chat", "zh-CN": "新对话" },
   "chat.newConversation": { en: "New Conversation", "zh-CN": "新对话" },
   "chat.emptyHint": { en: "Start a conversation with the AI assistant", "zh-CN": "开始与 AI 助手对话" },
@@ -162,7 +168,7 @@ export const translations = {
   "settings.saved": { en: "Saved", "zh-CN": "已保存" },
   "settings.general": { en: "General", "zh-CN": "通用" },
   "settings.dataDir": { en: "Data Directory", "zh-CN": "数据存储路径" },
-  "settings.dataDirHint": { en: "Where documents and indexes are stored. Leave empty to use ~/.local-knowledge-base. Restart required after changing.", "zh-CN": "文档和索引的存储路径。留空则使用 ~/.local-knowledge-base。修改后需重启应用。" },
+  "settings.dataDirHint": { en: "Where documents and indexes are stored. Leave empty to use ~/.super-knowledge-base. Restart required after changing.", "zh-CN": "文档和索引的存储路径。留空则使用 ~/.super-knowledge-base。修改后需重启应用。" },
   "settings.browse": { en: "Browse", "zh-CN": "浏览" },
   "settings.mineru": { en: "MinerU Document Parsing", "zh-CN": "MinerU 文档解析" },
   "settings.mineruToken": { en: "MinerU Token", "zh-CN": "MinerU 令牌" },
@@ -253,8 +259,8 @@ export const translations = {
 
   // ── User Guide ──
   "guide.title": { en: "User Guide", "zh-CN": "使用指南" },
-  "guide.introTitle": { en: "What is Local Knowledge Base?", "zh-CN": "什么是本地知识库？" },
-  "guide.introText": { en: "Local Knowledge Base is a local-first desktop application for building and managing personal knowledge bases for AI agents. It supports document parsing, vector indexing, hybrid search, and LLM-powered Q&A — all running locally on your computer.", "zh-CN": "本地知识库是一款本地优先的桌面应用，用于为 AI Agent 构建和管理个人知识库。支持文档解析、向量索引、混合搜索和 LLM 智能问答——全部在你的电脑本地运行。" },
+  "guide.introTitle": { en: "What is SKB?", "zh-CN": "什么是 SKB？" },
+  "guide.introText": { en: "SKB (Super Knowledge Base) is a local-first desktop application for building and managing personal knowledge bases for AI agents. It supports document parsing, vector indexing, hybrid search, and LLM-powered Q&A — all running locally on your computer.", "zh-CN": "SKB（Super Knowledge Base）是一款本地优先的桌面应用，用于为 AI Agent 构建和管理个人知识库。支持文档解析、向量索引、混合搜索和 LLM 智能问答——全部在你的电脑本地运行。" },
   "guide.quickstart": { en: "Quick Start", "zh-CN": "快速开始" },
   "guide.qs1": { en: "Go to Settings → configure Embedding API and MinerU Token (both required). Optionally configure Rerank and LLM APIs.", "zh-CN": "进入设置 → 配置嵌入模型 API 和 MinerU 令牌（两者必填），可选配置重排序和 LLM 大模型 API。" },
   "guide.qs2": { en: "Create a Knowledge Base from the dashboard — give it a name and description.", "zh-CN": "在概览页面创建知识库——给它起个名字和描述。" },

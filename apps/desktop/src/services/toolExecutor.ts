@@ -29,6 +29,7 @@ export async function executeToolCall(
   limits?: ToolLimits,
   allowedKbIds?: string[],
   defaultContextWindow?: number,
+  sourceOffset: number = 0,
 ): Promise<{ result: ToolExecutionResult; newSources: SearchResult[] }> {
   const { name, arguments: argsJson } = toolCall.function;
   let parsedArgs: Record<string, unknown>;
@@ -84,9 +85,10 @@ export async function executeToolCall(
             total: res.results.length,
             results: res.results.map((r, i) => {
               const entry: Record<string, unknown> = {
-                index: i + 1,
+                index: sourceOffset + i + 1,
                 doc_id: r.doc_id,
                 doc_name: r.doc_name,
+                chunk_index: r.metadata?.chunk_index,
                 score: Math.round(r.score * 100) / 100,
                 content: r.content.slice(0, maxChars),
                 page: r.metadata?.page,

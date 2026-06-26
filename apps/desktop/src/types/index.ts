@@ -24,6 +24,8 @@ export interface Document {
   chunk_count: number;
   embedding_model: string;
   path?: string | null;
+  parent_doc_id?: string;   // set on split parts, links back to parent doc
+  parts?: Document[];        // frontend-only: populated after grouping child documents
   created_at: string;
   updated_at: string;
 }

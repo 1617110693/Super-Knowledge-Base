@@ -266,7 +266,7 @@ export function SettingsPanel() {
             <div className="flex gap-2">
               <input type="text" value={form.data_dir}
                 onChange={(e) => update("data_dir", e.target.value)}
-                placeholder="~/.local-knowledge-base"
+                placeholder="~/.super-knowledge-base"
                 className="flex-1 px-3 py-2 border rounded-md text-sm bg-background" />
               <button
                 onClick={async () => {

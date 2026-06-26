@@ -35,6 +35,9 @@ pub struct Document {
     /// Optional path for folder hierarchy (e.g., "数学" or "数学/线性代数")
     #[serde(default, alias = "folder")]
     pub path: Option<String>,
+    /// If this document is a split part, the ID of the parent document
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_doc_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

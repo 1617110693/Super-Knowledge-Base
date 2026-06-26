@@ -1,5 +1,5 @@
 """
-MCP Server for Local Knowledge Base — merged into the Python backend.
+MCP Server for SKB (Super Knowledge Base) — merged into the Python backend.
 
 Provides tools for AI agents (Claude Code, etc.) to search, query,
 and manage knowledge bases via stdio transport.
@@ -35,7 +35,7 @@ from .mineru_client import (
 _config = get_config()
 DATA_DIR = _config.knowledge_base_data_dir
 
-mcp = FastMCP(name="Local Knowledge Base")
+mcp = FastMCP(name="SKB")
 
 
 def _get_db():

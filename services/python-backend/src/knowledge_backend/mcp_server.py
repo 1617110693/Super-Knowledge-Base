@@ -455,16 +455,21 @@ def create_knowledge_base(name: str, description: str = "") -> dict:
     kb_dir.mkdir(parents=True, exist_ok=True)
     (kb_dir / "docs").mkdir(exist_ok=True)
 
-    # Create LanceDB table
+    # Resolve embedding model and dimension
+    embedding_model = _config.embedding_model
     embedding_dim = 0
-    try:
-        embedder = OpenAICompatibleEmbedder(
-            _config.embedding_api_base, _config.embedding_api_key, _config.embedding_model,
-        )
-        embedding_dim = embedder.dimension or 0
-        embedder.close()
-    except Exception:
-        pass
+    if embedding_model:
+        try:
+            embedder = OpenAICompatibleEmbedder(
+                _config.embedding_api_base, _config.embedding_api_key, embedding_model,
+            )
+            embedding_dim = embedder.dimension or 0
+            embedder.close()
+        except Exception:
+            pass
+
+    kb_data["embedding_model"] = embedding_model
+    kb_data["embedding_dim"] = embedding_dim
 
     db = _get_db()
     try:
@@ -472,8 +477,28 @@ def create_knowledge_base(name: str, description: str = "") -> dict:
     finally:
         db.close()
 
-    kb_data["embedding_dim"] = embedding_dim
+    # Persist resolved model/dim back to registry
+    _update_kb_embedding(kb_id, embedding_model, embedding_dim)
+
     return kb_data
+
+
+def _update_kb_embedding(kb_id: str, model: str, dim: int):
+    """Update embedding_model and embedding_dim for a KB in the registry."""
+    registry_path = Path(DATA_DIR) / "knowledge_bases.json"
+    if not registry_path.exists():
+        return
+    try:
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        for kb in registry.get("knowledge_bases", []):
+            if kb["id"] == kb_id:
+                kb["embedding_model"] = model
+                kb["embedding_dim"] = dim
+                kb["updated_at"] = datetime.now(timezone.utc).isoformat()
+                registry_path.write_text(json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8")
+                break
+    except (json.JSONDecodeError, OSError):
+        pass
 
 
 @mcp.tool
@@ -655,6 +680,10 @@ def _update_kb_counts(kb_id: str):
                 kb["document_count"] = doc_count
                 kb["chunk_count"] = chunk_count
                 kb["updated_at"] = datetime.now(timezone.utc).isoformat()
+                # Backfill embedding model if missing (e.g. KB created before fix)
+                if not kb.get("embedding_model") and _config.embedding_model:
+                    kb["embedding_model"] = _config.embedding_model
+                    kb.setdefault("embedding_dim", 0)
                 registry_path.write_text(json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8")
                 break
 

@@ -262,10 +262,12 @@ export const useKBStore = create<KBState>((set, get) => ({
       await backupKb(kbId);
     } catch (e) {
       console.error("Backup before reindex failed:", e);
-      // Continue anyway — backup is best-effort
     }
-    const docs = get().documents;
-    for (const doc of docs) {
+    // Flatten: include nested parts from split documents
+    const flatDocs = get().documents.flatMap(d =>
+      d.parts?.length ? [d, ...d.parts] : [d]
+    );
+    for (const doc of flatDocs) {
       if (doc.parse_status === "done") {
         await get().reindexDocument(kbId, doc.id, doc.name);
       }

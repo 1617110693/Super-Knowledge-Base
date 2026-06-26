@@ -192,6 +192,25 @@ class GetChunkRequest(BaseModel):
     chunk_index: int
 
 
+class GetChunkRangeRequest(BaseModel):
+    kb_id: str
+    doc_id: str
+    start: int = 0
+    end: int = 50
+
+
+@router.post("/get-chunk-range")
+def get_chunk_range(req: GetChunkRangeRequest):
+    """Fetch chunks in a range [start, end] for a document, sorted by chunk_index."""
+    config = get_config()
+    db = LanceDBManager(Path(config.knowledge_base_data_dir) / "lancedb_data")
+    try:
+        chunks = db.get_chunk_range(req.kb_id, req.doc_id, req.start, req.end)
+        return {"kb_id": req.kb_id, "doc_id": req.doc_id, "chunks": chunks, "start": req.start, "end": req.end}
+    finally:
+        db.close()
+
+
 @router.post("/get-chunk-by-index")
 def get_chunk_by_index(req: GetChunkRequest):
     """Fetch a single chunk by doc_id + chunk_index, with prev/next existence hints."""

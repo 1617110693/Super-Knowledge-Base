@@ -449,6 +449,46 @@ class LanceDBManager:
             "next_exists": next_exists,
         }
 
+    def get_chunk_range(
+        self, kb_id: str, doc_id: str, start: int, end: int
+    ) -> list[dict]:
+        """Fetch all chunks for a document in the given chunk_index range."""
+        table = self.get_table(kb_id)
+        if table is None:
+            return []
+        try:
+            rows = (
+                table.search()
+                .where(f"doc_id = '{doc_id}' AND chunk_index >= {start} AND chunk_index <= {end}")
+                .limit(end - start + 10)  # slight over-fetch to be safe
+                .to_list()
+            )
+        except Exception:
+            return []
+
+        results = []
+        for r in rows:
+            metadata = {}
+            try:
+                metadata = json.loads(r.get("metadata_json", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                pass
+            metadata["chunk_index"] = r.get("chunk_index")
+            metadata["page"] = r.get("page_number")
+            results.append({
+                "chunk_id": r.get("chunk_id", ""),
+                "doc_id": r.get("doc_id", ""),
+                "kb_id": r.get("kb_id", ""),
+                "doc_name": r.get("doc_name", ""),
+                "content": r.get("content", ""),
+                "chunk_index": r.get("chunk_index"),
+                "page_number": r.get("page_number", 0),
+                "start_char": metadata.get("start_char"),
+                "metadata": metadata,
+            })
+        results.sort(key=lambda x: x.get("chunk_index", 0))
+        return results
+
     def get_kb_stats(self, kb_id: str) -> dict:
         table = self.get_table(kb_id)
         if table is None:

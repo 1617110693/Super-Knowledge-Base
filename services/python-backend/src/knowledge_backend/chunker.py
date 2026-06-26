@@ -28,6 +28,20 @@ class Chunker:
             case _:
                 return RecursiveChunker(chunk_size, chunk_overlap)
 
+    @staticmethod
+    def _annotate_char_positions(text: str, chunks: List[Chunk]) -> None:
+        """Find each chunk's content in the original text and annotate
+        its start_char position.  Copies metadata so chunks don't share dicts."""
+        pos = 0
+        for c in chunks:
+            idx = text.find(c.content, pos)
+            c.metadata = dict(c.metadata)  # detach from shared dict
+            if idx >= 0:
+                c.metadata["start_char"] = idx
+                pos = idx + len(c.content)
+            else:
+                c.metadata["start_char"] = pos
+
     def chunk(
         self, text: str, metadata: Dict[str, Any] | None = None
     ) -> List[Chunk]:
@@ -111,6 +125,7 @@ class SemanticChunker(Chunker):
             chunks.append(
                 Chunk(content=current.strip(), metadata=meta, chunk_index=chunk_index)
             )
+        self._annotate_char_positions(text, chunks)
         return chunks
 
 
@@ -129,6 +144,7 @@ class RecursiveChunker(Chunker):
         meta = metadata or {}
         chunks: List[Chunk] = []
         self._split_text(text, list(self.SEPARATORS), meta, 0, chunks)
+        self._annotate_char_positions(text, chunks)
         return chunks
 
     def _split_text(

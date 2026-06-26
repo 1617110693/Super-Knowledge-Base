@@ -110,7 +110,7 @@ export function ChatPage() {
       }
 
       const mathInstr = "Wrap ALL math in $..$ or $$..$$. Single symbols too: $x$, $\\alpha$, $A$. Display equations: $$A^T A$$. No bare LaTeX.";
-      const citeInstr = "Cite with [N] for single chunks, [M-N] for consecutive ranges. Example: 'the theorem states [3] that...' or 'as shown in [3-5]...'";
+      const citeInstr = "IMPORTANT: Each search result has an 'index' field (1,2,3...) AND a 'chunk_index' field (document position). Use the INDEX number for citation: write [N] where N is the result index, NOT the chunk_index. Example: if result index=1 has chunk_index=8, cite it as [1], not [8].";
       const kbNames = selectedKbIds.length > 0
         ? selectedKbIds.map((id) => knowledgeBases.find((kb) => kb.id === id)?.name || id).join(", ")
         : "";

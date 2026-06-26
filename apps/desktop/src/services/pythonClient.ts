@@ -215,6 +215,7 @@ export interface ChunkByIndex {
   content: string;
   chunk_index: number;
   page_number: number;
+  start_char?: number;
   metadata: Record<string, unknown>;
   prev_exists: boolean;
   next_exists: boolean;
@@ -226,6 +227,18 @@ export async function getChunkByIndex(params: {
   chunk_index: number;
 }): Promise<{ chunk: ChunkByIndex } | { error: string }> {
   return pythonFetch("/get-chunk-by-index", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export async function getChunkRange(params: {
+  kb_id: string;
+  doc_id: string;
+  start: number;
+  end: number;
+}): Promise<{ kb_id: string; doc_id: string; chunks: ChunkByIndex[]; start: number; end: number }> {
+  return pythonFetch("/get-chunk-range", {
     method: "POST",
     body: JSON.stringify(params),
   });

@@ -2,38 +2,11 @@ import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { MarkdownRenderer } from "../common/MarkdownRenderer";
 import { getDocumentContent, saveDocumentContent, saveDocumentChunks } from "../../services/tauriBridge";
-import { indexDocument } from "../../services/pythonClient";
+import { indexDocument, getChunkRange } from "../../services/pythonClient";
 import { useI18n } from "../../i18n";
 import { FileText, Loader2, ArrowLeft, Pencil, Check, X } from "lucide-react";
 
-// ── Chunk anchor helpers ──
-// Chunks are created at ~462-char intervals (chunk_size 512 − overlap 50).
-const CHARS_PER_CHUNK = 462;
-
-/** Insert invisible <span id="skb-c-N"> chunk anchors into the content.
- *  We only insert at paragraph boundaries (double-newline) to avoid
- *  breaking markdown syntax.  Each anchor marks where chunk N starts. */
-function addChunkAnchors(content: string): string {
-  const paragraphs = content.split(/\n\n+/);
-  const result: string[] = [];
-  let charOffset = 0;
-  let nextAnchor = 0;
-  for (const para of paragraphs) {
-    while (nextAnchor * CHARS_PER_CHUNK <= charOffset) {
-      result.push(`<span id="skb-c-${nextAnchor}">​</span>`);
-      nextAnchor++;
-    }
-    result.push(para);
-    charOffset += para.length + 2;
-  }
-  while (nextAnchor * CHARS_PER_CHUNK <= charOffset) {
-    result.push(`<span id="skb-c-${nextAnchor}">​</span>`);
-    nextAnchor++;
-  }
-  return result.join("\n\n");
-}
-
-// ── IntersectionObserver virtualizer ──
+/** Split into ~3000-char sections */
 function splitSections(content: string): string[] {
   const byHeading = content.split(/\n(?=#{1,3}\s)/);
   if (byHeading.length > 1) return byHeading;
@@ -48,100 +21,6 @@ function splitSections(content: string): string[] {
   return chunks.length > 1 ? chunks : [content];
 }
 
-function VirtualDocView({ content, chunkIdx }: { content: string; chunkIdx?: number | null }) {
-  const sections = useMemo(() => splitSections(content), [content]);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const observerRef = useRef<IntersectionObserver | null>(null);
-  const sentinelRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-
-  // Compute which section contains the target chunk (for eager rendering)
-  const targetSection = useMemo(() => {
-    if (chunkIdx == null) return -1;
-    const targetPos = chunkIdx * CHARS_PER_CHUNK;
-    let pos = 0;
-    for (let i = 0; i < sections.length; i++) {
-      pos += sections[i].length;
-      if (pos >= targetPos) return i;
-    }
-    return Math.min(sections.length - 1, Math.floor(chunkIdx / 10)); // fallback
-  }, [sections, chunkIdx]);
-
-  // Initial visible: first 4 + target section ±2
-  const [visibleSet, setVisibleSet] = useState<Set<number>>(() => {
-    const s = new Set<number>();
-    for (let i = 0; i < Math.min(4, sections.length); i++) s.add(i);
-    if (targetSection >= 0) {
-      for (let d = -2; d <= 2; d++) {
-        const idx = targetSection + d;
-        if (idx >= 0 && idx < sections.length) s.add(idx);
-      }
-    }
-    return s;
-  });
-
-  const visibleRef = useRef(visibleSet);
-  visibleRef.current = visibleSet;
-
-  const setupObserver = useCallback(() => {
-    if (observerRef.current) observerRef.current.disconnect();
-    observerRef.current = new IntersectionObserver(entries => {
-      const next = new Set(visibleRef.current);
-      let changed = false;
-      for (const e of entries) {
-        const idx = Number((e.target as HTMLElement).dataset.sectionIdx);
-        if (!isNaN(idx) && e.isIntersecting && !next.has(idx)) {
-          next.add(idx); changed = true;
-        }
-      }
-      if (changed) setVisibleSet(next);
-    }, { root: containerRef.current, rootMargin: "600px" });
-    sentinelRefs.current.forEach(el => observerRef.current?.observe(el));
-  }, []);
-
-  useEffect(() => {
-    setupObserver();
-    return () => observerRef.current?.disconnect();
-  }, [setupObserver, sections]);
-
-  const sentinelRef = useCallback((idx: number) => (el: HTMLDivElement | null) => {
-    if (el) { sentinelRefs.current.set(idx, el); observerRef.current?.observe(el); }
-    else { const old = sentinelRefs.current.get(idx); if (old) observerRef.current?.unobserve(old); sentinelRefs.current.delete(idx); }
-  }, []);
-
-  if (sections.length <= 1) {
-    return (
-      <div id="doc-preview-scroll" className="max-h-[calc(100vh-200px)] overflow-y-auto rounded-lg border bg-card">
-        <MarkdownRenderer className="prose prose-sm max-w-none dark:prose-invert p-6">{content}</MarkdownRenderer>
-      </div>
-    );
-  }
-
-  return (
-    <div id="doc-preview-scroll" ref={containerRef} className="max-h-[calc(100vh-200px)] overflow-y-auto rounded-lg border bg-card">
-      <div className="prose prose-sm max-w-none dark:prose-invert p-6">
-        {sections.map((sec, i) => {
-          const visible = visibleSet.has(i);
-          if (visible) {
-            return (
-              <div key={i} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 200px" }}>
-                <MarkdownRenderer>{sec}</MarkdownRenderer>
-              </div>
-            );
-          }
-          // Not yet visible — sentinel + placeholder
-          return (
-            <div key={i}>
-              <div ref={sentinelRef(i)} data-section-idx={i} style={{ height: 1 }} />
-              <div style={{ height: 200 }} />
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ── Main page ──
 export function DocumentPreview() {
   const { kbId, docId } = useParams<{ kbId: string; docId: string }>();
   const navigate = useNavigate();
@@ -149,76 +28,40 @@ export function DocumentPreview() {
   const [content, setContent] = useState("");
   const [docName, setDocName] = useState("");
   const [loading, setLoading] = useState(true);
+  const [startCharMap, setStartCharMap] = useState<Map<number, number>>(new Map());
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState("");
-  const scrolledRef = useRef(false);
 
-  const chunkIdx = useRef(parseInt(new URLSearchParams(window.location.search).get("ci") || "") || null).current;
+  const chunkIdx = (() => {
+    const v = new URLSearchParams(window.location.search).get("ci");
+    return v ? parseInt(v) : null;
+  })();
 
   useEffect(() => {
     if (!kbId || !docId) return;
-    setLoading(true); setContent(""); scrolledRef.current = false;
-    getDocumentContent(kbId, docId).then(data => {
-      setDocName(data.name || data.id);
-      setTimeout(() => { setContent(data.markdown); setLoading(false); }, 30);
-    }).catch(() => { setDocName(docId); setLoading(false); });
+    setLoading(true); setContent(""); setStartCharMap(new Map());
+    (async () => {
+      try {
+        const doc = await getDocumentContent(kbId, docId);
+        setDocName(doc.name || doc.id);
+        setContent(doc.markdown);
+      } catch { setDocName(docId); }
+      try {
+        const res = await getChunkRange({ kb_id: kbId, doc_id: docId, start: 0, end: 2000 });
+        const map = new Map<number, number>();
+        for (const c of (res.chunks || [])) {
+          if (c.start_char != null) map.set(c.chunk_index, c.start_char);
+        }
+        setStartCharMap(map);
+      } catch {}
+      setLoading(false);
+    })();
   }, [kbId, docId]);
 
-  // ── Scroll to chunk anchor ──
-  useEffect(() => {
-    if (!content || scrolledRef.current || chunkIdx === null) return;
-    scrolledRef.current = true;
-
-    const anchorId = `skb-c-${chunkIdx}`;
-
-    const tryScroll = (): boolean => {
-      // Try the direct anchor first
-      const el = document.getElementById(anchorId);
-      if (el) {
-        el.scrollIntoView({ behavior: "instant", block: "center" });
-        // Brief highlight
-        el.style.outline = "3px solid #f59e0b";
-        el.style.outlineOffset = "2px";
-        el.style.borderRadius = "4px";
-        setTimeout(() => { el.style.outline = ""; el.style.outlineOffset = ""; el.style.borderRadius = ""; }, 2500);
-        return true;
-      }
-      // Fallback: try nearby anchors
-      for (let delta = 1; delta <= 5; delta++) {
-        for (const sign of [-1, 1]) {
-          const nearby = document.getElementById(`skb-c-${chunkIdx + sign * delta}`);
-          if (nearby) {
-            nearby.scrollIntoView({ behavior: "instant", block: "center" });
-            return true;
-          }
-        }
-      }
-      // Last resort: proportional
-      const container = document.getElementById("doc-preview-scroll");
-      if (container && container.scrollHeight > 0) {
-        const ratio = Math.min((chunkIdx * CHARS_PER_CHUNK) / content.length, 0.95);
-        container.scrollTo({ top: ratio * container.scrollHeight - 80, behavior: "instant" });
-        return true;
-      }
-      return false;
-    };
-
-    // Target section is eagerly rendered — anchor should be in DOM immediately
-    let attempts = 0;
-    const maxAttempts = 5;
-    const retry = () => {
-      if (tryScroll()) return;
-      attempts++;
-      if (attempts < maxAttempts) setTimeout(retry, 150);
-    };
-    const t = setTimeout(retry, 100);
-    return () => clearTimeout(t);
-  }, [content, chunkIdx]);
-
   const handleStartEdit = () => { setEditContent(content); setEditError(""); setEditing(true); };
-  const handleCancelEdit = () => { setEditing(false); setEditContent(""); setEditError(""); };
+  const handleCancelEdit = () => { setEditing(false); setEditContent(""); };
   const handleSave = async () => {
     if (!kbId || !docId) return;
     setSaving(true); setEditError("");
@@ -242,7 +85,7 @@ export function DocumentPreview() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <button onClick={() => navigate(`/kb/${kbId}`)} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors">
+      <button onClick={() => navigate(`/kb/${kbId}`)} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4">
         <ArrowLeft className="w-4 h-4" /> Back
       </button>
       <div className="flex items-center gap-3 mb-6">
@@ -267,13 +110,218 @@ export function DocumentPreview() {
       </div>
       {editError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 mb-4">{editError}</div>}
       {editing && <p className="text-xs text-muted-foreground mb-3">{t("docs.editHint")}</p>}
+
       {editing ? (
         <textarea value={editContent} onChange={e => setEditContent(e.target.value)}
           className="w-full min-h-[400px] p-4 border rounded-lg bg-background font-mono text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary"
           disabled={saving} />
       ) : (
-        <VirtualDocView content={addChunkAnchors(content)} chunkIdx={chunkIdx} />
+        <DocView key={`${chunkIdx ?? "no-chunk"}`} content={content} startCharMap={startCharMap} chunkIdx={chunkIdx} />
       )}
+    </div>
+  );
+}
+
+/** Build section byte offsets by finding each section in the original content.
+ *  Uses greedy matching: for each section, finds the next occurrence starting from the
+ *  previous offset. Falls back to accumulated length estimation if indexOf fails
+ *  (which can happen when paragraph split re-joins with \n\n but original had \n\n\n). */
+function buildSectionOffsets(content: string, sections: string[]): number[] {
+  const offsets: number[] = [];
+  let contentPos = 0;
+  for (const sec of sections) {
+    const idx = content.indexOf(sec, contentPos);
+    if (idx >= 0) {
+      offsets.push(idx);
+      contentPos = idx + sec.length;
+    } else {
+      // Fallback: estimate position from accumulated length
+      offsets.push(contentPos);
+      contentPos += sec.length;
+    }
+  }
+  return offsets;
+}
+
+/** Return which section contains the given byte position */
+function findSectionForChar(sectionOffsets: number[], charPos: number): number {
+  for (let i = sectionOffsets.length - 1; i >= 0; i--) {
+    if (charPos >= sectionOffsets[i]) return i;
+  }
+  return 0;
+}
+
+function DocView({ content, startCharMap, chunkIdx }: { content: string; startCharMap: Map<number, number>; chunkIdx: number | null }) {
+  const sections = useMemo(() => splitSections(content), [content]);
+  const sectionOffsets = useMemo(() => buildSectionOffsets(content, sections), [content, sections]);
+
+  // Build sorted chunk entries: [chunkIndex, startChar, endChar]
+  const chunkEntries = useMemo(() => {
+    const sorted = [...startCharMap.entries()].sort((a, b) => a[0] - b[0]);
+    return sorted.map(([idx, start], i) => {
+      const end = i + 1 < sorted.length ? sorted[i + 1][1] : content.length;
+      return { chunkIndex: idx, startChar: start, endChar: end };
+    });
+  }, [startCharMap, content]);
+
+  // Map chunk_idx → section_idx
+  const chunkSection = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const e of chunkEntries) {
+      map.set(e.chunkIndex, findSectionForChar(sectionOffsets, e.startChar));
+    }
+    return map;
+  }, [chunkEntries, sectionOffsets]);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const obsRef = useRef<IntersectionObserver | null>(null);
+  const sentinelsRef = useRef<Map<number, HTMLDivElement>>(new Map());
+  const scrolledRef = useRef(false);
+  const highlightRef = useRef<HTMLElement | null>(null);
+
+  const EAGER = 5;
+
+  // Which section contains the target chunk (null if no target)
+  const targetSecIdx: number | null = chunkIdx != null ? (chunkSection.get(chunkIdx) ?? null) : null;
+
+  const [rendered, setRendered] = useState<Set<number>>(() => {
+    const s = new Set<number>();
+    for (let i = 0; i < Math.min(EAGER, sections.length); i++) s.add(i);
+    if (targetSecIdx != null) {
+      for (let i = Math.max(0, targetSecIdx - 3); i <= Math.min(sections.length - 1, targetSecIdx + 3); i++) s.add(i);
+    }
+    return s;
+  });
+  const renderedRef = useRef(rendered);
+  renderedRef.current = rendered;
+
+  // Ensure target section window is rendered (fires when targetSecIdx changes)
+  useEffect(() => {
+    if (targetSecIdx == null) return;
+    setRendered(prev => {
+      const s = new Set(prev);
+      for (let i = 0; i < Math.min(EAGER, sections.length); i++) s.add(i);
+      for (let i = Math.max(0, targetSecIdx - 3); i <= Math.min(sections.length - 1, targetSecIdx + 3); i++) s.add(i);
+      return s;
+    });
+  }, [targetSecIdx, sections.length]);
+
+  // IntersectionObserver for lazy loading
+  useEffect(() => {
+    if (obsRef.current) obsRef.current.disconnect();
+    obsRef.current = new IntersectionObserver(entries => {
+      const next = new Set(renderedRef.current);
+      let changed = false;
+      for (const e of entries) {
+        const idx = Number((e.target as HTMLElement).dataset.sectionIdx);
+        if (!isNaN(idx) && e.isIntersecting && !next.has(idx)) {
+          next.add(idx); changed = true;
+        }
+      }
+      if (changed) setRendered(next);
+    }, { root: containerRef.current, rootMargin: "600px" });
+    sentinelsRef.current.forEach(el => obsRef.current?.observe(el));
+    return () => obsRef.current?.disconnect();
+  }, [sections]);
+
+  const sentinelRef = useCallback((idx: number) => (el: HTMLDivElement | null) => {
+    if (el) { sentinelsRef.current.set(idx, el); obsRef.current?.observe(el); }
+    else { const old = sentinelsRef.current.get(idx); if (old) obsRef.current?.unobserve(old); sentinelsRef.current.delete(idx); }
+  }, []);
+
+  // Reset on chunkIdx change
+  useEffect(() => { scrolledRef.current = false; }, [chunkIdx]);
+
+  // Scroll to chunk: for multi-section docs, scroll target section into view.
+  // For single-section docs, scroll to top of container.
+  // Uses direct DOM scroll (no text search) — text search fails on
+  // LaTeX math because KaTeX transforms the DOM content during rendering.
+  // targetReady: only true when we have data and the target section is rendered
+  const targetReady =
+    targetSecIdx != null
+      ? rendered.has(targetSecIdx)
+      : (chunkIdx != null && sections.length <= 1 && chunkEntries.length > 0);
+  useEffect(() => {
+    if (!targetReady || scrolledRef.current) return;
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    // Clear previous highlight
+    if (highlightRef.current) {
+      highlightRef.current.style.backgroundColor = "";
+      highlightRef.current = null;
+    }
+
+    if (targetSecIdx != null) {
+      // Multi-section: scroll the target section element into view
+      const sectionEl = container.querySelector(`[data-section-idx="${targetSecIdx}"]`) as HTMLElement | null;
+      if (sectionEl) {
+        scrolledRef.current = true;
+        sectionEl.style.backgroundColor = "#fef3c7";
+        sectionEl.style.transition = "background-color 0.5s";
+        highlightRef.current = sectionEl;
+        setTimeout(() => {
+          if (highlightRef.current === sectionEl) {
+            sectionEl.style.backgroundColor = "";
+            highlightRef.current = null;
+          }
+        }, 2500);
+        const containerRect = container.getBoundingClientRect();
+        const sectionRect = sectionEl.getBoundingClientRect();
+        const offset = sectionRect.top - containerRect.top - containerRect.height * 0.25;
+        container.scrollTo({ top: container.scrollTop + offset, behavior: "instant" });
+      }
+    } else {
+      // Single section: just scroll to top
+      scrolledRef.current = true;
+      container.scrollTo({ top: 0, behavior: "instant" });
+      // Highlight the whole content area briefly
+      const inner = container.firstElementChild as HTMLElement | null;
+      if (inner) {
+        inner.style.backgroundColor = "#fef3c7";
+        inner.style.transition = "background-color 0.5s";
+        highlightRef.current = inner;
+        setTimeout(() => {
+          if (highlightRef.current === inner) {
+            inner.style.backgroundColor = "";
+            highlightRef.current = null;
+          }
+        }, 2500);
+      }
+    }
+  }, [targetReady, chunkIdx, targetSecIdx]);
+
+  // Single section: render with data-section-idx for consistency
+  if (sections.length <= 1) {
+    return (
+      <div ref={containerRef} id="doc-preview-scroll" className="max-h-[calc(100vh-200px)] overflow-y-auto rounded-lg border bg-card prose prose-sm max-w-none dark:prose-invert p-6">
+        <div data-section-idx={0}>
+          <MarkdownRenderer>{content}</MarkdownRenderer>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} id="doc-preview-scroll" className="max-h-[calc(100vh-200px)] overflow-y-auto rounded-lg border bg-card">
+      <div className="prose prose-sm max-w-none dark:prose-invert p-6">
+        {sections.map((sec, i) => {
+          if (i < EAGER || rendered.has(i)) {
+            return (
+              <div key={i} data-section-idx={i} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 200px" }}>
+                <MarkdownRenderer>{sec}</MarkdownRenderer>
+              </div>
+            );
+          }
+          return (
+            <div key={i}>
+              <div ref={sentinelRef(i)} data-section-idx={i} style={{ height: 1 }} />
+              <div style={{ height: 200 }} />
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

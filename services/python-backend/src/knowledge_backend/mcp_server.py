@@ -193,9 +193,18 @@ def search_all_knowledge_bases(
         else:
             all_results = [r for r in all_results[:top_k] if len(r.get("content", "").strip()) >= 20]
 
-        # Enrich with context if requested
+        # Enrich with context if requested — group by kb_id for per-KB lookup
         if context_window > 0 and all_results:
-            all_results = db.enrich_with_context(all_results, target_kb_ids[0], context_window)
+            by_kb: dict[str, list[dict]] = {}
+            for r in all_results:
+                by_kb.setdefault(r.get("kb_id", ""), []).append(r)
+            enriched = []
+            for kb, group in by_kb.items():
+                if kb:
+                    enriched.extend(db.enrich_with_context(group, kb, context_window))
+                else:
+                    enriched.extend(group)
+            all_results = enriched
 
         return all_results
     finally:
@@ -488,7 +497,7 @@ def create_knowledge_base(name: str, description: str = "") -> dict:
             embedder = OpenAICompatibleEmbedder(
                 _config.embedding_api_base, _config.embedding_api_key, embedding_model,
             )
-            embedding_dim = embedder.dimension or 0
+            embedding_dim = embedder.get_dimension() or 0
             embedder.close()
         except Exception:
             pass
@@ -905,15 +914,29 @@ def clean_orphans() -> dict:
         except (json.JSONDecodeError, OSError):
             pass
 
-    results: list[str] = []
+    removed: list[str] = []
+    skipped: list[str] = []
+
+    def _try_remove(path: Path, label: str):
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            removed.append(label)
+        except OSError as e:
+            skipped.append(f"{label}: {e}")
 
     # 1. Remove LanceDB tables not in registry
     try:
         lancedb_ids = db.list_kb_ids()
         for lid in lancedb_ids:
             if lid not in registry_ids:
-                db.drop_table(lid)
-                results.append(f"Removed orphan LanceDB table: {lid}")
+                try:
+                    db.drop_table(lid)
+                    removed.append(f"Removed orphan LanceDB table: {lid}")
+                except Exception as e:
+                    skipped.append(f"LanceDB table {lid}: {e}")
     finally:
         db.close()
 
@@ -923,18 +946,14 @@ def clean_orphans() -> dict:
         if docs_dir.exists():
             for d in docs_dir.iterdir():
                 if d.is_dir() and not (d / "metadata.json").exists():
-                    shutil.rmtree(d)
-                    results.append(f"Removed orphan document: {kb_id}/{d.name}")
+                    _try_remove(d, f"Removed orphan document: {kb_id}/{d.name}")
 
     # 3. Remove stale .bak files
     lancedb_dir = Path(DATA_DIR) / "lancedb_data"
     if lancedb_dir.exists():
-        for f in lancedb_dir.glob("*.bak"):
-            f.unlink()
-            results.append(f"Removed stale backup: {f.name}")
-        for f in lancedb_dir.glob("*.bak.*"):
-            f.unlink()
-            results.append(f"Removed stale backup: {f.name}")
+        for pattern in ["*.bak", "*.bak.*"]:
+            for f in lancedb_dir.glob(pattern):
+                _try_remove(f, f"Removed stale backup: {f.name}")
 
     # 4. Repair kb_id mismatches in chunks
     db2 = _get_db()
@@ -952,7 +971,7 @@ def clean_orphans() -> dict:
                         for row in all_wrong:
                             row["kb_id"] = kb_id
                         table.add(all_wrong)
-                        results.append(f"Fixed {len(all_wrong)} chunks with wrong kb_id in KB: {kb_id}")
+                        removed.append(f"Fixed {len(all_wrong)} chunks with wrong kb_id in KB: {kb_id}")
             except Exception:
                 pass
     finally:
@@ -960,9 +979,12 @@ def clean_orphans() -> dict:
 
     # 5. Re-count chunks/docs for all KBs
     for kb_id in registry_ids:
-        _update_kb_counts(kb_id)
+        try:
+            _update_kb_counts(kb_id)
+        except Exception as e:
+            skipped.append(f"Count update for {kb_id}: {e}")
 
-    return {"cleaned": len(results), "details": results}
+    return {"removed": len(removed), "skipped": len(skipped), "removed_items": removed, "skipped_items": skipped}
 
 
 def main():

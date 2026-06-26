@@ -5,7 +5,7 @@ import { useI18n } from "../../i18n";
 import { configureClaudeMCP, getMcpConfigJson, clearAllKBs, exportKBs, importKBs } from "../../services/tauriBridge";
 import { testEmbedding, testRerank, cleanOrphans } from "../../services/pythonClient";
 import type { AppSettings } from "../../types";
-import { Save, CheckCircle, Loader2, Terminal, Check, X, FolderOpen, FlaskConical, Copy, ClipboardCheck, AlertTriangle, Trash2, Download, Upload, Settings } from "lucide-react";
+import { Save, CheckCircle, Loader2, Terminal, Check, X, FolderOpen, RotateCcw, FlaskConical, Copy, ClipboardCheck, AlertTriangle, Trash2, Download, Upload, Settings } from "lucide-react";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 
 const SECTIONS = [
@@ -280,6 +280,14 @@ export function SettingsPanel() {
                 title={t("settings.browse")}
               >
                 <FolderOpen className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => update("data_dir", "")}
+                disabled={!form.data_dir}
+                className="px-3 py-2 border rounded-md hover:bg-muted transition-colors disabled:opacity-40"
+                title={t("settings.resetDataDir")}
+              >
+                <RotateCcw className="w-4 h-4" />
               </button>
             </div>
             <p className="text-xs text-muted-foreground mt-1">{t("settings.dataDirHint")}</p>

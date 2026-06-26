@@ -111,6 +111,92 @@ def search_knowledge_base(
 
 
 @mcp.tool
+def search_all_knowledge_bases(
+    query: str,
+    kb_ids: Optional[list[str]] = None,
+    top_k: int = 10,
+    search_type: Literal["hybrid", "vector", "fts"] = "hybrid",
+    rerank: bool = True,
+    context_window: int = 0,
+) -> list[dict]:
+    """Search across all knowledge bases (or specified ones) and return top results.
+
+    Use this to find information without knowing which KB contains it.
+    If kb_ids is omitted, searches all available KBs."""
+    db = _get_db()
+    try:
+        embedder = OpenAICompatibleEmbedder(
+            _config.embedding_api_base,
+            _config.embedding_api_key,
+            _config.embedding_model,
+        )
+        query_vector = embedder.embed_single(query)
+        embedder.close()
+
+        # Determine which KBs to search
+        available_kb_ids = db.list_kb_ids()
+        if kb_ids:
+            target_kb_ids = [k for k in kb_ids if k in available_kb_ids]
+        else:
+            target_kb_ids = available_kb_ids
+
+        if not target_kb_ids:
+            return []
+
+        fetch_k = top_k * 3 if rerank else top_k
+        per_kb = max(fetch_k // max(len(target_kb_ids), 1), 3)
+
+        all_results = []
+        for kb_id in target_kb_ids:
+            try:
+                kb_results = db.search(
+                    kb_id=kb_id,
+                    query_vector=query_vector,
+                    query_text=query,
+                    search_type=search_type,
+                    top_k=per_kb,
+                )
+                all_results.extend(kb_results)
+            except Exception:
+                continue
+
+        # Sort by score
+        all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+        # Optional rerank
+        if rerank and all_results and _config.rerank_api_key:
+            try:
+                reranker = OpenAICompatibleReranker(
+                    _config.rerank_api_base,
+                    _config.rerank_api_key,
+                    _config.rerank_model,
+                )
+                documents = [r["content"] for r in all_results]
+                reranked = reranker.rerank(query, documents, top_n=top_k)
+                reranker.close()
+                new_results = []
+                for rr in reranked[:top_k]:
+                    if rr.index < len(all_results):
+                        r = all_results[rr.index]
+                        if len(r.get("content", "").strip()) >= 20:
+                            r["score"] = rr.score
+                            new_results.append(r)
+                all_results = new_results
+            except Exception:
+                all_results = [r for r in all_results[:top_k] if len(r.get("content", "").strip()) >= 20]
+        else:
+            all_results = [r for r in all_results[:top_k] if len(r.get("content", "").strip()) >= 20]
+
+        # Enrich with context if requested
+        if context_window > 0 and all_results:
+            all_results = db.enrich_with_context(all_results, target_kb_ids[0], context_window)
+
+        return all_results
+    finally:
+        db.close()
+
+
+@mcp.tool
 def list_knowledge_bases() -> list[dict]:
     """List all knowledge bases with document and chunk counts, detecting orphaned data."""
     registry_path = Path(DATA_DIR) / "knowledge_bases.json"
@@ -580,8 +666,12 @@ def list_folders(kb_id: str) -> list[str]:
 
 
 @mcp.tool
-def get_document_chunks(kb_id: str, doc_id: str) -> dict:
-    """Get all chunks of a document, sorted by chunk_index. Returns full chunk contents."""
+def get_document_chunks(kb_id: str, doc_id: str, limit: int = 0) -> dict:
+    """Get chunks of a document, sorted by chunk_index. Returns full chunk contents.
+
+    limit: 0 = all chunks, N > 0 = first N chunks, N < 0 = last |N| chunks.
+    Use a positive limit to preview the document without overwhelming context.
+    Use a negative limit to see the ending chunks."""
     doc_dir = Path(DATA_DIR) / f"kb_{kb_id}" / "docs" / doc_id
     if not doc_dir.exists():
         return {"error": f"Document not found: {doc_id}"}
@@ -604,22 +694,32 @@ def get_document_chunks(kb_id: str, doc_id: str) -> dict:
         chunks = table.search().where(f"doc_id = '{doc_id}'").to_list()
         chunks.sort(key=lambda c: c.get("chunk_index", 0))
 
-        return {
+        total = len(chunks)
+        if limit > 0:
+            chunks = chunks[:limit]
+        elif limit < 0:
+            chunks = chunks[limit:]
+
+        def _format_chunk(c):
+            return {
+                "chunk_id": c.get("chunk_id", ""),
+                "content": c.get("content", ""),
+                "chunk_index": c.get("chunk_index", 0),
+                "page_number": c.get("page_number", 0),
+                "metadata": json.loads(c.get("metadata_json", "{}")) if c.get("metadata_json") else {},
+            }
+
+        result = {
             "doc_id": doc_id,
             "kb_id": kb_id,
             "name": meta.get("name", doc_id),
-            "chunk_count": len(chunks),
-            "chunks": [
-                {
-                    "chunk_id": c.get("chunk_id", ""),
-                    "content": c.get("content", ""),
-                    "chunk_index": c.get("chunk_index", 0),
-                    "page_number": c.get("page_number", 0),
-                    "metadata": json.loads(c.get("metadata_json", "{}")) if c.get("metadata_json") else {},
-                }
-                for c in chunks
-            ],
+            "total_chunks": total,
+            "returned_chunks": len(chunks),
+            "chunks": [_format_chunk(c) for c in chunks],
         }
+        if limit != 0:
+            result["limit"] = limit
+        return result
     finally:
         db.close()
 

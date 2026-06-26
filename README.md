@@ -39,15 +39,16 @@
 - **代码块复制**、数学公式渲染、自动滚动开关
 
 ### MCP 服务器
-14 个工具供 AI Agent 使用 — 打包为单一可执行文件，需应用正在运行（或最小化至托盘）：
+16 个工具供 AI Agent 使用 — 打包为单一可执行文件，需应用正在运行（或最小化至托盘）：
 
 | 工具 | 说明 |
 |------|------|
 | `search_knowledge_base` | 混合搜索（向量 + 关键词 + 重排序），支持上下文窗口 |
+| `search_all_knowledge_bases` | 跨所有知识库全局搜索，无需事先知道目标知识库 |
 | `list_knowledge_bases` | 列出所有知识库及统计，检测孤立数据 |
 | `list_documents` | 列出知识库中所有文档及元数据 |
 | `get_document` | 获取完整文档内容 |
-| `get_document_chunks` | 获取文档所有分块 |
+| `get_document_chunks` | 获取文档分块，支持 `limit` 参数控制数量（正数取前 N，负数取倒数 N，0 取全部） |
 | `get_chunk_by_index` | 按 doc_id + chunk_index 获取单个分块 |
 | `create_knowledge_base` | 创建新知识库 |
 | `delete_knowledge_base` | 删除知识库及所有数据 |
@@ -57,6 +58,7 @@
 | `rename_document` | 重命名文档 |
 | `move_document` | 移动文档到指定文件夹路径 |
 | `list_folders` | 列出知识库中所有文件夹路径 |
+| `clean_orphans` | 清理孤立数据（LanceDB 表、文档、备份文件） |
 
 ### 桌面 UI
 - 自定义无边框窗口，支持深色/浅色/跟随系统主题

@@ -39,15 +39,16 @@ A local-first desktop knowledge base for AI agents. Built with **Tauri v2 + Reac
 - **Code block copy**, math rendering, auto-scroll toggle
 
 ### MCP Server
-14 tools for AI agents — single executable, requires the app running (or minimized to tray):
+16 tools for AI agents — single executable, requires the app running (or minimized to tray):
 
 | Tool | Description |
 |------|-------------|
 | `search_knowledge_base` | Hybrid search with reranking, optional context window |
+| `search_all_knowledge_bases` | Global search across all KBs without specifying a target |
 | `list_knowledge_bases` | List all KBs with stats, detect orphaned data |
 | `list_documents` | List all documents in a KB with metadata |
 | `get_document` | Full document content |
-| `get_document_chunks` | Get all chunks of a document |
+| `get_document_chunks` | Get document chunks with `limit` param (N=first N, -N=last N, 0=all) |
 | `get_chunk_by_index` | Fetch a single chunk by doc_id + chunk_index |
 | `create_knowledge_base` | Create a new KB |
 | `delete_knowledge_base` | Delete a KB and all its data |
@@ -57,6 +58,7 @@ A local-first desktop knowledge base for AI agents. Built with **Tauri v2 + Reac
 | `rename_document` | Rename a document |
 | `move_document` | Move a document to a folder path |
 | `list_folders` | List all folder paths in a KB |
+| `clean_orphans` | Clean orphaned data (LanceDB tables, documents, backups) |
 
 ### Desktop UI
 - Custom frameless window with dark/light/system theme

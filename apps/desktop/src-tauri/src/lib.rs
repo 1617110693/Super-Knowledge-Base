@@ -41,7 +41,15 @@ pub fn run() {
             let data_dir = if settings.data_dir.is_empty() {
                 default_dir.clone()
             } else {
-                std::path::PathBuf::from(&settings.data_dir)
+                let custom = std::path::PathBuf::from(&settings.data_dir);
+                // If the custom directory exists or has a parent that exists,
+                // use it. Otherwise reset to default (stale path from migration).
+                if custom.exists() || custom.parent().map_or(false, |p| p.exists()) {
+                    custom
+                } else {
+                    eprintln!("[SKB] Custom data_dir '{}' does not exist, falling back to default", settings.data_dir);
+                    default_dir.clone()
+                }
             };
             std::fs::create_dir_all(&data_dir).ok();
 

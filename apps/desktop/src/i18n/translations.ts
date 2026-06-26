@@ -169,6 +169,7 @@ export const translations = {
   "settings.general": { en: "General", "zh-CN": "通用" },
   "settings.dataDir": { en: "Data Directory", "zh-CN": "数据存储路径" },
   "settings.dataDirHint": { en: "Where documents and indexes are stored. Leave empty to use ~/.super-knowledge-base. Restart required after changing.", "zh-CN": "文档和索引的存储路径。留空则使用 ~/.super-knowledge-base。修改后需重启应用。" },
+  "settings.resetDataDir": { en: "Reset to default", "zh-CN": "重置为默认" },
   "settings.browse": { en: "Browse", "zh-CN": "浏览" },
   "settings.mineru": { en: "MinerU Document Parsing", "zh-CN": "MinerU 文档解析" },
   "settings.mineruToken": { en: "MinerU Token", "zh-CN": "MinerU 令牌" },

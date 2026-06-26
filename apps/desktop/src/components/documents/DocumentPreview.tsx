@@ -53,17 +53,37 @@ function VirtualDocView({ content, chunkIdx }: { content: string; chunkIdx?: num
   const containerRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const sentinelRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-  const [visibleSet, setVisibleSet] = useState<Set<number>>(new Set());
-  const EAGER = 8;
-  // When jumping to a chunk, render everything so anchors are in the DOM
-  const fullRender = chunkIdx != null;
+
+  // Compute which section contains the target chunk (for eager rendering)
+  const targetSection = useMemo(() => {
+    if (chunkIdx == null) return -1;
+    const targetPos = chunkIdx * CHARS_PER_CHUNK;
+    let pos = 0;
+    for (let i = 0; i < sections.length; i++) {
+      pos += sections[i].length;
+      if (pos >= targetPos) return i;
+    }
+    return Math.min(sections.length - 1, Math.floor(chunkIdx / 10)); // fallback
+  }, [sections, chunkIdx]);
+
+  // Initial visible: first 4 + target section ±2
+  const [visibleSet, setVisibleSet] = useState<Set<number>>(() => {
+    const s = new Set<number>();
+    for (let i = 0; i < Math.min(4, sections.length); i++) s.add(i);
+    if (targetSection >= 0) {
+      for (let d = -2; d <= 2; d++) {
+        const idx = targetSection + d;
+        if (idx >= 0 && idx < sections.length) s.add(idx);
+      }
+    }
+    return s;
+  });
 
   const visibleRef = useRef(visibleSet);
   visibleRef.current = visibleSet;
 
   const setupObserver = useCallback(() => {
     if (observerRef.current) observerRef.current.disconnect();
-    if (fullRender) return;
     observerRef.current = new IntersectionObserver(entries => {
       const next = new Set(visibleRef.current);
       let changed = false;
@@ -76,7 +96,7 @@ function VirtualDocView({ content, chunkIdx }: { content: string; chunkIdx?: num
       if (changed) setVisibleSet(next);
     }, { root: containerRef.current, rootMargin: "600px" });
     sentinelRefs.current.forEach(el => observerRef.current?.observe(el));
-  }, [fullRender]);
+  }, []);
 
   useEffect(() => {
     setupObserver();
@@ -100,28 +120,19 @@ function VirtualDocView({ content, chunkIdx }: { content: string; chunkIdx?: num
     <div id="doc-preview-scroll" ref={containerRef} className="max-h-[calc(100vh-200px)] overflow-y-auto rounded-lg border bg-card">
       <div className="prose prose-sm max-w-none dark:prose-invert p-6">
         {sections.map((sec, i) => {
-          if (fullRender) {
+          const visible = visibleSet.has(i);
+          if (visible) {
             return (
-              <div key={i}>
+              <div key={i} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 200px" }}>
                 <MarkdownRenderer>{sec}</MarkdownRenderer>
               </div>
             );
           }
-          const visible = i < EAGER || visibleSet.has(i);
-          return i < EAGER ? (
-            <div key={i} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 200px" }}>
-              <MarkdownRenderer>{sec}</MarkdownRenderer>
-            </div>
-          ) : (
+          // Not yet visible — sentinel + placeholder
+          return (
             <div key={i}>
               <div ref={sentinelRef(i)} data-section-idx={i} style={{ height: 1 }} />
-              {visible ? (
-                <div style={{ contentVisibility: "auto", containIntrinsicSize: "auto 200px" }}>
-                  <MarkdownRenderer>{sec}</MarkdownRenderer>
-                </div>
-              ) : (
-                <div style={{ height: 200 }} />
-              )}
+              <div style={{ height: 200 }} />
             </div>
           );
         })}
@@ -194,15 +205,15 @@ export function DocumentPreview() {
       return false;
     };
 
-    // Retry as sections progressively render
+    // Target section is eagerly rendered — anchor should be in DOM immediately
     let attempts = 0;
-    const maxAttempts = 15;
+    const maxAttempts = 5;
     const retry = () => {
       if (tryScroll()) return;
       attempts++;
-      if (attempts < maxAttempts) setTimeout(retry, 250);
+      if (attempts < maxAttempts) setTimeout(retry, 150);
     };
-    const t = setTimeout(retry, 300);
+    const t = setTimeout(retry, 100);
     return () => clearTimeout(t);
   }, [content, chunkIdx]);
 

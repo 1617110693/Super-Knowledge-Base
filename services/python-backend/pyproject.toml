@@ -1,6 +1,6 @@
 [project]
 name = "knowledge-backend"
-version = "2.5.0"
+version = "2.5.2"
 description = "Python backend service for SKB (Super Knowledge Base)"
 requires-python = ">=3.11"
 license = { text = "MIT" }

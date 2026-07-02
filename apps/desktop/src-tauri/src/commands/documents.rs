@@ -1,5 +1,5 @@
 use crate::error::{AppError, CommandResult};
-use crate::models::{Document, DocumentContent};
+use crate::models::{Document, DocumentContent, ParseStatus};
 use crate::AppState;
 use std::path::Path;
 use tauri::State;
@@ -350,4 +350,77 @@ pub async fn save_document_content(
 ) -> CommandResult<()> {
     state.file_store.save_parsed_markdown(&kb_id, &doc_id, &content)?;
     Ok(())
+}
+
+// ── Folder persistence ──
+
+#[tauri::command]
+pub async fn create_folder(
+    state: State<'_, AppState>,
+    kb_id: String,
+    path: String,
+) -> CommandResult<()> {
+    state.file_store.create_folder(&kb_id, &path)
+}
+
+#[tauri::command]
+pub async fn remove_folder(
+    state: State<'_, AppState>,
+    kb_id: String,
+    path: String,
+) -> CommandResult<()> {
+    state.file_store.remove_folder(&kb_id, &path)
+}
+
+// ── Cross-KB document copy ──
+
+#[tauri::command]
+pub async fn copy_document_to_kb(
+    state: State<'_, AppState>,
+    kb_id: String,
+    doc_id: String,
+    target_kb_id: String,
+    target_path: Option<String>,
+) -> CommandResult<Document> {
+    // Validate: target KB must exist
+    let registry = state.file_store.load_registry()?;
+    if !registry.knowledge_bases.iter().any(|kb| kb.id == target_kb_id) {
+        return Err(AppError::InvalidInput("Target knowledge base not found".into()));
+    }
+
+    // Read source document — get content, file_type, and source directory
+    let content = state.file_store.get_document_content(&kb_id, &doc_id)?;
+    let source_doc = state.file_store.get_document(&kb_id, &doc_id)?;
+    let source_doc_dir = state.file_store.get_doc_dir(&kb_id, &doc_id);
+
+    // Create new document in target KB
+    let file_type = source_doc.file_type.clone();
+    let new_doc = state.file_store.add_document(&target_kb_id, content.name.clone(), file_type.clone(), source_doc.file_size, None)?;
+    let target_doc_dir = state.file_store.get_doc_dir(&target_kb_id, &new_doc.id);
+
+    // Copy full.md
+    let source_md = source_doc_dir.join("full.md");
+    if source_md.exists() {
+        std::fs::copy(&source_md, target_doc_dir.join("full.md"))?;
+    }
+
+    // Copy original file
+    let orig = source_doc_dir.join(format!("original.{}", file_type));
+    if orig.exists() {
+        std::fs::copy(&orig, target_doc_dir.join(format!("original.{}", file_type)))?;
+    }
+
+    // Copy mineru_result.json
+    let json_src = source_doc_dir.join("mineru_result.json");
+    if json_src.exists() {
+        std::fs::copy(&json_src, target_doc_dir.join("mineru_result.json"))?;
+    }
+
+    // Update path and status
+    let mut saved = state.file_store.get_document(&target_kb_id, &new_doc.id)?;
+    saved.path = target_path;
+    saved.parse_status = ParseStatus::Done;
+    state.file_store.save_document_meta(&saved)?;
+
+    Ok(saved)
 }

@@ -120,6 +120,20 @@ export async function renamePath(
   return invoke("rename_path", { kbId, oldPath, newPath });
 }
 
+export async function createFolder(kbId: string, path: string): Promise<void> {
+  return invoke("create_folder", { kbId, path });
+}
+
+export async function removeFolder(kbId: string, path: string): Promise<void> {
+  return invoke("remove_folder", { kbId, path });
+}
+
+export async function copyDocumentToKb(
+  kbId: string, docId: string, targetKbId: string, targetPath: string | null
+): Promise<Document> {
+  return invoke("copy_document_to_kb", { kbId, docId, targetKbId, targetPath });
+}
+
 export async function listDocuments(kbId: string): Promise<Document[]> {
   return invoke("list_documents", { kbId });
 }

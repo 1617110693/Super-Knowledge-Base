@@ -484,7 +484,65 @@ impl FileStore {
         Ok(doc)
     }
 
-    /// Build a folder tree from all document paths. Returns sorted list of unique paths.
+    // ── Folder (empty path) persistence ──
+
+    fn folders_path(&self, kb_id: &str) -> PathBuf {
+        self.get_docs_dir(kb_id).parent().unwrap().join("folders.json")
+    }
+
+    fn load_folders(&self, kb_id: &str) -> Vec<String> {
+        let p = self.folders_path(kb_id);
+        if !p.exists() {
+            return Vec::new();
+        }
+        std::fs::read_to_string(&p)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+            .unwrap_or_default()
+    }
+
+    fn save_folders(&self, kb_id: &str, folders: &[String]) -> CommandResult<()> {
+        let p = self.folders_path(kb_id);
+        let json = serde_json::to_string_pretty(folders)?;
+        std::fs::write(&p, json)?;
+        Ok(())
+    }
+
+    /// Create an empty folder path (persisted even without documents).
+    pub fn create_folder(&self, kb_id: &str, path: &str) -> CommandResult<()> {
+        let mut folders = self.load_folders(kb_id);
+        let normalized = path.trim_matches('/').to_string();
+        if normalized.is_empty() {
+            return Err(AppError::InvalidInput("Folder path cannot be empty".into()));
+        }
+        if !folders.contains(&normalized) {
+            folders.push(normalized.clone());
+        }
+        // Also add all parent folders
+        let mut parts: Vec<&str> = Vec::new();
+        for seg in normalized.split('/') {
+            if !seg.is_empty() {
+                parts.push(seg);
+                let parent = parts.join("/");
+                if !folders.contains(&parent) {
+                    folders.push(parent);
+                }
+            }
+        }
+        folders.sort();
+        self.save_folders(kb_id, &folders)
+    }
+
+    /// Remove a folder path from the persistent list.
+    pub fn remove_folder(&self, kb_id: &str, path: &str) -> CommandResult<()> {
+        let mut folders = self.load_folders(kb_id);
+        let normalized = path.trim_matches('/');
+        let prefix = format!("{}/", normalized);
+        folders.retain(|f| f != normalized && !f.starts_with(&prefix));
+        self.save_folders(kb_id, &folders)
+    }
+
+    /// Build a folder tree from document paths + persistent empty folders.
     /// Paths like "数学", "数学/线性代数" represent nested folders.
     pub fn list_paths(&self, kb_id: &str) -> CommandResult<Vec<String>> {
         let docs = self.list_documents(kb_id)?;
@@ -492,21 +550,37 @@ impl FileStore {
             .iter()
             .filter_map(|d| d.path.clone())
             .flat_map(|p| {
-                // For path "a/b/c", also include "a" and "a/b" as folder entries
-                let mut parts: Vec<String> = Vec::new();
+                let mut all: Vec<String> = Vec::new();
+                let mut parts: Vec<&str> = Vec::new();
                 for segment in p.split('/') {
                     if !segment.is_empty() {
-                        parts.push(segment.to_string());
-                        // this will be collected below
+                        parts.push(segment);
+                        all.push(parts.join("/"));
                     }
-                }
-                let mut all: Vec<String> = Vec::new();
-                for i in 1..=parts.len() {
-                    all.push(parts[..i].join("/"));
                 }
                 all
             })
             .collect();
+
+        // Merge persistent empty folders that don't already appear from documents
+        let folders = self.load_folders(kb_id);
+        for f in &folders {
+            if !paths.contains(f) {
+                paths.push(f.clone());
+            }
+            // Ensure parent paths are included
+            let mut parts: Vec<&str> = Vec::new();
+            for seg in f.split('/') {
+                if !seg.is_empty() {
+                    parts.push(seg);
+                    let parent = parts.join("/");
+                    if !paths.contains(&parent) {
+                        paths.push(parent);
+                    }
+                }
+            }
+        }
+
         paths.sort();
         paths.dedup();
         Ok(paths)

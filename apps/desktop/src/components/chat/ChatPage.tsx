@@ -23,6 +23,68 @@ function normalizeMath(text: string): string {
 
 // Limits are read from settings now — these are fallback defaults.
 
+/** Format a tool call argument value for display. */
+function fmtArg(v: unknown): string {
+  if (typeof v === "string") return v;
+  return JSON.stringify(v, null, 2);
+}
+
+/** Collapsible tool call cards — one per tool call, expandable to show arguments. */
+function ToolCallCards({ toolCalls }: { toolCalls: ToolCall[] }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  if (!toolCalls || toolCalls.length === 0) return null;
+
+  // Group consecutive calls of the same tool type
+  const items = toolCalls.map((tc, i) => {
+    let args: Record<string, unknown> = {};
+    try { args = JSON.parse(tc.function.arguments); } catch { /* keep empty */ }
+    const label = toolLabel(tc);
+    const name = tc.function.name.replace(/_/g, " ");
+    return { tc, args, label, name, idx: i };
+  });
+
+  return (
+    <div className="space-y-1.5">
+      {items.map(({ tc, args, label, name, idx }) => {
+        const isExpanded = expandedIdx === idx;
+        const argEntries = Object.entries(args).filter(([, v]) => v != null && v !== "" && (!Array.isArray(v) || v.length > 0));
+        return (
+          <div key={tc.id || idx} className="rounded-lg border bg-card/60 overflow-hidden">
+            <button
+              onClick={() => setExpandedIdx(isExpanded ? null : idx)}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/50 transition-colors"
+            >
+              <Search className="w-3 h-3 text-primary shrink-0" />
+              <span className="font-medium capitalize truncate flex-1 text-left">{name}</span>
+              <span className="text-muted-foreground truncate max-w-[200px] hidden sm:inline">{label}</span>
+              {argEntries.length > 0 && (
+                isExpanded
+                  ? <ChevronUp className="w-3 h-3 text-muted-foreground shrink-0" />
+                  : <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" />
+              )}
+            </button>
+            {isExpanded && argEntries.length > 0 && (
+              <div className="border-t max-h-48 overflow-y-auto">
+                <table className="w-full text-[11px] border-collapse">
+                  <tbody>
+                    {argEntries.map(([k, v]) => (
+                      <tr key={k} className="border-b last:border-0">
+                        <td className="px-3 py-1 text-muted-foreground font-medium w-[30%] align-top whitespace-nowrap">{k}</td>
+                        <td className="px-3 py-1 font-mono whitespace-pre-wrap break-all">{fmtArg(v)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ChatPage() {
   const { convId } = useParams<{ convId: string }>();
   const navigate = useNavigate();
@@ -360,7 +422,9 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
         const c = res.chunk;
         setPreviewChunk({ ...pc,
           content: c.content, chunk_id: c.chunk_id,
-          metadata: { ...pc.metadata, chunk_index: c.chunk_index, page: c.page_number },
+          page_start: c.page_start, page_end: c.page_end,
+          metadata: { ...pc.metadata, chunk_index: c.chunk_index,
+            page: c.page_number, page_start: c.page_start, page_end: c.page_end },
         });
         return;
       }
@@ -384,7 +448,10 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
             setPreviewChunk({
               ...pc,
               content: c2.content, chunk_id: c2.chunk_id, doc_id: c2.doc_id,
-              doc_name: c2.doc_name, metadata: { ...pc.metadata, chunk_index: c2.chunk_index, page: c2.page_number },
+              doc_name: c2.doc_name,
+              page_start: c2.page_start, page_end: c2.page_end,
+              metadata: { ...pc.metadata, chunk_index: c2.chunk_index,
+                page: c2.page_number, page_start: c2.page_start, page_end: c2.page_end },
             });
           }).catch(() => {});
         } else {
@@ -395,7 +462,10 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
             setPreviewChunk({
               ...pc,
               content: last.content, chunk_id: last.chunk_id, doc_id: last.doc_id,
-              doc_name: last.doc_name, metadata: { ...pc.metadata, chunk_index: last.chunk_index, page: last.page_number },
+              doc_name: last.doc_name,
+              page_start: last.page_start, page_end: last.page_end,
+              metadata: { ...pc.metadata, chunk_index: last.chunk_index,
+                page: last.page_number, page_start: last.page_start, page_end: last.page_end },
             });
           }).catch(() => {});
         }
@@ -507,10 +577,7 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
                       </MarkdownRenderer>
                     )
                   ) : msg.role === "assistant" && msg.tool_calls && !msg.content ? (
-                    <div className="flex items-center gap-2 text-muted-foreground text-xs">
-                      <Search className="w-3 h-3" />
-                      {msg.tool_calls.map((tc) => toolLabel(tc)).join(", ")}
-                    </div>
+                    <ToolCallCards toolCalls={msg.tool_calls} />
                   ) : msg.role === "assistant" && streaming && i === messages.length - 1 ? (
                     <Loader2 className="w-3 h-3 animate-spin inline" />
                   ) : (
@@ -539,10 +606,10 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
         {toolStatus && streaming && (
           <div className="flex gap-3">
             <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5"><Bot className="w-4 h-4 text-primary" /></div>
-            <div className="max-w-[80%] rounded-xl px-4 py-2.5 text-sm bg-muted">
-              <div className="flex items-center gap-2 text-muted-foreground text-xs">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                {toolStatus}
+            <div className="max-w-[80%] min-w-[200px] rounded-xl border bg-muted/50 overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2 text-xs">
+                <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" />
+                <span className="text-muted-foreground truncate">{toolStatus}</span>
               </div>
             </div>
           </div>

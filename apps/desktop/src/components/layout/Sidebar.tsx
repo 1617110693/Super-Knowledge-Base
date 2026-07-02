@@ -26,7 +26,7 @@ export function Sidebar() {
   const sortedKBs = useMemo(() => getSortedKBs(), [knowledgeBases, sortMode]);
 
   const recentConversations = useMemo(
-    () => [...conversations].reverse(),
+    () => conversations,  // store already maintains newest-first order
     [conversations]
   );
 

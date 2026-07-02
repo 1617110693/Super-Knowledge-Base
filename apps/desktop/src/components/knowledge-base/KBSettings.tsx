@@ -7,11 +7,12 @@ import {
   FileText, Layers, Upload, Trash2, Loader2,
   CheckCircle, XCircle, Clock, Eye,
   Search, Database, Pencil, RefreshCw, Check, FolderSearch, Copy, X, ArrowLeft,
-  Plus, FolderOpen, ChevronRight, ChevronDown, ExternalLink,
+  Plus, FolderOpen, ChevronRight, ChevronDown, ExternalLink, GripHorizontal,
 } from "lucide-react";
 import type { Document } from "../../types";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { ErrorDialog } from "../common/ErrorDialog";
+import { MoveCopyDialog } from "./MoveCopyDialog";
 
 const STATUS_MAP: Record<string, { icon: React.ReactNode; labelKey: "parse.pending" | "parse.parsing" | "parse.done" | "parse.failed" }> = {
   pending: { icon: <Clock className="w-4 h-4 text-yellow-500" />, labelKey: "parse.pending" },
@@ -59,11 +60,13 @@ export function KBSettings() {
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [paths, setPaths] = useState<string[]>([]);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [kbPaths, setKbPaths] = useState<Record<string, string | null>>({});
+  const selectedPath = kbId ? (kbPaths[kbId] ?? null) : null;
+  const setSelectedPath = (p: string | null) => { if (kbId) setKbPaths(prev => ({ ...prev, [kbId]: p })); };
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState("");
-  const [pathDocMenu, setPathDocMenu] = useState<string | null>(null);
+  const [moveCopyTarget, setMoveCopyTarget] = useState<Document | { folderPath: string } | null>(null);
   const [deletePathTarget, setDeletePathTarget] = useState<string | null>(null);
   const [disbandOnly, setDisbandOnly] = useState(false);
   const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
@@ -300,28 +303,21 @@ export function KBSettings() {
     setRenamingDocId(null);
   };
 
-  const handleMoveToPath = async (doc: Document, path: string | null) => {
-    if (!kbId) return;
-    try {
-      const { setDocumentPath } = await import("../../services/tauriBridge");
-      const updated = await setDocumentPath(kbId, doc.id, path);
-      useKBStore.setState((s) => ({
-        documents: updateDocInTreeLocal(s.documents, doc.id, updated),
-      }));
-    } catch (e) { console.error("Move to path failed:", e); }
-    setPathDocMenu(null);
-  };
-
   const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) return;
+    if (!newFolderName.trim() || !kbId) return;
     const name = newFolderName.trim();
     const fullPath = newFolderParent ? `${newFolderParent}/${name}` : name;
     setNewFolderName("");
     setShowNewFolder(false);
     setNewFolderParent(null);
-    if (!paths.includes(fullPath)) {
-      setPaths(prev => [...prev, fullPath].sort());
-    }
+    try {
+      const { createFolder } = await import("../../services/tauriBridge");
+      await createFolder(kbId, fullPath);
+      // Refresh paths
+      const { listPaths } = await import("../../services/tauriBridge");
+      const updated = await listPaths(kbId);
+      setPaths(updated);
+    } catch (e) { console.error("Create folder failed:", e); }
   };
 
   const handleDeletePath = (path: string) => {
@@ -350,8 +346,9 @@ export function KBSettings() {
         for (const doc of docs) {
           await deleteDocument(kbId, doc.id);
         }
-        const { deletePath } = await import("../../services/tauriBridge");
+        const { deletePath, removeFolder } = await import("../../services/tauriBridge");
         await deletePath(kbId, path);
+        await removeFolder(kbId, path).catch(() => {}); // also remove from persistent folders
       }
       setPaths(prev => prev.filter(p => p !== path && !p.startsWith(path + "/")));
       if (selectedPath === path || selectedPath?.startsWith(path + "/")) setSelectedPath(null);
@@ -601,6 +598,7 @@ export function KBSettings() {
                         <span className="text-[10px] text-muted-foreground/60">{t("docs.folderType")}</span>
                       </div>
                       <div className="flex items-center gap-1 ml-2 shrink-0">
+                        <button onClick={(e) => { e.stopPropagation(); setMoveCopyTarget({ folderPath: fullPath }); }} className="p-1 hover:bg-muted rounded-md text-muted-foreground" title={t("docs.moveToPath")}><GripHorizontal className="w-3.5 h-3.5" /></button>
                         <button onClick={(e) => { e.stopPropagation(); setDeletePathTarget(fullPath); }} className="p-1 hover:bg-red-50 rounded-md text-muted-foreground hover:text-red-500" title={t("docs.deleteFolder")}><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
                     </div>
@@ -682,7 +680,12 @@ export function KBSettings() {
                       )}
                       <span className="text-[10px] text-muted-foreground/60 truncate hidden sm:inline">{formatFileSize(doc.file_size)} · .{doc.file_type}</span>
                       <span className="text-[10px] text-muted-foreground/60">
-                        {hasParts ? "" :
+                        {hasParts ? (
+                          (() => {
+                            const total = doc.parts!.reduce((s, p) => s + p.chunk_count, 0);
+                            return total > 0 ? <span className="text-green-600">{total}c</span> : <span>{t(status.labelKey)}</span>;
+                          })()
+                        ) :
                          isIndexing ? <span className="text-blue-600">Idx</span>
                          : isParseFailed ? <span className="text-red-500 cursor-pointer hover:underline" onClick={(e) => { e.stopPropagation(); setErrorDetailTarget(doc.parse_error ?? null); }}>Failed</span>
                          : isIndexed ? <span className="text-green-600">{doc.chunk_count}c</span>
@@ -690,21 +693,12 @@ export function KBSettings() {
                       </span>
                     </div>
                     <div className="flex items-center gap-0.5 ml-2 shrink-0">
-                      {isIndexed && <button onClick={() => handleReindexDoc(doc)} className="p-0.5 hover:bg-amber-50 rounded text-muted-foreground hover:text-amber-600" title={t("docs.reindex")}><RefreshCw className="w-3 h-3" /></button>}
-                      {/* Move to path: only for non-part documents */}
+                      {hasParts ? (
+                        <button onClick={() => doc.parts!.forEach(p => handleReindexDoc(p))} className="p-0.5 hover:bg-amber-50 rounded text-muted-foreground hover:text-amber-600" title={t("docs.reindexAllParts")}><RefreshCw className="w-3 h-3" /></button>
+                      ) : isIndexed && <button onClick={() => handleReindexDoc(doc)} className="p-0.5 hover:bg-amber-50 rounded text-muted-foreground hover:text-amber-600" title={t("docs.reindex")}><RefreshCw className="w-3 h-3" /></button>}
+                      {/* Move/Copy: only for non-part documents */}
                       {!isPart && (
-                        <div className="relative">
-                          <button onClick={(e) => { e.stopPropagation(); setPathDocMenu(pathDocMenu === doc.id ? null : doc.id); }} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.moveToPath")}><FolderOpen className="w-3 h-3" /></button>
-                          {pathDocMenu === doc.id && (
-                            <div className="absolute right-0 top-full mt-1 bg-card border rounded-lg shadow-lg z-20 min-w-[140px] py-1 max-h-40 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-                              <button onClick={() => handleMoveToPath(doc, null)} className={`w-full text-left px-2 py-1 text-xs hover:bg-muted ${!doc.path ? "font-medium text-primary" : ""}`}>{t("docs.noPath")}</button>
-                              <div className="border-t my-0.5" />
-                              {paths.map(p => (
-                                <button key={p} onClick={() => handleMoveToPath(doc, p)} className={`w-full text-left px-2 py-1 text-xs hover:bg-muted ${doc.path === p ? "font-medium text-primary" : ""}`} style={{ paddingLeft: `${10 + (p.split("/").length - 1) * 10}px` }}>{p}</button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); setMoveCopyTarget(doc); }} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.moveToPath")}><GripHorizontal className="w-3 h-3" /></button>
                       )}
                       <button onClick={(e) => { e.stopPropagation(); startDocRename(doc); }} className="p-0.5 hover:bg-muted rounded text-muted-foreground" title={t("docs.rename")}><Pencil className="w-3 h-3" /></button>
                       <button
@@ -845,6 +839,20 @@ export function KBSettings() {
 
       {/* Error detail dialog */}
       <ErrorDialog title={t("error.upload")} error={uploadError} onClose={() => setUploadError("")} />
+
+      {/* Move/Copy dialog */}
+      {moveCopyTarget && kbId && (
+        <MoveCopyDialog
+          open={true}
+          onClose={async () => { setMoveCopyTarget(null); const { listPaths } = await import("../../services/tauriBridge"); if (kbId) setPaths(await listPaths(kbId)); }}
+          doc={"id" in moveCopyTarget ? moveCopyTarget : undefined}
+          folderPath={"folderPath" in moveCopyTarget ? moveCopyTarget.folderPath : undefined}
+          kbId={kbId}
+          allKbs={knowledgeBases}
+          paths={paths}
+          onComplete={async () => { await loadDocuments(kbId); const { listPaths } = await import("../../services/tauriBridge"); setPaths(await listPaths(kbId)); }}
+        />
+      )}
 
       {errorDetailTarget !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setErrorDetailTarget(null)}>

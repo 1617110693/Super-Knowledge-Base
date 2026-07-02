@@ -22,7 +22,7 @@ interface KBState {
   copyKB: (kbId: string) => Promise<void>;
   deleteKB: (kbId: string) => Promise<void>;
   setActiveKB: (kb: KnowledgeBase | null) => void;
-  uploadDocument: (kbId: string, filePath: string) => Promise<void>;
+  uploadDocument: (kbId: string, filePath: string, folderPath?: string | null) => Promise<void>;
   deleteDocument: (kbId: string, docId: string) => Promise<void>;
   refreshDocument: (kbId: string, docId: string) => Promise<void>;
   reindexDocument: (kbId: string, docId: string, docName: string) => Promise<void>;
@@ -127,22 +127,26 @@ export const useKBStore = create<KBState>((set, get) => ({
 
   setActiveKB: (kb) => set({ activeKB: kb }),
 
-  uploadDocument: async (kbId: string, filePath: string) => {
+  uploadDocument: async (kbId: string, filePath: string, folderPath?: string | null) => {
     // 1. Check embedding model consistency
     const kbs = get().knowledgeBases;
     const kb = kbs.find((k) => k.id === kbId);
     if (kb && kb.embedding_model) {
       const { getSettings } = await import("../services/tauriBridge");
       const settings = await getSettings();
-      if (settings.embedding_model && settings.embedding_model !== kb.embedding_model) {
+      // Resolve effective embedding model: local mode uses model filename (without .gguf)
+      const effectiveModel = settings.use_local_embedding
+        ? (settings.local_embedding_model || "local").replace(/\.gguf$/i, "").split(/[/\\]/).pop() || "local"
+        : settings.embedding_model;
+      if (effectiveModel && effectiveModel !== kb.embedding_model) {
         throw new Error(
-          `Embedding model mismatch: this knowledge base uses "${kb.embedding_model}" (dim ${kb.embedding_dim}), but current settings use "${settings.embedding_model}". Please switch the embedding model in settings or use "Re-index All" to rebind.`
+          `Embedding model mismatch: this knowledge base uses "${kb.embedding_model}" (dim ${kb.embedding_dim}), but current settings use "${effectiveModel}". Please switch the embedding model in settings or use "Re-index All" to rebind.`
         );
       }
     }
 
     // 2. Upload (may split large PDFs into parts)
-    const uploadResult = await tauriBridge.uploadDocument(kbId, filePath);
+    const uploadResult = await tauriBridge.uploadDocument(kbId, filePath, folderPath);
     const doc = uploadResult.document;
     const allDocs = [doc, ...uploadResult.parts];
     // Keep flat list during processing so per-doc status updates work;

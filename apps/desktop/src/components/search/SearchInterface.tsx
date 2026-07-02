@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { search as searchAPI, getChunkByIndex, type ChunkByIndex } from "../../services/pythonClient";
 import { useSettingsStore } from "../../stores/useSettingsStore";
 import { useI18n } from "../../i18n";
+import { ErrorDialog } from "../common/ErrorDialog";
+import { ChunkDetailDialog } from "../common/ChunkDetailDialog";
 import { Search, Loader2, FileText, ArrowLeft, X, ChevronDown, ChevronUp, Hash } from "lucide-react";
 import { MarkdownRenderer } from "../common/MarkdownRenderer";
 import type { SearchResult, NeighborChunk } from "../../types";
@@ -17,7 +19,6 @@ export function SearchInterface() {
   const [searching, setSearching] = useState(false);
   const [searchType, setSearchType] = useState<"hybrid" | "vector" | "fts">("hybrid");
   const [rerank, setRerank] = useState(true);
-  const [contextWindow, setContextWindow] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState("");
   const [selectedChunk, setSelectedChunk] = useState<SearchResult | null>(null);
@@ -37,6 +38,21 @@ export function SearchInterface() {
     new Map(results.map((r) => [r.doc_id, { doc_id: r.doc_id, doc_name: r.doc_name }])).values()
   );
 
+  // Navigate to adjacent chunk by chunk_index (not by search result order)
+  const navigateAdjacentChunk = (chunk: SearchResult, delta: number, kb: string,
+    setFn: (c: SearchResult | null) => void, errFn: (e: string) => void) => {
+    const ci = chunk.metadata?.chunk_index as number | undefined;
+    if (ci == null || !chunk.doc_id) return;
+    getChunkByIndex({ kb_id: kb, doc_id: chunk.doc_id, chunk_index: ci + delta }).then(res => {
+      if ("error" in res) return; // boundary, silently skip
+      const c = res.chunk;
+      setFn({
+        content: c.content, doc_name: c.doc_name, doc_id: c.doc_id, kb_id: c.kb_id,
+        score: 0, metadata: { chunk_index: c.chunk_index, page: c.page_number },
+      } as SearchResult);
+    }).catch(() => {});
+  };
+
   const handleChunkLookup = async () => {
     if (!kbId || !chunkLookupIndex.trim() || !chunkLookupDocId) return;
     setChunkLookupLoading(true); setChunkLookupError(""); setChunkLookupResult(null);
@@ -55,9 +71,12 @@ export function SearchInterface() {
     if (!query.trim() || !kbId) return;
     setSearching(true); setError(""); setExpandedContext(new Set()); setChunkLookupResult(null); setChunkLookupError("");
     try {
-      const res = await searchAPI({ kb_id: kbId, query, search_type: searchType, top_k: 10, rerank, context_window: contextWindow });
+      const res = await searchAPI({ kb_id: kbId, query, search_type: searchType, top_k: 10, rerank, context_window: 0 });
       setResults(res.results); setElapsed(res.search_time_ms);
-    } catch (e) { setError(String(e)); }
+    } catch (e) {
+      const msg = String(e);
+      setError(msg.includes("Cannot reach backend") ? t("error.backendUnreachable") + "\n\n" + msg : msg);
+    }
     setSearching(false);
   };
 
@@ -105,20 +124,12 @@ export function SearchInterface() {
           <input type="checkbox" checked={rerank} onChange={(e) => setRerank(e.target.checked)} className="rounded" />
           {t("search.rerank")}
         </label>
-        <label className="flex items-center gap-1.5 text-sm">
-          <span className="text-muted-foreground">{t("search.contextWindow") || "Context window:"}</span>
-          <select value={contextWindow} onChange={(e) => setContextWindow(Number(e.target.value))} className="px-2 py-1.5 border rounded-md bg-background text-sm">
-            <option value="0">{t("search.noContext") || "Off"}</option>
-            <option value="1">±1 {t("search.contextChunks") || "chunk"}</option>
-            <option value="2">±2 {t("search.contextChunks") || "chunks"}</option>
-          </select>
-        </label>
-        {rerank && settings.rerank_model && (
-          <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded self-center">{settings.rerank_model}</span>
+        {rerank && (settings.use_local_rerank ? (settings.local_rerank_model || "local").replace(/\.gguf$/i, "").split(/[/\\]/).pop() : settings.rerank_model) && (
+          <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded self-center">{settings.use_local_rerank ? (settings.local_rerank_model || "local").replace(/\.gguf$/i, "").split(/[/\\]/).pop() : settings.rerank_model}</span>
         )}
       </div>
 
-      {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 mb-4">{error}</div>}
+      <ErrorDialog title={t("error.search")} error={error} onClose={() => setError("")} />
 
       {results.length > 0 && (
         <p className="text-xs text-muted-foreground mb-3">{t("search.results", { count: results.length, time: elapsed })}</p>
@@ -231,92 +242,55 @@ export function SearchInterface() {
 
       {/* Chunk detail dialog */}
       {selectedChunk && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setSelectedChunk(null)}>
-          <div className="bg-card border rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-4 border-b shrink-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <FileText className="w-5 h-5 text-primary shrink-0" />
-                <div className="min-w-0">
-                  <h3 className="font-semibold text-sm truncate">{selectedChunk.doc_name}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    {(selectedChunk.metadata?.page ?? 0) > 0 && <span>{t("search.page")} {selectedChunk.metadata.page} · </span>}
-                    {selectedChunk.metadata?.chunk_index != null && <span>{t("search.chunkIndex", { index: selectedChunk.metadata.chunk_index })} · </span>}
-                    <span className="font-mono text-primary">{(selectedChunk.score * 100).toFixed(1)}%</span>
-                  </p>
-                </div>
-              </div>
-              <button onClick={() => setSelectedChunk(null)} className="p-1 hover:bg-muted rounded-md shrink-0">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 overflow-y-auto flex-1">
-              <MarkdownRenderer className="prose prose-sm max-w-none dark:prose-invert">
-                {selectedChunk.content}
-              </MarkdownRenderer>
-            </div>
-          </div>
-        </div>
+        <ChunkDetailDialog
+          chunk={{
+            content: selectedChunk.content,
+            doc_name: selectedChunk.doc_name,
+            doc_id: selectedChunk.doc_id,
+            kb_id: selectedChunk.kb_id,
+            chunk_index: selectedChunk.metadata?.chunk_index as number | undefined,
+            page_number: selectedChunk.metadata?.page,
+            score: selectedChunk.score,
+          }}
+          onClose={() => setSelectedChunk(null)}
+          onPrev={selectedChunk.metadata?.chunk_index != null && selectedChunk.metadata.chunk_index > 0
+            ? () => navigateAdjacentChunk(selectedChunk, -1, kbId!, setSelectedChunk, setError) : undefined}
+          onNext={selectedChunk.metadata?.chunk_index != null && selectedChunk.doc_id
+            ? () => navigateAdjacentChunk(selectedChunk, 1, kbId!, setSelectedChunk, setError) : undefined}
+          hasPrev={!!(selectedChunk.metadata?.chunk_index != null && selectedChunk.metadata.chunk_index > 0)}
+          hasNext={!!(selectedChunk.metadata?.chunk_index != null && selectedChunk.doc_id)}
+        />
       )}
 
       {/* Neighbor chunk detail dialog */}
       {selectedNeighbor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setSelectedNeighbor(null)}>
-          <div className="bg-card border rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-4 border-b shrink-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <FileText className="w-5 h-5 text-primary shrink-0" />
-                <div className="min-w-0">
-                  <h3 className="font-semibold text-sm">{t("search.neighborChunkDetail") || "Neighbor Chunk"}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    <span>Chunk #{selectedNeighbor.chunk_index}</span>
-                    {selectedNeighbor.page_number != null && selectedNeighbor.page_number > 0 && (
-                      <span> · p.{selectedNeighbor.page_number}</span>
-                    )}
-                  </p>
-                </div>
-              </div>
-              <button onClick={() => setSelectedNeighbor(null)} className="p-1 hover:bg-muted rounded-md shrink-0">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 overflow-y-auto flex-1">
-              <MarkdownRenderer className="prose prose-sm max-w-none dark:prose-invert">
-                {selectedNeighbor.content}
-              </MarkdownRenderer>
-            </div>
-          </div>
-        </div>
+        <ChunkDetailDialog
+          chunk={{
+            content: selectedNeighbor.content,
+            chunk_index: selectedNeighbor.chunk_index,
+            page_number: selectedNeighbor.page_number,
+            doc_id: (selectedNeighbor.metadata as any)?.doc_id,
+            kb_id: (selectedNeighbor.metadata as any)?.kb_id,
+            doc_name: (selectedNeighbor.metadata as any)?.doc_name,
+          }}
+          title={t("search.neighborChunkDetail") || "Neighbor Chunk"}
+          onClose={() => setSelectedNeighbor(null)}
+        />
       )}
 
       {/* Lookup result detail dialog */}
       {lookupDialogOpen && chunkLookupResult && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setLookupDialogOpen(false)}>
-          <div className="bg-card border rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-4 border-b shrink-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <FileText className="w-5 h-5 text-primary shrink-0" />
-                <div className="min-w-0">
-                  <h3 className="font-semibold text-sm truncate">{chunkLookupResult.doc_name}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    <span>Chunk #{chunkLookupResult.chunk_index}</span>
-                    {(chunkLookupResult.page_number ?? 0) > 0 && <span> · p.{chunkLookupResult.page_number}</span>}
-                    <span className="ml-2 text-[10px] text-muted-foreground/60">
-                      {chunkLookupResult.prev_exists ? "← prev" : "← start"} · {chunkLookupResult.next_exists ? "next →" : "end →"}
-                    </span>
-                  </p>
-                </div>
-              </div>
-              <button onClick={() => setLookupDialogOpen(false)} className="p-1 hover:bg-muted rounded-md shrink-0">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 overflow-y-auto flex-1">
-              <MarkdownRenderer className="prose prose-sm max-w-none dark:prose-invert">
-                {chunkLookupResult.content}
-              </MarkdownRenderer>
-            </div>
-          </div>
-        </div>
+        <ChunkDetailDialog
+          chunk={{
+            content: chunkLookupResult.content,
+            doc_name: chunkLookupResult.doc_name,
+            doc_id: chunkLookupResult.doc_id,
+            kb_id: chunkLookupResult.kb_id,
+            chunk_index: chunkLookupResult.chunk_index,
+            page_number: chunkLookupResult.page_number,
+          }}
+          onClose={() => setLookupDialogOpen(false)}
+        />
       )}
     </div>
   );

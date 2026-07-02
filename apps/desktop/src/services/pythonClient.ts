@@ -210,6 +210,10 @@ export async function testRerank(params: {
   });
 }
 
+export async function checkLlamaStatus(): Promise<{ running: boolean; port: number; message: string }> {
+  return pythonFetch("/llama-status");
+}
+
 export async function cleanOrphans(): Promise<{ cleaned: number; details: string[] }> {
   return pythonFetch("/utils/clean-orphans", { method: "POST" });
 }

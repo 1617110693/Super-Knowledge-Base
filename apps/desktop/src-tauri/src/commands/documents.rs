@@ -15,6 +15,7 @@ pub async fn upload_document(
     state: State<'_, AppState>,
     kb_id: String,
     file_path: String,
+    folder_path: Option<String>,
 ) -> CommandResult<UploadResult> {
     let path = Path::new(&file_path);
 
@@ -55,9 +56,16 @@ pub async fn upload_document(
     }
 
     // Create document entry (main doc keeps the original file; parts created below)
-    let doc = state
+    let mut doc = state
         .file_store
         .add_document(&kb_id, file_name.clone(), extension.clone(), file_size, None)?;
+
+    // If uploading into a folder, set the path
+    if let Some(ref fp) = folder_path {
+        if !fp.is_empty() {
+            doc = state.file_store.set_document_path(&kb_id, &doc.id, Some(fp.as_str()))?;
+        }
+    }
 
     // Copy original file to document directory
     let dest_path = state

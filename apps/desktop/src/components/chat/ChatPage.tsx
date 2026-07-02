@@ -8,6 +8,8 @@ import { CHAT_TOOLS, toolLabel } from "../../services/toolDefinitions";
 import { executeToolCall } from "../../services/toolExecutor";
 import { Send, Loader2, Trash2, MessageSquare, User, Bot, Layers, FileText, X, ChevronDown, ChevronUp, Search, Copy, Check, RefreshCw, Square, ArrowDown, ArrowDownToLine, Eye } from "lucide-react";
 import { MarkdownRenderer } from "../common/MarkdownRenderer";
+import { ChunkDetailDialog } from "../common/ChunkDetailDialog";
+import { getChunkByIndex } from "../../services/pythonClient";
 import type { ChatMessage, SearchResult, ToolCall } from "../../types";
 
 /** Normalize LaTeX math delimiters so remark-math can process them. */
@@ -345,6 +347,19 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
     return <div className="flex items-center justify-center h-full"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
   }
 
+  const navigatePreviewChunk = (delta: number) => {
+    if (!previewChunk?.metadata?.chunk_index || !previewChunk?.kb_id || !previewChunk?.doc_id) return;
+    const ci = previewChunk.metadata.chunk_index as number;
+    getChunkByIndex({ kb_id: previewChunk.kb_id, doc_id: previewChunk.doc_id, chunk_index: ci + delta }).then(res => {
+      if ("error" in res) return;
+      const c = res.chunk;
+      setPreviewChunk({ ...previewChunk,
+        content: c.content, chunk_id: c.chunk_id,
+        metadata: { ...previewChunk.metadata, chunk_index: c.chunk_index, page: c.page_number },
+      });
+    }).catch(() => {});
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -555,42 +570,24 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
 
       {/* Chunk preview dialog */}
       {previewChunk && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setPreviewChunk(null)}>
-          <div className="bg-card border rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-4 border-b shrink-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <FileText className="w-5 h-5 text-primary shrink-0" />
-                <div className="min-w-0">
-                  <h3 className="font-semibold text-sm truncate">{previewChunk.doc_name}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    {((previewChunk.metadata?.page ?? 0) > 0) && <span>{t("search.page")} {previewChunk.metadata.page} · </span>}
-                    {previewChunk.metadata?.chunk_index != null && <span>Chunk #{previewChunk.metadata.chunk_index} · </span>}
-                    <span className="font-mono text-primary">{(previewChunk.score * 100).toFixed(1)}%</span>
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  onClick={() => {
-                    setPreviewChunk(null);
-                    const ci = previewChunk.metadata?.chunk_index;
-                    const ciParam = ci != null ? `?ci=${ci}` : "";
-                    navigate(`/kb/${previewChunk.kb_id}/documents/${previewChunk.doc_id}${ciParam}`);
-                  }}
-                  className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border hover:bg-muted transition-colors"
-                  title="Open full document"
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                  {t("chat.viewFullDoc")}
-                </button>
-                <button onClick={() => setPreviewChunk(null)} className="p-1 hover:bg-muted rounded-md shrink-0"><X className="w-5 h-5" /></button>
-              </div>
-            </div>
-            <div className="p-6 overflow-y-auto flex-1">
-              <MarkdownRenderer className="prose prose-sm max-w-none dark:prose-invert">{previewChunk.content}</MarkdownRenderer>
-            </div>
-          </div>
-        </div>
+        <ChunkDetailDialog
+          chunk={{
+            content: previewChunk.content,
+            doc_name: previewChunk.doc_name,
+            doc_id: previewChunk.doc_id,
+            kb_id: previewChunk.kb_id,
+            chunk_index: previewChunk.metadata?.chunk_index as number | undefined,
+            page_number: previewChunk.metadata?.page,
+            score: previewChunk.score,
+          }}
+          onClose={() => setPreviewChunk(null)}
+          onPrev={previewChunk.metadata?.chunk_index != null && (previewChunk.metadata.chunk_index as number) > 0
+            ? () => navigatePreviewChunk(-1) : undefined}
+          onNext={previewChunk.metadata?.chunk_index != null
+            ? () => navigatePreviewChunk(1) : undefined}
+          hasPrev={!!(previewChunk.metadata?.chunk_index != null && (previewChunk.metadata.chunk_index as number) > 0)}
+          hasNext={!!(previewChunk.metadata?.chunk_index != null)}
+        />
       )}
     </div>
   );

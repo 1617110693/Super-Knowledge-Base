@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+fn default_llama_port() -> u16 { 8081 }
+fn default_llama_threads() -> u32 { 4 }
+
 /// Application settings persisted to disk
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -18,6 +21,18 @@ pub struct AppSettings {
     pub llm_api_key: String,
     #[serde(default)]
     pub llm_model: String,
+    #[serde(default)]
+    pub use_local_embedding: bool,
+    #[serde(default)]
+    pub local_embedding_model: String,
+    #[serde(default)]
+    pub use_local_rerank: bool,
+    #[serde(default)]
+    pub local_rerank_model: String,
+    #[serde(default = "default_llama_port")]
+    pub llama_port: u16,
+    #[serde(default = "default_llama_threads")]
+    pub llama_threads: u32,
     pub chunk_strategy: String,
     pub chunk_size: u32,
     pub chunk_overlap: u32,
@@ -39,6 +54,12 @@ impl Default for AppSettings {
             llm_api_base: "https://api.openai.com/v1".to_string(),
             llm_api_key: String::new(),
             llm_model: "gpt-4o-mini".to_string(),
+            use_local_embedding: false,
+            local_embedding_model: String::new(),
+            use_local_rerank: false,
+            local_rerank_model: String::new(),
+            llama_port: 8081,
+            llama_threads: 4,
             chunk_strategy: "recursive".to_string(),
             chunk_size: 512,
             chunk_overlap: 50,

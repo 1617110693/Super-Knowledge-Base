@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { Document } from "../../types";
 import { ConfirmDialog } from "../common/ConfirmDialog";
+import { ErrorDialog } from "../common/ErrorDialog";
 
 const STATUS_MAP: Record<string, { icon: React.ReactNode; labelKey: "parse.pending" | "parse.parsing" | "parse.done" | "parse.failed" }> = {
   pending: { icon: <Clock className="w-4 h-4 text-yellow-500" />, labelKey: "parse.pending" },
@@ -53,6 +54,7 @@ export function KBSettings() {
   const [deleteTarget, setDeleteTarget] = useState<{ docId: string; docName: string } | null>(null);
   const [deleteKBTarget, setDeleteKBTarget] = useState(false);
   const [errorDetailTarget, setErrorDetailTarget] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState("");
   const [errorCopied, setErrorCopied] = useState(false);
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -195,10 +197,13 @@ export function KBSettings() {
     if (!kbId) return;
     uploadingRef.current = true;
     try {
-      await uploadDocument(kbId, filePath);
-    } catch (e) { console.error(e); }
+      await uploadDocument(kbId, filePath, selectedPath);
+    } catch (e) {
+      const msg = String(e);
+      setUploadError(msg.includes("Embedding model mismatch") ? t("error.embeddingMismatch") + "\n\n" + msg : msg);
+    }
     uploadingRef.current = false;
-  }, [kbId, uploadDocument]);
+  }, [kbId, uploadDocument, selectedPath, t]);
 
   const handleUploadClick = useCallback(async () => {
     if (!kbId) return;
@@ -825,6 +830,8 @@ export function KBSettings() {
       )}
 
       {/* Error detail dialog */}
+      <ErrorDialog title={t("error.upload")} error={uploadError} onClose={() => setUploadError("")} />
+
       {errorDetailTarget !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setErrorDetailTarget(null)}>
           <div className="bg-card border rounded-xl shadow-xl max-w-lg w-full mx-4 max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>

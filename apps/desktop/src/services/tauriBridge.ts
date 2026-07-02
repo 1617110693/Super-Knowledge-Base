@@ -79,9 +79,10 @@ export async function importKBs(zipPath: string): Promise<number> {
 
 export async function uploadDocument(
   kbId: string,
-  filePath: string
+  filePath: string,
+  folderPath: string | null = null,
 ): Promise<{ document: Document; parts: Document[] }> {
-  return invoke("upload_document", { kbId, filePath });
+  return invoke("upload_document", { kbId, filePath, folderPath });
 }
 
 export async function deleteDocument(

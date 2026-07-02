@@ -198,10 +198,16 @@ class LanceDBManager:
             return []
 
     def _vector_search(self, table, query_vector, top_k, doc_id_filter):
-        results = table.search(query_vector).metric("cosine").limit(top_k * 2)
-        if doc_id_filter:
-            results = results.where(f"doc_id = '{doc_id_filter}'")
-        return self._format_results(results.limit(top_k).to_list(), "vector")
+        try:
+            results = table.search(query_vector).metric("cosine").limit(top_k * 2)
+            if doc_id_filter:
+                results = results.where(f"doc_id = '{doc_id_filter}'")
+            return self._format_results(results.limit(top_k).to_list(), "vector")
+        except Exception as e:
+            # Vector dimension mismatch or other schema issue — return empty
+            import sys
+            print(f"[SKB] Vector search skipped: {e}", file=sys.stderr)
+            return []
 
     def _fts_search(self, table, query_text, top_k, doc_id_filter):
         return self._keyword_search(table, query_text, top_k, doc_id_filter)

@@ -40,7 +40,9 @@ class OpenAICompatibleEmbedder:
         return results[0] if results else []
 
     def _embed_batch(self, texts: List[str]) -> List[List[float]]:
-        url = f"{self.api_base}/embeddings"
+        # llama.cpp with --pooling mean serves OAI-compatible /v1/embeddings
+        path = "/v1/embeddings" if self.api_key == "local" else "/embeddings"
+        url = f"{self.api_base.rstrip('/')}{path}"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",

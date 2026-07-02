@@ -129,6 +129,12 @@ export interface AppSettings {
   rerank_api_base: string;
   rerank_api_key: string;
   rerank_model: string;
+  use_local_embedding: boolean;
+  local_embedding_model: string;
+  use_local_rerank: boolean;
+  local_rerank_model: string;
+  llama_port: number;
+  llama_threads: number;
   llm_api_base: string;
   llm_api_key: string;
   llm_model: string;
@@ -153,6 +159,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   rerank_api_base: "https://api.jina.ai/v1",
   rerank_api_key: "",
   rerank_model: "jina-reranker-v2-base-multilingual",
+  use_local_embedding: false,
+  local_embedding_model: "",
+  use_local_rerank: false,
+  local_rerank_model: "",
+  llama_port: 8081,
+  llama_threads: 4,
   llm_api_base: "https://api.openai.com/v1",
   llm_api_key: "",
   llm_model: "gpt-4o-mini",
@@ -161,7 +173,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   chunk_overlap: 50,
   python_port: 17390,
   theme: "system",
-  max_tool_rounds: 10,
+  max_tool_rounds: 100,
   max_history_messages: 80,
   max_search_result_chars: 2000,
   max_document_chars: 30000,

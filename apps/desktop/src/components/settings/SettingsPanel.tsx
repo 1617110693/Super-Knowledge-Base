@@ -3,8 +3,9 @@ import { useSettingsStore } from "../../stores/useSettingsStore";
 import { useKBStore } from "../../stores/useKBStore";
 import { useI18n } from "../../i18n";
 import { configureClaudeMCP, getMcpConfigJson, clearAllKBs, exportKBs, importKBs } from "../../services/tauriBridge";
-import { testEmbedding, testRerank, cleanOrphans } from "../../services/pythonClient";
+import { testEmbedding, testRerank, cleanOrphans, checkLlamaStatus } from "../../services/pythonClient";
 import type { AppSettings } from "../../types";
+import { DEFAULT_SETTINGS } from "../../types";
 import { Save, CheckCircle, Loader2, Terminal, Check, X, FolderOpen, RotateCcw, FlaskConical, Copy, ClipboardCheck, AlertTriangle, Trash2, Download, Upload, Settings } from "lucide-react";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 
@@ -14,6 +15,35 @@ const SECTIONS = [
   { id: "chat", label: "settings.navChat" },
   { id: "data", label: "settings.navData" },
 ] as const;
+
+function LocalModelStatus({ port, kind }: { port: number; kind: "embedding" | "rerank" }) {
+  const [state, setState] = useState<"running" | "starting" | "stopped">("stopped");
+  const { t } = useI18n();
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const s: any = await checkLlamaStatus();
+        const info = s[kind] || {};
+        if (info.running) setState("running");
+        else if (info.starting) setState("starting");
+        else setState("stopped");
+      } catch { setState("stopped"); }
+    };
+    poll();
+    const iv = setInterval(poll, 3000);
+    return () => clearInterval(iv);
+  }, [port, kind]);
+
+  const labels = { running: t("settings.llamaRunning"), starting: t("settings.llamaStarting"), stopped: t("settings.llamaStopped") };
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className={`w-2 h-2 rounded-full ${
+        state === "running" ? "bg-green-500" : state === "starting" ? "bg-yellow-500 animate-pulse" : "bg-gray-400"
+      }`} />
+      <span className="text-muted-foreground">{labels[state]}</span>
+    </div>
+  );
+}
 
 export function SettingsPanel() {
   const { t } = useI18n();
@@ -193,8 +223,15 @@ export function SettingsPanel() {
   const [testingRerank, setTestingRerank] = useState(false);
   const [testRerankResult, setTestRerankResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
+  const formInitialized = useRef(false);
   useEffect(() => { loadSettings(); }, []);
-  useEffect(() => { setForm(settings); }, [settings]);
+  useEffect(() => {
+    // Only sync form from store on first settings load, not on every store update
+    if (!formInitialized.current && settings !== DEFAULT_SETTINGS) {
+      setForm(settings);
+      formInitialized.current = true;
+    }
+  }, [settings]);
 
   const handleSave = async () => {
     await saveSettings(form);
@@ -315,88 +352,216 @@ export function SettingsPanel() {
         {/* Embedding */}
         <section className="mb-8">
           <h3 className="text-lg font-semibold mb-4 border-b pb-2">{t("settings.embedding")}</h3>
-          {[{ l: t("settings.apiBase"), k: "embedding_api_base", ph: "https://api.openai.com/v1" },
-            { l: t("settings.apiKey"), k: "embedding_api_key", ph: "" },
-            { l: t("settings.model"), k: "embedding_model", ph: "text-embedding-3-small" }].map(({ l, k, ph }) => (
-            <div key={k} className="mb-4">
-              <label className="block text-sm font-medium mb-1">{l}</label>
-              <input type={k.includes("key") ? "password" : "text"} value={(form as any)[k]}
-                onChange={(e) => update(k as keyof AppSettings, e.target.value)} placeholder={ph}
-                className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+          {/* Local model toggle */}
+          <div className="flex items-center justify-between mb-4">
+            <label className="text-sm font-medium">{t("settings.useLocal")}</label>
+            <button onClick={() => update("use_local_embedding", !form.use_local_embedding)}
+              className={`relative w-10 h-5 rounded-full transition-colors ${form.use_local_embedding ? "bg-primary" : "bg-gray-300"}`}>
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${form.use_local_embedding ? "left-5" : "left-0.5"}`} />
+            </button>
+          </div>
+          {form.use_local_embedding ? (
+            <div className="mb-4 p-3 bg-muted/50 rounded-lg space-y-3">
+              <LocalModelStatus port={form.llama_port || 8081} kind="embedding" />
+              <div>
+                <label className="block text-xs font-medium mb-1">{t("settings.modelFile")}</label>
+                <div className="flex gap-2">
+                  <input type="text" value={form.local_embedding_model}
+                    onChange={(e) => update("local_embedding_model", e.target.value)}
+                    placeholder="Qwen3-Embedding-0.6B-Q8_0.gguf"
+                    className="flex-1 px-3 py-2 border rounded-md text-sm bg-background" />
+                  <button onClick={async () => {
+                    try {
+                      const { open } = await import("@tauri-apps/plugin-dialog");
+                      const file = await open({ title: t("settings.modelFile"), filters: [{ name: "GGUF", extensions: ["gguf"] }] });
+                      if (file) update("local_embedding_model", file as string);
+                    } catch {}
+                  }}
+                  className="px-3 py-2 border rounded-md hover:bg-muted">
+                    <FolderOpen className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">{t("settings.modelFileHint")}</p>
+              </div>
+              {/* Test local embedding */}
+              <button
+                onClick={async () => {
+                  setTestingEmbedding(true); setTestEmbeddingResult(null);
+                  try {
+                    // Local mode: test against localhost, not the API settings
+                    const base = `http://127.0.0.1:${form.llama_port || 8081}`;
+                    const model = (form.local_embedding_model || "local").replace(/\.gguf$/i, "").split(/[/\\]/).pop() || "local";
+                    const r = await testEmbedding({ api_base: base, api_key: "local", model });
+                    setTestEmbeddingResult({
+                      ok: r.valid,
+                      msg: r.valid ? t("settings.testSuccess", { dim: String(r.dimension ?? "?") }) : `${t("settings.testFailed")}: ${r.detail || r.status}`,
+                    });
+                  } catch (e) {
+                    setTestEmbeddingResult({ ok: false, msg: `${t("settings.testFailed")}: ${String(e)}` });
+                  }
+                  setTestingEmbedding(false);
+                }}
+                disabled={testingEmbedding || !pythonRunning}
+                className="flex items-center gap-2 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-muted transition-colors disabled:opacity-40">
+                {testingEmbedding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
+                {testingEmbedding ? t("settings.testing") : t("settings.testLocalEmbedding")}
+              </button>
+              {testEmbeddingResult && (
+                <div className={`p-2.5 rounded-md text-xs flex items-start gap-2 ${testEmbeddingResult.ok ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-700"}`}>
+                  {testEmbeddingResult.ok ? <Check className="w-3.5 h-3.5 mt-0.5 shrink-0" /> : <X className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+                  <span className="whitespace-pre-wrap">{testEmbeddingResult.msg}</span>
+                </div>
+              )}
             </div>
-          ))}
-          <button
-            onClick={async () => {
-              setTestingEmbedding(true); setTestEmbeddingResult(null);
-              try {
-                const r = await testEmbedding({
-                  api_base: form.embedding_api_base, api_key: form.embedding_api_key, model: form.embedding_model,
-                });
-                setTestEmbeddingResult({
-                  ok: r.valid,
-                  msg: r.valid ? t("settings.testSuccess", { dim: String(r.dimension ?? "?") }) : `${t("settings.testFailed")}: ${r.detail || r.status}`,
-                });
-              } catch (e) {
-                setTestEmbeddingResult({ ok: false, msg: `${t("settings.testFailed")}: ${String(e)}` });
-              }
-              setTestingEmbedding(false);
-            }}
-            disabled={testingEmbedding || !pythonRunning}
-            className="flex items-center gap-2 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            title={!pythonRunning ? t("settings.stopped") : undefined}
-          >
-            {testingEmbedding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
-            {testingEmbedding ? t("settings.testing") : t("settings.testConnection")}
-          </button>
-          {testEmbeddingResult && (
-            <div className={`mt-2 p-2.5 rounded-md text-xs flex items-start gap-2 ${testEmbeddingResult.ok ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-700"}`}>
-              {testEmbeddingResult.ok ? <Check className="w-3.5 h-3.5 mt-0.5 shrink-0" /> : <X className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
-              <span className="whitespace-pre-wrap">{testEmbeddingResult.msg}</span>
-            </div>
+          ) : (
+            <>
+              {[{ l: t("settings.apiBase"), k: "embedding_api_base", ph: "https://api.openai.com/v1" },
+                { l: t("settings.apiKey"), k: "embedding_api_key", ph: "" },
+                { l: t("settings.model"), k: "embedding_model", ph: "text-embedding-3-small" }].map(({ l, k, ph }) => (
+                <div key={k} className="mb-4">
+                  <label className="block text-sm font-medium mb-1">{l}</label>
+                  <input type={k.includes("key") ? "password" : "text"} value={(form as any)[k]}
+                    onChange={(e) => update(k as keyof AppSettings, e.target.value)} placeholder={ph}
+                    className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+                </div>
+              ))}
+              <button
+                onClick={async () => {
+                  setTestingEmbedding(true); setTestEmbeddingResult(null);
+                  try {
+                    const r = await testEmbedding({
+                      api_base: form.embedding_api_base, api_key: form.embedding_api_key, model: form.embedding_model,
+                    });
+                    setTestEmbeddingResult({
+                      ok: r.valid,
+                      msg: r.valid ? t("settings.testSuccess", { dim: String(r.dimension ?? "?") }) : `${t("settings.testFailed")}: ${r.detail || r.status}`,
+                    });
+                  } catch (e) {
+                    setTestEmbeddingResult({ ok: false, msg: `${t("settings.testFailed")}: ${String(e)}` });
+                  }
+                  setTestingEmbedding(false);
+                }}
+                disabled={testingEmbedding || !pythonRunning}
+                className="flex items-center gap-2 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title={!pythonRunning ? t("settings.stopped") : undefined}
+              >
+                {testingEmbedding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
+                {testingEmbedding ? t("settings.testing") : t("settings.testConnection")}
+              </button>
+              {testEmbeddingResult && (
+                <div className={`mt-2 p-2.5 rounded-md text-xs flex items-start gap-2 ${testEmbeddingResult.ok ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-700"}`}>
+                  {testEmbeddingResult.ok ? <Check className="w-3.5 h-3.5 mt-0.5 shrink-0" /> : <X className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+                  <span className="whitespace-pre-wrap">{testEmbeddingResult.msg}</span>
+                </div>
+              )}
+            </>
           )}
         </section>
 
         {/* Rerank */}
         <section className="mb-8">
           <h3 className="text-lg font-semibold mb-4 border-b pb-2">{t("settings.rerank")}</h3>
-          {[{ l: t("settings.apiBase"), k: "rerank_api_base", ph: "https://api.jina.ai/v1" },
-            { l: t("settings.apiKey"), k: "rerank_api_key", ph: "" },
-            { l: t("settings.model"), k: "rerank_model", ph: "jina-reranker-v2-base-multilingual" }].map(({ l, k, ph }) => (
-            <div key={k} className="mb-4">
-              <label className="block text-sm font-medium mb-1">{l}</label>
-              <input type={k.includes("key") ? "password" : "text"} value={(form as any)[k]}
-                onChange={(e) => update(k as keyof AppSettings, e.target.value)} placeholder={ph}
-                className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+          <div className="flex items-center justify-between mb-4">
+            <label className="text-sm font-medium">{t("settings.useLocal")}</label>
+            <button onClick={() => update("use_local_rerank", !form.use_local_rerank)}
+              className={`relative w-10 h-5 rounded-full transition-colors ${form.use_local_rerank ? "bg-primary" : "bg-gray-300"}`}>
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${form.use_local_rerank ? "left-5" : "left-0.5"}`} />
+            </button>
+          </div>
+          {form.use_local_rerank ? (
+            <div className="mb-4 p-3 bg-muted/50 rounded-lg space-y-3">
+              <LocalModelStatus port={(form.llama_port || 8081) + 1} kind="rerank" />
+              <div>
+                <label className="block text-xs font-medium mb-1">{t("settings.modelFile")}</label>
+                <div className="flex gap-2">
+                  <input type="text" value={form.local_rerank_model}
+                    onChange={(e) => update("local_rerank_model", e.target.value)}
+                    placeholder="qwen3-reranker-0.6b-q8_0.gguf"
+                    className="flex-1 px-3 py-2 border rounded-md text-sm bg-background" />
+                  <button onClick={async () => {
+                    try {
+                      const { open } = await import("@tauri-apps/plugin-dialog");
+                      const file = await open({ title: t("settings.modelFile"), filters: [{ name: "GGUF", extensions: ["gguf"] }] });
+                      if (file) update("local_rerank_model", file as string);
+                    } catch {}
+                  }}
+                  className="px-3 py-2 border rounded-md hover:bg-muted">
+                    <FolderOpen className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">{t("settings.modelFileHint")}</p>
+              </div>
+              {/* Test local rerank */}
+              <button
+                onClick={async () => {
+                  setTestingRerank(true); setTestRerankResult(null);
+                  try {
+                    const base = `http://127.0.0.1:${(form.llama_port || 8081) + 1}`;
+                    const model = (form.local_rerank_model || "local").replace(/\.gguf$/i, "").split(/[/\\]/).pop() || "local";
+                    const r = await testRerank({ api_base: base, api_key: "local", model });
+                    setTestRerankResult({
+                      ok: r.valid,
+                      msg: r.valid ? t("settings.testSuccessRerank") : `${t("settings.testFailed")}: ${r.detail || r.status}`,
+                    });
+                  } catch (e) {
+                    setTestRerankResult({ ok: false, msg: `${t("settings.testFailed")}: ${String(e)}` });
+                  }
+                  setTestingRerank(false);
+                }}
+                disabled={testingRerank || !pythonRunning}
+                className="flex items-center gap-2 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-muted transition-colors disabled:opacity-40">
+                {testingRerank ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
+                {testingRerank ? t("settings.testing") : t("settings.testLocalRerank")}
+              </button>
+              {testRerankResult && (
+                <div className={`p-2.5 rounded-md text-xs flex items-start gap-2 ${testRerankResult.ok ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-700"}`}>
+                  {testRerankResult.ok ? <Check className="w-3.5 h-3.5 mt-0.5 shrink-0" /> : <X className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+                  <span className="whitespace-pre-wrap">{testRerankResult.msg}</span>
+                </div>
+              )}
             </div>
-          ))}
-          <button
-            onClick={async () => {
-              setTestingRerank(true); setTestRerankResult(null);
-              try {
-                const r = await testRerank({
-                  api_base: form.rerank_api_base, api_key: form.rerank_api_key, model: form.rerank_model,
-                });
-                setTestRerankResult({
-                  ok: r.valid,
-                  msg: r.valid ? t("settings.testSuccessRerank") : `${t("settings.testFailed")}: ${r.detail || r.status}`,
-                });
-              } catch (e) {
-                setTestRerankResult({ ok: false, msg: `${t("settings.testFailed")}: ${String(e)}` });
-              }
-              setTestingRerank(false);
-            }}
-            disabled={testingRerank || !pythonRunning}
-            className="flex items-center gap-2 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            title={!pythonRunning ? t("settings.stopped") : undefined}
-          >
-            {testingRerank ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
-            {testingRerank ? t("settings.testing") : t("settings.testConnection")}
-          </button>
-          {testRerankResult && (
-            <div className={`mt-2 p-2.5 rounded-md text-xs flex items-start gap-2 ${testRerankResult.ok ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-700"}`}>
-              {testRerankResult.ok ? <Check className="w-3.5 h-3.5 mt-0.5 shrink-0" /> : <X className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
-              <span className="whitespace-pre-wrap">{testRerankResult.msg}</span>
-            </div>
+          ) : (
+            <>
+              {[{ l: t("settings.apiBase"), k: "rerank_api_base", ph: "https://api.jina.ai/v1" },
+                { l: t("settings.apiKey"), k: "rerank_api_key", ph: "" },
+                { l: t("settings.model"), k: "rerank_model", ph: "jina-reranker-v2-base-multilingual" }].map(({ l, k, ph }) => (
+                <div key={k} className="mb-4">
+                  <label className="block text-sm font-medium mb-1">{l}</label>
+                  <input type={k.includes("key") ? "password" : "text"} value={(form as any)[k]}
+                    onChange={(e) => update(k as keyof AppSettings, e.target.value)} placeholder={ph}
+                    className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+                </div>
+              ))}
+              <button
+                onClick={async () => {
+                  setTestingRerank(true); setTestRerankResult(null);
+                  try {
+                    const r = await testRerank({
+                      api_base: form.rerank_api_base, api_key: form.rerank_api_key, model: form.rerank_model,
+                    });
+                    setTestRerankResult({
+                      ok: r.valid,
+                      msg: r.valid ? t("settings.testSuccessRerank") : `${t("settings.testFailed")}: ${r.detail || r.status}`,
+                    });
+                  } catch (e) {
+                    setTestRerankResult({ ok: false, msg: `${t("settings.testFailed")}: ${String(e)}` });
+                  }
+                  setTestingRerank(false);
+                }}
+                disabled={testingRerank || !pythonRunning}
+                className="flex items-center gap-2 px-3 py-1.5 border rounded-md text-xs font-medium hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title={!pythonRunning ? t("settings.stopped") : undefined}
+              >
+                {testingRerank ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
+                {testingRerank ? t("settings.testing") : t("settings.testConnection")}
+              </button>
+              {testRerankResult && (
+                <div className={`mt-2 p-2.5 rounded-md text-xs flex items-start gap-2 ${testRerankResult.ok ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-700"}`}>
+                  {testRerankResult.ok ? <Check className="w-3.5 h-3.5 mt-0.5 shrink-0" /> : <X className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+                  <span className="whitespace-pre-wrap">{testRerankResult.msg}</span>
+                </div>
+              )}
+            </>
           )}
         </section>
 
@@ -427,7 +592,7 @@ export function SettingsPanel() {
         <section className="mb-8">
           <h3 className="text-lg font-semibold mb-4 border-b pb-2">{t("settings.toolLimits")}</h3>
           {[
-            { l: t("settings.maxToolRounds"), k: "max_tool_rounds", ph: "10" },
+            { l: t("settings.maxToolRounds"), k: "max_tool_rounds", ph: "100" },
             { l: t("settings.maxHistoryMessages"), k: "max_history_messages", ph: "80" },
             { l: t("settings.maxSearchResultChars"), k: "max_search_result_chars", ph: "2000" },
             { l: t("settings.maxDocumentChars"), k: "max_document_chars", ph: "30000" },

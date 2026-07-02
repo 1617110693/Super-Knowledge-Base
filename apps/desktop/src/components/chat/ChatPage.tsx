@@ -36,29 +36,45 @@ function ToolCallCards({ toolCalls, toolResults, activeToolId }: {
   activeToolId: string | null;
 }) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const manualRef = useRef<Set<string>>(new Set()); // user-toggled cards
+  const prevActiveRef = useRef<string | null>(null);
   const resultsRef = useRef<Record<string, HTMLDivElement | null>>({});
 
   if (!toolCalls || toolCalls.length === 0) return null;
 
-  // Auto-expand active tool, collapse others (unless manually toggled)
+  // Auto-expand active tool, collapse previous auto-expanded ones
   useEffect(() => {
-    if (activeToolId) {
-      setExpandedIds(prev => {
-        const next = new Set(prev);
-        if (!next.has(activeToolId)) next.add(activeToolId);
-        return next;
-      });
-      // Auto-scroll the active result
-      setTimeout(() => {
-        resultsRef.current[activeToolId]?.scrollTo({ top: resultsRef.current[activeToolId]?.scrollHeight, behavior: "smooth" });
-      }, 50);
-    }
+    const prev = prevActiveRef.current;
+    prevActiveRef.current = activeToolId;
+    if (!activeToolId) return;
+
+    setExpandedIds(prevIds => {
+      const next = new Set(manualRef.current); // keep manually-toggled
+      // Remove the old active tool (if it was auto-expanded, not manual)
+      if (prev && !manualRef.current.has(prev)) {
+        next.delete(prev);
+      }
+      // Expand the new active tool
+      next.add(activeToolId);
+      return next;
+    });
+
+    // Auto-scroll the active result
+    setTimeout(() => {
+      resultsRef.current[activeToolId]?.scrollTo({ top: resultsRef.current[activeToolId]?.scrollHeight, behavior: "smooth" });
+    }, 50);
   }, [activeToolId]);
 
   const toggle = (id: string) => {
     setExpandedIds(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+        manualRef.current.delete(id);
+      } else {
+        next.add(id);
+        manualRef.current.add(id);
+      }
       return next;
     });
   };

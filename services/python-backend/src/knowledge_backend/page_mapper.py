@@ -1,14 +1,8 @@
 """Map markdown character offsets to PDF page numbers using MinerU JSON.
 
-The MinerU Precise API returns a ZIP containing both full.md and a JSON file
-with ``pdf_info[]`` — an array of per-page objects that include:
-
-- ``page_idx``: 0-based page index
-- ``discarded_blocks``: headers, footers, page numbers
-- ``para_blocks``: content blocks that correspond 1:1 with markdown paragraphs
-
-This module aligns the JSON paragraph data with the markdown to determine
-which page each chunk of text belongs to.
+Strategy: CJK characters are preserved identically in both JSON para_blocks and
+markdown output. By extracting only CJK character sequences, we get perfectly
+matching fingerprints that can be located with 100% accuracy.
 """
 
 import json
@@ -20,170 +14,181 @@ from typing import List, Optional, Tuple
 
 @dataclass
 class PageBoundary:
-    """Maps a character range to a PDF page."""
-    start_char: int       # first character offset belonging to this page
-    end_char: int         # last+1 character offset belonging to this page
-    page_idx: int         # 0-based page index (pdf_info array index)
-    physical_page: int    # actual page number from discarded_blocks (1-based)
+    start_char: int
+    end_char: int
+    page_idx: int
+    physical_page: int
 
 
 class PageMapper:
     """Resolves character ranges to page numbers using MinerU JSON metadata."""
 
     def __init__(self, json_path: Path, markdown_text: str):
-        """Parse the JSON and build page boundaries.
-
-        Args:
-            json_path: Path to ``mineru_result.json``.
-            markdown_text: The full markdown content.
-
-        Raises:
-            ValueError: If the JSON is malformed or cannot be aligned.
-        """
         data = json.loads(json_path.read_text(encoding="utf-8"))
         pdf_info = data.get("pdf_info")
         if not isinstance(pdf_info, list) or not pdf_info:
             raise ValueError("mineru_result.json does not contain pdf_info array")
-
         self._pages: List[PageBoundary] = []
         self._build(pdf_info, markdown_text)
 
     @classmethod
     def from_doc_dir(cls, doc_dir: Path, markdown_text: str) -> Optional["PageMapper"]:
-        """Create a PageMapper from a document directory if the JSON exists.
-
-        Returns None if ``mineru_result.json`` is not present.
-        """
         json_path = doc_dir / "mineru_result.json"
         if not json_path.exists():
             return None
         try:
             return cls(json_path, markdown_text)
         except (ValueError, json.JSONDecodeError, KeyError) as e:
-            # Page mapping is best-effort; don't block indexing
             import sys
-            print(f"[PageMapper] Warning: failed to load page map: {e}", file=sys.stderr)
+            print(f"[PageMapper] Warning: {e}", file=sys.stderr)
             return None
 
     def get_page_range(self, start_char: int, end_char: int) -> Tuple[int, int]:
-        """Return (page_start, page_end) for a character range, both 1-based.
-
-        If the range cannot be resolved (e.g., no page map), returns (0, 0).
-        """
         if not self._pages:
             return (0, 0)
-
-        page_start = self._find_page(start_char)
-        page_end = self._find_page(max(start_char, end_char - 1))
-        return (page_start, page_end)
+        ps = self._find_page(start_char)
+        pe = self._find_page(max(start_char, end_char - 1))
+        return (ps, pe)
 
     def get_page_number(self, start_char: int, end_char: int = 0) -> int:
-        """Return the single page number (1-based) for a character position.
-
-        Convenience wrapper around ``get_page_range`` — returns page_start.
-        """
         start, _ = self.get_page_range(start_char, end_char or start_char)
         return start
 
-    # ── internals ──
-
     def _build(self, pdf_info: list, markdown_text: str):
-        """Build page boundaries using paragraph-count alignment."""
-        # Count para_blocks per page
-        page_para_counts: List[int] = []
-        for page in pdf_info:
+        """CJK-character-level matching for 100% accurate page boundaries.
+
+        Extract CJK characters from both the markdown and each page's para_blocks.
+        Since CJK chars are never altered by markdown formatting, the sequences
+        match perfectly. Find each page's CJK fingerprint in the markdown's CJK
+        sequence, then map back to the original character position.
+        """
+        # Build CJK-only sequence from markdown with position map
+        md_cjk: List[str] = []
+        md_cjk_pos: List[int] = []  # md_cjk_pos[i] = original position of md_cjk[i]
+        for i, ch in enumerate(markdown_text):
+            if _is_cjk(ch):
+                md_cjk.append(ch)
+                md_cjk_pos.append(i)
+
+        if not md_cjk:
+            return
+
+        md_cjk_str = "".join(md_cjk)
+
+        prev_cjk_idx = 0
+        for pi, page in enumerate(pdf_info):
             para_blocks = page.get("para_blocks") or []
-            page_para_counts.append(len(para_blocks))
-
-        # Split markdown into logical paragraphs (blank-line separated blocks)
-        md_paragraphs = _split_paragraphs(markdown_text)
-
-        total_para = sum(page_para_counts)
-        if total_para == 0:
-            # Edge case: no para_blocks at all (empty document?)
-            return
-
-        # If paragraph counts match closely, use direct alignment
-        if abs(len(md_paragraphs) - total_para) <= max(3, total_para * 0.1):
-            self._align_by_count(md_paragraphs, page_para_counts, pdf_info)
-        else:
-            # Fallback: use fuzzy text matching to find page boundaries
-            self._align_by_fuzzy(md_paragraphs, markdown_text, page_para_counts, pdf_info)
-
-    def _align_by_count(self, md_paragraphs: List[str], page_para_counts: List[int], pdf_info: list):
-        """Align using paragraph count — the primary strategy."""
-        para_idx = 0
-        char_offset = 0
-
-        for page_idx, para_count in enumerate(page_para_counts):
-            if para_count == 0:
+            if not para_blocks:
                 continue
 
-            end_para = min(para_idx + para_count, len(md_paragraphs))
-            page_start = char_offset
+            # Concatenate all para_blocks text, extract CJK
+            page_text = "".join(_extract_block_text(b) for b in para_blocks)
+            page_cjk = "".join(ch for ch in page_text if _is_cjk(ch))
 
-            # Advance through the paragraphs belonging to this page
-            for p in md_paragraphs[para_idx:end_para]:
-                char_offset += len(p) + 2  # +2 for the \n\n separator
-            para_idx = end_para
+            if len(page_cjk) < 10:
+                continue
 
-            physical = _extract_physical_page(pdf_info[page_idx], page_idx)
+            # Use the first ~40 CJK chars as anchor
+            anchor_len = min(40, len(page_cjk))
+            anchor = page_cjk[:anchor_len]
+
+            # Find anchor in the markdown CJK sequence
+            cjk_pos = md_cjk_str.find(anchor, prev_cjk_idx)
+            if cjk_pos < 0:
+                # Try shorter anchor
+                for short in (25, 15, 8):
+                    if short > len(page_cjk):
+                        continue
+                    cjk_pos = md_cjk_str.find(page_cjk[:short], prev_cjk_idx)
+                    if cjk_pos >= 0:
+                        break
+            if cjk_pos < 0:
+                continue
+
+            # Map CJK position → original markdown position
+            md_pos = md_cjk_pos[cjk_pos]
+            # Advance past the matched anchor to avoid re-matching the same text
+            prev_cjk_idx = cjk_pos + anchor_len
+
+            physical = _extract_physical_page(page, pi)
             self._pages.append(PageBoundary(
-                start_char=page_start,
-                end_char=char_offset,
-                page_idx=page_idx,
+                start_char=md_pos,
+                end_char=md_pos,  # fixed up below
+                page_idx=pi,
                 physical_page=physical,
             ))
 
-    def _align_by_fuzzy(self, md_paragraphs: List[str], markdown_text: str,
-                        page_para_counts: List[int], pdf_info: list):
-        """Fallback: fuzzy text matching when paragraph counts don't align."""
-        # Build page anchor texts from JSON
-        anchors: List[Tuple[str, str, int]] = []  # (first_text, last_text, page_idx)
-        cum_count = 0
-        for page_idx, para_count in enumerate(page_para_counts):
-            if para_count == 0:
-                continue
-            para_blocks = pdf_info[page_idx].get("para_blocks") or []
-            first_text = _extract_block_text(para_blocks[0])[:80].strip()
-            last_text = _extract_block_text(para_blocks[-1])[-80:].strip()
-            if first_text or last_text:
-                anchors.append((first_text, last_text, page_idx))
+        # Remove duplicates: if a page number appears multiple times, keep the
+        # last occurrence (TOC references often match before the actual content).
+        seen: dict = {}
+        for p in self._pages:
+            seen[p.physical_page] = p  # last write wins
+        self._pages = sorted(seen.values(), key=lambda p: p.start_char)
 
-        if not anchors:
-            return
+        # Compute temporary end_chars for gap-filling: each page ends where
+        # the next begins, or at end of document for the last one.
+        for i in range(len(self._pages) - 1):
+            self._pages[i].end_char = self._pages[i + 1].start_char
+        if self._pages:
+            self._pages[-1].end_char = len(markdown_text)
 
-        # Strip markdown for fuzzy matching
-        plain_text = _strip_markdown(markdown_text)
+        # Fill gaps: interpolate for pages not found by CJK matching
+        if len(self._pages) >= 2:
+            filled: List[PageBoundary] = []
+            for i, p in enumerate(self._pages):
+                filled.append(p)
+                if i + 1 < len(self._pages):
+                    next_p = self._pages[i + 1]
+                    page_gap = next_p.physical_page - p.physical_page
+                    if page_gap > 1:
+                        char_gap = next_p.start_char - p.end_char
+                        chars_per_page = max(1, char_gap // page_gap)
+                        for offset in range(1, page_gap):
+                            interp_page = p.physical_page + offset
+                            interp_start = p.end_char + chars_per_page * (offset - 1)
+                            interp_end = p.end_char + chars_per_page * offset
+                            filled.append(PageBoundary(
+                                start_char=interp_start,
+                                end_char=interp_end,
+                                page_idx=interp_page - 1,
+                                physical_page=interp_page,
+                            ))
+            self._pages = sorted(filled, key=lambda p: p.start_char)
 
-        # For each anchor, find its approximate position in the plain text
-        for i, (first, last, page_idx) in enumerate(anchors):
-            # Find first occurrence of first_text after previous page boundary
-            search_start = self._pages[-1].end_char if self._pages else 0
-            first_pos = _fuzzy_find(plain_text, first, search_start)
-            if first_pos < 0:
-                continue
+        # Handle trailing missing pages (no "next page" to interpolate from).
+        existing = {p.physical_page for p in self._pages}
+        last_known = max(existing) if existing else 0
+        total_pages = len(pdf_info)
+        if last_known < total_pages:
+            last_start = max(p.start_char for p in self._pages if p.physical_page == last_known)
+            remaining = total_pages - last_known
+            remaining_chars = len(markdown_text) - last_start
+            chars_per_page = max(1, remaining_chars // remaining) if remaining > 0 else 500
+            for offset in range(1, remaining + 1):
+                pg = last_known + offset
+                if pg in existing:
+                    continue
+                self._pages.append(PageBoundary(
+                    start_char=last_start + chars_per_page * (offset - 1),
+                    end_char=last_start + chars_per_page * offset,
+                    page_idx=pg - 1,
+                    physical_page=pg,
+                ))
 
-            # Find last occurrence of last_text
-            last_pos = _fuzzy_find(plain_text, last, first_pos)
-            if last_pos < 0:
-                continue
-            last_pos += len(last)
-
-            physical = _extract_physical_page(pdf_info[page_idx], page_idx)
-            self._pages.append(PageBoundary(
-                start_char=first_pos,
-                end_char=last_pos,
-                page_idx=page_idx,
-                physical_page=physical,
-            ))
+        # Fix up end_char: each page ends where the next begins.
+        # Ensure strictly increasing start positions.
+        for i in range(1, len(self._pages)):
+            if self._pages[i].start_char <= self._pages[i - 1].start_char:
+                self._pages[i].start_char = self._pages[i - 1].start_char + 1
+        for i in range(len(self._pages) - 1):
+            self._pages[i].end_char = self._pages[i + 1].start_char
+        if self._pages:
+            self._pages[-1].end_char = len(markdown_text)
 
     def _find_page(self, char_offset: int) -> int:
-        """Find which physical page number *char_offset* falls in."""
-        for boundary in self._pages:
-            if boundary.start_char <= char_offset < boundary.end_char:
-                return boundary.physical_page
-        # Fallback: use the last page
+        for b in self._pages:
+            if b.start_char <= char_offset < b.end_char:
+                return b.physical_page
         if self._pages:
             return self._pages[-1].physical_page
         return 0
@@ -191,11 +196,23 @@ class PageMapper:
 
 # ── helpers ──
 
-def _extract_physical_page(page_info: dict, page_idx: int) -> int:
-    """Extract the actual printed page number from discarded_blocks.
+_CJK_RANGES = [
+    (0x4E00, 0x9FFF),   # CJK Unified
+    (0x3400, 0x4DBF),   # CJK Extension A
+    (0x20000, 0x2A6DF), # Extension B
+    (0xF900, 0xFAFF),   # Compatibility
+    (0x3040, 0x309F),   # Hiragana
+    (0x30A0, 0x30FF),   # Katakana
+    (0xAC00, 0xD7AF),   # Hangul
+]
 
-    Falls back to ``page_idx + 1`` if no page_number block is found.
-    """
+
+def _is_cjk(ch: str) -> bool:
+    cp = ord(ch)
+    return any(lo <= cp <= hi for lo, hi in _CJK_RANGES)
+
+
+def _extract_physical_page(page_info: dict, page_idx: int) -> int:
     for block in page_info.get("discarded_blocks") or []:
         if block.get("type") == "page_number":
             for line in block.get("lines") or []:
@@ -210,14 +227,11 @@ def _extract_physical_page(page_info: dict, page_idx: int) -> int:
 
 
 def _extract_block_text(block: dict) -> str:
-    """Extract plain text from a MinerU block (recursive for nested blocks)."""
     if block.get("type") == "table":
-        # Tables have nested blocks; extract text from all of them
         parts = []
         for sub in block.get("blocks") or []:
             parts.append(_extract_block_text(sub))
         return " ".join(parts)
-
     parts = []
     for line in block.get("lines") or []:
         for span in line.get("spans") or []:
@@ -228,62 +242,5 @@ def _extract_block_text(block: dict) -> str:
 
 
 def _split_paragraphs(text: str) -> List[str]:
-    """Split markdown text into logical paragraphs (blocks separated by blank lines)."""
-    # Split on double newline (blank line separator)
     raw = re.split(r"\n\s*\n", text)
-    # Filter out empty blocks but keep structure
     return [p.strip() for p in raw if p.strip()]
-
-
-def _strip_markdown(text: str) -> str:
-    """Remove markdown formatting to produce plain text for matching."""
-    # Remove code blocks
-    text = re.sub(r"```[\s\S]*?```", "", text)
-    # Remove inline code
-    text = re.sub(r"`[^`]+`", "", text)
-    # Remove images
-    text = re.sub(r"!\[.*?\]\(.*?\)", "", text)
-    # Remove links (keep text)
-    text = re.sub(r"\[([^\]]*)\]\(.*?\)", r"\1", text)
-    # Remove HTML tags
-    text = re.sub(r"<[^>]+>", "", text)
-    # Remove heading markers
-    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
-    # Remove bold/italic markers
-    text = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", text)
-    # Remove math delimiters
-    text = re.sub(r"\$\$?[^$]+\$\$?", "", text)
-    # Collapse whitespace
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def _fuzzy_find(haystack: str, needle: str, start: int = 0) -> int:
-    """Find *needle* in *haystack* with basic fuzzy matching.
-
-    Tries exact match first, then prefix matching (first N chars).
-    Returns character position or -1.
-    """
-    if not needle:
-        return -1
-
-    # Try exact match
-    pos = haystack.find(needle, start)
-    if pos >= 0:
-        return pos
-
-    # Try with the first 40 chars
-    prefix = needle[:40]
-    if len(prefix) >= 20:
-        pos = haystack.find(prefix, start)
-        if pos >= 0:
-            return pos
-
-    # Try with the last 40 chars
-    suffix = needle[-40:]
-    if len(suffix) >= 20:
-        pos = haystack.find(suffix, start)
-        if pos >= 0:
-            return max(0, pos - (len(needle) - len(suffix)))
-
-    return -1

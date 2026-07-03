@@ -415,6 +415,11 @@ pub async fn copy_document_to_kb(
     if json_src.exists() {
         std::fs::copy(&json_src, target_doc_dir.join("mineru_result.json"))?;
     }
+    // Copy content_list.json (page_idx-based direct mapping)
+    let cl_src = source_doc_dir.join("content_list.json");
+    if cl_src.exists() {
+        std::fs::copy(&cl_src, target_doc_dir.join("content_list.json"))?;
+    }
 
     // Update path and status
     let mut saved = state.file_store.get_document(&target_kb_id, &new_doc.id)?;

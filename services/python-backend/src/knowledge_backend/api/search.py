@@ -295,3 +295,21 @@ def get_chunk_by_index(req: GetChunkRequest):
         return {"chunk": chunk}
     finally:
         db.close()
+
+
+class GetChunksByPageRequest(BaseModel):
+    kb_id: str
+    doc_id: str
+    page: int
+
+
+@router.post("/get-chunks-by-page")
+def get_chunks_by_page(req: GetChunksByPageRequest):
+    """Fetch all chunks on a specific page number of a document."""
+    config = get_config()
+    db = LanceDBManager(Path(config.knowledge_base_data_dir) / "lancedb_data")
+    try:
+        chunks = db.get_chunks_by_page(req.kb_id, req.doc_id, req.page)
+        return {"kb_id": req.kb_id, "doc_id": req.doc_id, "page": req.page, "chunks": chunks, "count": len(chunks)}
+    finally:
+        db.close()

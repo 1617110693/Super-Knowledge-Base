@@ -640,6 +640,9 @@ def add_document(
     # Save MinerU JSON for page number tracking
     if parse_result and parse_result.json_content:
         (doc_dir / "mineru_result.json").write_text(parse_result.json_content, encoding="utf-8")
+    # Save content_list.json for direct page_idx-based mapping
+    if parse_result and parse_result.content_list_json:
+        (doc_dir / "content_list.json").write_text(parse_result.content_list_json, encoding="utf-8")
 
     # Index: chunk + embed with page mapping
     from .page_mapper import PageMapper
@@ -909,6 +912,27 @@ def get_chunk_by_index(kb_id: str, doc_id: str, chunk_index: int) -> dict:
         if chunk is None:
             return {"error": f"Chunk not found: doc={doc_id} index={chunk_index}"}
         return chunk
+    finally:
+        db.close()
+
+
+@mcp.tool
+def get_chunks_by_page(kb_id: str, doc_id: str, page: int) -> dict:
+    """Fetch all chunks on a specific page of a document.
+
+    Use this when you know the page number (from previous search results'
+    page_start/page_end fields) and want to read everything on that page.
+    Returns all chunks whose page range covers the given page number."""
+    db = _get_db()
+    try:
+        chunks = db.get_chunks_by_page(kb_id, doc_id, page)
+        return {
+            "kb_id": kb_id,
+            "doc_id": doc_id,
+            "page": page,
+            "chunks": chunks,
+            "count": len(chunks),
+        }
     finally:
         db.close()
 

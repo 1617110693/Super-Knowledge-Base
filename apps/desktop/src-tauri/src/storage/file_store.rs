@@ -818,6 +818,18 @@ impl FileStore {
         Ok(())
     }
 
+    /// Save the MinerU content_list.json (each block has page_idx + type).
+    pub fn save_content_list_json(
+        &self,
+        kb_id: &str,
+        doc_id: &str,
+        content: &str,
+    ) -> CommandResult<()> {
+        let path = self.get_doc_dir(kb_id, doc_id).join("content_list.json");
+        std::fs::write(&path, content)?;
+        Ok(())
+    }
+
     pub fn save_document_meta(&self, doc: &Document) -> CommandResult<()> {
         let meta_path = self.get_doc_dir(&doc.kb_id, &doc.id).join("metadata.json");
         let data = serde_json::to_string_pretty(doc)?;

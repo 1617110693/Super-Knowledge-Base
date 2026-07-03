@@ -4,7 +4,9 @@ import { useKBStore } from "../../stores/useKBStore";
 import { useSettingsStore } from "../../stores/useSettingsStore";
 import { useChatStore } from "../../stores/useChatStore";
 import { useI18n } from "../../i18n";
-import { BookOpen, Settings, FolderOpen, AlertCircle, X, Layers, Pin, MessageSquare, Plus, ChevronDown, ChevronRight, LayoutDashboard, Pencil, Check, Trash2 } from "lucide-react";
+import { BookOpen, Settings, FolderOpen, AlertCircle, X, Layers, Pin, MessageSquare, Plus, ChevronDown, ChevronRight, LayoutDashboard, Pencil, Check, Trash2, PanelLeftClose, PanelLeft } from "lucide-react";
+
+const COLLAPSED_KEY = "skb-sidebar-collapsed";
 
 export function Sidebar() {
   const location = useLocation();
@@ -20,25 +22,117 @@ export function Sidebar() {
   const [chatExpanded, setChatExpanded] = useState(true);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(COLLAPSED_KEY) === "true"; } catch { return false; }
+  });
+
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(COLLAPSED_KEY, String(next)); } catch {}
+      return next;
+    });
+  };
 
   useEffect(() => { loadKBs(); }, []);
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + "/");
   const sortedKBs = useMemo(() => getSortedKBs(), [knowledgeBases, sortMode]);
+  const recentConversations = useMemo(() => conversations, [conversations]);
 
-  const recentConversations = useMemo(
-    () => conversations,  // store already maintains newest-first order
-    [conversations]
-  );
+  // ── collapsed icon-only mode ──
+  if (collapsed) {
+    return (
+      <>
+        <aside className="w-14 bg-card border-r flex flex-col shrink-0 items-center py-3 gap-1 rounded-r-xl">
+          {/* App icon → home */}
+          <button onClick={() => navigate("/")} title={t("app.title")}
+            className="p-2 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground transition-colors">
+            <BookOpen className="w-5 h-5 text-primary" />
+          </button>
 
+          {/* Backend status dot */}
+          <span className={`w-2 h-2 rounded-full shrink-0 mt-1 ${pythonRunning ? "bg-green-500" : "bg-red-500"}`}
+            title={pythonRunning ? t("app.backendReady") : t("app.backendOffline")} />
+
+          <div className="flex-1 flex flex-col items-center gap-1 mt-2 w-full px-1.5">
+            {/* Overview */}
+            <button onClick={() => navigate("/")}
+              title={t("nav.overview")}
+              className={`p-2 rounded-lg transition-colors w-full flex justify-center ${isActive("/") && !kbId ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}>
+              <LayoutDashboard className="w-4 h-4" />
+            </button>
+
+            {/* KB list — show as icon buttons */}
+            {sortedKBs.slice(0, 8).map((kb) => (
+              <button key={kb.id} onClick={() => navigate(`/kb/${kb.id}`)}
+                title={kb.name}
+                className={`p-2 rounded-lg transition-colors w-full flex justify-center ${kbId === kb.id ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}>
+                {kb.pinned ? <Pin className="w-4 h-4 text-amber-500" /> : <Layers className="w-4 h-4" />}
+              </button>
+            ))}
+
+            {/* Chat */}
+            <button onClick={() => {
+              if (activeConversationId) navigate(`/chat/${activeConversationId}`);
+              else { const id = newConversation(); navigate(`/chat/${id}`); }
+            }}
+              title={t("nav.chat")}
+              className={`p-2 rounded-lg transition-colors w-full flex justify-center ${location.pathname.startsWith("/chat") ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}>
+              <MessageSquare className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Settings */}
+          <button onClick={() => navigate("/settings")}
+            title={t("nav.settings")}
+            className={`p-2 rounded-lg transition-colors w-full flex justify-center ${isActive("/settings") ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}>
+            <Settings className="w-4 h-4" />
+          </button>
+
+          {/* Expand button */}
+          <button onClick={toggleCollapsed}
+            title="Expand sidebar"
+            className="p-2 hover:bg-muted rounded-lg text-muted-foreground mt-auto">
+            <PanelLeft className="w-4 h-4" />
+          </button>
+        </aside>
+
+        {/* Error Dialog — same as expanded mode */}
+        {showError && pythonError && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowError(false)}>
+            <div className="bg-card border rounded-xl shadow-xl max-w-lg w-full mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-red-500" />
+                  {t("app.backendError")}
+                </h3>
+                <button onClick={() => setShowError(false)} className="hover:bg-muted rounded-md p-1"><X className="w-4 h-4" /></button>
+              </div>
+              <pre className="text-xs bg-muted p-4 rounded-lg overflow-auto max-h-80 whitespace-pre-wrap break-all">{pythonError}</pre>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  // ── expanded full mode ──
   return (
     <>
-      <aside className="w-56 bg-card border-r flex flex-col shrink-0">
+      <aside className="w-56 bg-card border-r flex flex-col shrink-0 rounded-r-xl">
         {/* App title + status */}
         <div className="p-4 border-b shrink-0">
-          <h1 className="text-sm font-semibold flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-primary" />
-            {t("app.title")}
-          </h1>
+          <div className="flex items-center justify-between">
+            <h1 className="text-sm font-semibold flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-primary" />
+              {t("app.title")}
+            </h1>
+            <button onClick={toggleCollapsed}
+              className="p-1 hover:bg-muted rounded text-muted-foreground"
+              title="Collapse sidebar">
+              <PanelLeftClose className="w-3.5 h-3.5" />
+            </button>
+          </div>
           <div className="flex items-center gap-1 mt-1">
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${pythonRunning ? "bg-green-500" : "bg-red-500"}`} />
             <span className="text-xs text-muted-foreground">

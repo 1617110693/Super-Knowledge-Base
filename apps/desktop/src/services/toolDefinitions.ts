@@ -119,6 +119,23 @@ export const CHAT_TOOLS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "get_chunks_by_page",
+      description:
+        "Fetch all chunks on a specific page of a document. Use this when the user asks what's on a particular page number, or when you need to read all content from a page referenced in search results.",
+      parameters: {
+        type: "object",
+        properties: {
+          kb_id: { type: "string", description: "Knowledge base ID" },
+          doc_id: { type: "string", description: "Document ID" },
+          page: { type: "integer", description: "Page number to fetch (from page_start/page_end in search results)" },
+        },
+        required: ["kb_id", "doc_id", "page"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "list_knowledge_bases",
       description:
         "List all available knowledge bases with their document and chunk counts. Use this to discover what knowledge bases exist before searching.",

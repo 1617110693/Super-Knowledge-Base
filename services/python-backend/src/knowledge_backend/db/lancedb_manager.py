@@ -292,6 +292,10 @@ class LanceDBManager:
                     "kb_id": r.get("kb_id", ""),
                     "doc_name": r.get("doc_name", ""),
                     "content": content,
+                    "chunk_index": metadata.get("chunk_index"),
+                    "page_number": metadata.get("page", 0),
+                    "page_start": metadata.get("page_start", 0),
+                    "page_end": metadata.get("page_end", 0),
                     "score": score,
                     "metadata": metadata,
                 }
@@ -511,6 +515,51 @@ class LanceDBManager:
                 "start_char": metadata.get("start_char"),
                 "metadata": metadata,
             })
+        results.sort(key=lambda x: x.get("chunk_index", 0))
+        return results
+
+    def get_chunks_by_page(
+        self, kb_id: str, doc_id: str, page: int
+    ) -> list[dict]:
+        """Fetch all chunks whose page range covers the given page number."""
+        table = self.get_table(kb_id)
+        if table is None:
+            return []
+        try:
+            rows = (
+                table.search()
+                .where(f"doc_id = '{doc_id}'")
+                .limit(10000)
+                .to_list()
+            )
+        except Exception:
+            return []
+
+        results = []
+        for r in rows:
+            metadata = {}
+            try:
+                metadata = json.loads(r.get("metadata_json", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                pass
+            ps = metadata.get("page_start") or r.get("page_number", 0)
+            pe = metadata.get("page_end") or r.get("page_number", 0)
+            if ps <= page <= pe:
+                metadata["chunk_index"] = r.get("chunk_index")
+                metadata["page"] = r.get("page_number")
+                results.append({
+                    "chunk_id": r.get("chunk_id", ""),
+                    "doc_id": r.get("doc_id", ""),
+                    "kb_id": r.get("kb_id", ""),
+                    "doc_name": r.get("doc_name", ""),
+                    "content": r.get("content", ""),
+                    "chunk_index": r.get("chunk_index"),
+                    "page_number": r.get("page_number", 0),
+                    "page_start": ps,
+                    "page_end": pe,
+                    "start_char": metadata.get("start_char"),
+                    "metadata": metadata,
+                })
         results.sort(key=lambda x: x.get("chunk_index", 0))
         return results
 

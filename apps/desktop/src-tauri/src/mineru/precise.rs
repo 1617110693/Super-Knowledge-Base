@@ -13,6 +13,9 @@ pub struct PreciseResult {
     /// The JSON file from the ZIP containing pdf_info with page metadata.
     /// None if no JSON was found in the archive.
     pub json_content: Option<String>,
+    /// The content_list.json from the ZIP — each block has page_idx directly,
+    /// giving perfect page mapping without fingerprint matching.
+    pub content_list_json: Option<String>,
 }
 
 /// Parse a document using MinerU's Precise API (v4/extract/task).
@@ -214,6 +217,7 @@ async fn download_and_extract_markdown(
 
     let mut markdown: Option<String> = None;
     let mut json_content: Option<String> = None;
+    let mut content_list_json: Option<String> = None;
 
     eprintln!("[SKB] MinerU ZIP contains {} entries:", archive.len());
     for i in 0..archive.len() {
@@ -235,17 +239,20 @@ async fn download_and_extract_markdown(
             markdown = Some(content);
             eprintln!("[SKB]   -> extracted full.md ({chars} chars)");
         } else if name_lower.ends_with(".json") {
-            // The main result JSON is layout.json (contains pdf_info).
-            // Also accept any other .json that has pdf_info.
             let mut content = String::new();
             use std::io::Read;
             match file.read_to_string(&mut content) {
                 Ok(_) => {
                     let has_pdf_info = content.contains("\"pdf_info\"");
+                    let has_page_idx = content.contains("\"page_idx\"");
                     let is_layout = name_lower.contains("layout");
-                    eprintln!("[SKB]   -> read JSON ({}.chars), is_layout={is_layout}, has_pdf_info={has_pdf_info}", content.len());
+                    eprintln!("[SKB]   -> read JSON ({}.chars), is_layout={is_layout}, has_pdf_info={has_pdf_info}, has_page_idx={has_page_idx}", content.len());
                     if has_pdf_info {
                         json_content = Some(content);
+                    } else if has_page_idx && content.contains("\"type\"") {
+                        // content_list.json: each block has page_idx + type
+                        content_list_json = Some(content);
+                        eprintln!("[SKB]   -> identified as content_list.json");
                     }
                 }
                 Err(e) => {
@@ -259,6 +266,7 @@ async fn download_and_extract_markdown(
         Some(md) => Ok(PreciseResult {
             markdown: md,
             json_content,
+            content_list_json,
         }),
         None => Err(AppError::MinerU(
             "full.md not found in result archive".to_string(),

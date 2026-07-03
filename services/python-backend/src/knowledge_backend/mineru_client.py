@@ -52,8 +52,13 @@ class ParseResult:
     markdown: str
     """The parsed markdown content (full.md)."""
     json_content: Optional[str] = None
-    """The JSON metadata from the ZIP (contains pdf_info with page info).
+    """The JSON metadata from the ZIP (layout.json with pdf_info).
     Only available from the Precise API, not the Agent API."""
+    content_list_json: Optional[str] = None
+    """The content_list.json from the ZIP.
+    Each block has ``page_idx``, ``type``, and text content — provides
+    direct page-to-block mapping without fingerprint matching.
+    Only available from the Precise API."""
 
 
 def is_supported(file_path: str | Path) -> bool:
@@ -465,6 +470,7 @@ def _download_and_extract(http: httpx.Client, zip_url: str) -> ParseResult:
 
     markdown = None
     json_content = None
+    content_list_json = None
 
     with zipfile.ZipFile(BytesIO(data)) as zf:
         for name in zf.namelist():
@@ -472,19 +478,27 @@ def _download_and_extract(http: httpx.Client, zip_url: str) -> ParseResult:
             if name_lower.endswith("full.md") or name_lower == "full.md":
                 markdown = zf.read(name).decode("utf-8")
             elif name_lower.endswith(".json"):
-                # The main result JSON is layout.json (contains pdf_info).
-                # Also pick up any other .json that has pdf_info.
+                # Identify JSON files by content signature
                 try:
                     raw = zf.read(name).decode("utf-8")
-                    if '"pdf_info"' in raw:
-                        json_content = raw
                 except Exception:
-                    pass
+                    continue
+                if '"pdf_info"' in raw:
+                    json_content = raw
+                elif '"page_idx"' in raw and '"type"' in raw:
+                    # This is the content_list.json — each block carries
+                    # page_idx directly, giving us perfect page mapping
+                    # without fingerprint matching.
+                    content_list_json = raw
 
     if markdown is None:
         raise MinerUError("full.md not found in result archive")
 
-    return ParseResult(markdown=markdown, json_content=json_content)
+    return ParseResult(
+        markdown=markdown,
+        json_content=json_content,
+        content_list_json=content_list_json,
+    )
 
 
 def _short_uuid() -> str:

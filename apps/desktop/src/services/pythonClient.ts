@@ -258,3 +258,16 @@ export async function getChunkRange(params: {
     body: JSON.stringify(params),
   });
 }
+
+// ── Get Chunks by Page ──
+
+export async function getChunksByPage(params: {
+  kb_id: string;
+  doc_id: string;
+  page: number;
+}): Promise<{ kb_id: string; doc_id: string; page: number; chunks: ChunkByIndex[]; count: number }> {
+  return pythonFetch("/get-chunks-by-page", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}

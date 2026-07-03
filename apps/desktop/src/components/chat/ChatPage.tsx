@@ -263,13 +263,20 @@ export function ChatPage() {
     if (autoScroll) scrollToBottom();
   }, [messages, toolStatus, autoScroll]);
 
-  // Track scroll position for scroll-to-bottom button
+  // Track scroll position: pause auto-scroll when user scrolls up, resume when
+  // they scroll back to the very bottom (within 4px tolerance).
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
       const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
       setShowScrollBtn(dist > 200);
+      if (dist < 4) {
+        setAutoScroll(true);
+      } else if (dist > 20) {
+        // Only disable if user scrolled manually (not a programmatic scroll)
+        setAutoScroll(false);
+      }
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
@@ -285,6 +292,7 @@ export function ChatPage() {
     addMessage(currentConv.id, userMsg);
     setInput("");
     setError("");
+    setAutoScroll(true);
     setStreaming(true);
 
     // Add placeholder assistant message
@@ -771,7 +779,7 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
 
       {/* Scroll to bottom FAB */}
       {showScrollBtn && (
-        <button onClick={() => scrollToBottom()}
+        <button onClick={() => { setAutoScroll(true); scrollToBottom(); }}
           className="absolute bottom-24 right-8 z-30 p-2 bg-card border rounded-full shadow-md hover:shadow-lg transition-all animate-in fade-in"
         >
           <ArrowDown className="w-4 h-4 text-muted-foreground" />

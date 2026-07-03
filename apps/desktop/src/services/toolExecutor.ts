@@ -239,6 +239,35 @@ export async function executeToolCall(
       };
     }
 
+    // ── get_chunks_by_page ──
+    case "get_chunks_by_page": {
+      const kbId5 = String(parsedArgs.kb_id);
+      const docId3 = String(parsedArgs.doc_id);
+      const page = Number(parsedArgs.page);
+      if (isNaN(page)) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: "page must be a number" }) }, newSources: [] };
+      const { getChunksByPage } = await import("./pythonClient");
+      const res = await getChunksByPage({ kb_id: kbId5, doc_id: docId3, page });
+      return {
+        result: {
+          tool_call_id: toolCall.id,
+          role: "tool",
+          content: JSON.stringify({
+            kb_id: res.kb_id,
+            doc_id: res.doc_id,
+            page: res.page,
+            count: res.count,
+            chunks: res.chunks.map(c => ({
+              chunk_index: c.chunk_index,
+              page_start: c.page_start,
+              page_end: c.page_end,
+              content: c.content.slice(0, limits?.maxChunkChars ?? 800),
+            })),
+          }),
+        },
+        newSources: [],
+      };
+    }
+
     // ── list_knowledge_bases ──
     case "list_knowledge_bases": {
       const filtered = allowedKbIds && allowedKbIds.length > 0

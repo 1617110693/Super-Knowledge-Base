@@ -87,6 +87,10 @@ pub async fn start_parsing(
                 if let Some(ref json) = precise_result.json_content {
                     let _ = file_store.save_mineru_json(&kb_id_clone, &doc_id_clone, json);
                 }
+                // Save content_list.json for direct page_idx-based mapping
+                if let Some(ref content_list) = precise_result.content_list_json {
+                    let _ = file_store.save_content_list_json(&kb_id_clone, &doc_id_clone, content_list);
+                }
                 let _ = file_store.update_document_status(
                     &kb_id_clone,
                     &doc_id_clone,

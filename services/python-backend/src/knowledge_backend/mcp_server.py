@@ -643,6 +643,32 @@ def add_document(
     # Save content_list.json for direct page_idx-based mapping
     if parse_result and parse_result.content_list_json:
         (doc_dir / "content_list.json").write_text(parse_result.content_list_json, encoding="utf-8")
+    # Save extracted images
+    image_descriptions: dict[str, tuple[str, dict]] = {}
+    if parse_result and parse_result.extracted_images and _config.extract_multimodal:
+        img_dir = doc_dir / "images"
+        img_dir.mkdir(exist_ok=True)
+        for fname, data in parse_result.extracted_images.items():
+            (img_dir / fname).write_bytes(data)
+        # Generate VLM descriptions if configured
+        has_vlm = bool(_config.vlm_api_base.strip() and _config.vlm_model.strip())
+        if has_vlm:
+            from .vision import describe_image
+            import httpx
+            http = httpx.Client(timeout=60.0)
+            try:
+                for fname, data in parse_result.extracted_images.items():
+                    fmt = Path(fname).suffix.lstrip(".") or "png"
+                    desc, entity = describe_image(
+                        data, fmt,
+                        vlm_api_base=_config.vlm_api_base,
+                        vlm_api_key=_config.vlm_api_key,
+                        vlm_model=_config.vlm_model,
+                        http=http,
+                    )
+                    image_descriptions[fname] = (desc, entity)
+            finally:
+                http.close()
 
     # Index: chunk + embed with page mapping
     from .page_mapper import PageMapper
@@ -652,11 +678,29 @@ def add_document(
     chunks = chunker.chunk(markdown_content, metadata={"doc_id": doc_id, "doc_name": doc_name},
                            page_mapper=page_mapper)
 
+    # Generate multimodal chunks from content_list.json
+    mm_chunks = []
+    if parse_result and parse_result.content_list_json and _config.extract_multimodal:
+        try:
+            from .page_mapper import extract_multimodal_items
+            from .chunker import multimodal_chunks_from_content_list
+            cl_data = json.loads(parse_result.content_list_json)
+            mm_items = extract_multimodal_items(cl_data)
+            mm_chunks = multimodal_chunks_from_content_list(
+                mm_items,
+                metadata={"doc_id": doc_id, "doc_name": doc_name},
+                image_descriptions=image_descriptions if image_descriptions else None,
+            )
+        except Exception as e:
+            print(f"[mcp] multimodal chunk generation failed: {e}", file=sys.stderr)
+
+    all_chunks = chunks + mm_chunks
+
     embedder = OpenAICompatibleEmbedder(
         _config.embedding_api_base, _config.embedding_api_key, _config.embedding_model,
     )
     try:
-        chunk_texts = [c.content for c in chunks]
+        chunk_texts = [c.content for c in all_chunks]
         vectors = embedder.embed(chunk_texts)
     finally:
         embedder.close()
@@ -676,7 +720,7 @@ def add_document(
             pass
 
         rows = []
-        for i, (chunk, vec) in enumerate(zip(chunks, vectors)):
+        for i, (chunk, vec) in enumerate(zip(all_chunks, vectors)):
             meta = chunk.metadata if isinstance(chunk.metadata, dict) else {}
             rows.append({
                 "chunk_id": f"{doc_id}-chunk-{i}",
@@ -694,12 +738,14 @@ def add_document(
     finally:
         db.close()
 
+    chunk_count = len(all_chunks)
+
     # Only write metadata AFTER successful indexing — prevents orphaned docs
     meta = {
         "id": doc_id, "kb_id": kb_id, "name": doc_name,
         "file_type": file_type, "file_size": len(markdown_content.encode("utf-8")),
         "parse_status": "done", "parse_error": None,
-        "chunk_count": len(chunks), "embedding_model": _config.embedding_model,
+        "chunk_count": chunk_count, "embedding_model": _config.embedding_model,
         "created_at": now, "updated_at": now,
     }
     (doc_dir / "metadata.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")

@@ -584,6 +584,34 @@ export function SettingsPanel() {
           ))}
         </section>
 
+        {/* VLM for Image Descriptions */}
+        <section className="mb-8">
+          <h3 className="text-lg font-semibold mb-4 border-b pb-2">{t("settings.vlm")}</h3>
+          <p className="text-xs text-muted-foreground mb-4">{t("settings.vlmHint")}</p>
+          {[
+            { l: t("settings.apiBase"), k: "vlm_api_base", ph: "https://api.openai.com/v1" },
+            { l: t("settings.apiKey"), k: "vlm_api_key", ph: "" },
+            { l: t("settings.model"), k: "vlm_model", ph: "gpt-4o" },
+          ].map(({ l, k, ph }) => (
+            <div key={k} className="mb-3">
+              <label className="block text-sm font-medium mb-1">{l}</label>
+              <input type={k.includes("key") ? "password" : "text"}
+                value={(form as any)[k] || ""}
+                onChange={(e) => update(k as any, e.target.value)}
+                placeholder={ph}
+                className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+            </div>
+          ))}
+          <div className="flex items-center justify-between mt-4">
+            <span className="text-sm">{t("settings.extractMultimodal")}</span>
+            <button onClick={() => update("extract_multimodal", !form.extract_multimodal)}
+              className={`relative w-10 h-5 rounded-full transition-colors ${form.extract_multimodal ? "bg-primary" : "bg-gray-300"}`}>
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${form.extract_multimodal ? "left-5" : "left-0.5"}`} />
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">{t("settings.extractMultimodalHint")}</p>
+        </section>
+
         </div>
         {/* ── Chat ── */}
         <div id="settings-section-chat">

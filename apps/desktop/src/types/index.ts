@@ -78,6 +78,7 @@ export interface NeighborChunk {
   page_number?: number;
   page_start?: number;
   page_end?: number;
+  content_type?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -93,6 +94,7 @@ export interface SearchResult {
   doc_name: string;
   content: string;
   score: number;
+  content_type?: string;
   page_start?: number;
   page_end?: number;
   metadata: {
@@ -100,6 +102,7 @@ export interface SearchResult {
     page_start?: number;
     page_end?: number;
     chunk_index?: number;
+    content_type?: string;
     [key: string]: unknown;
   };
   context?: ChunkContext;
@@ -144,6 +147,10 @@ export interface AppSettings {
   llm_api_base: string;
   llm_api_key: string;
   llm_model: string;
+  vlm_api_base: string;
+  vlm_api_key: string;
+  vlm_model: string;
+  extract_multimodal: boolean;
   chunk_strategy: "fixed" | "semantic" | "recursive";
   chunk_size: number;
   chunk_overlap: number;
@@ -174,6 +181,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   llm_api_base: "https://api.openai.com/v1",
   llm_api_key: "",
   llm_model: "gpt-4o-mini",
+  vlm_api_base: "",
+  vlm_api_key: "",
+  vlm_model: "",
+  extract_multimodal: true,
   chunk_strategy: "recursive",
   chunk_size: 512,
   chunk_overlap: 50,

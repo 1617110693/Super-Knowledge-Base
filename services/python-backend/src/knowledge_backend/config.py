@@ -40,6 +40,14 @@ class BackendConfig(BaseSettings):
     chunk_size: int = 512
     chunk_overlap: int = 50
 
+    # Multimodal processing
+    extract_multimodal: bool = True
+
+    # VLM (Vision Language Model) for image descriptions
+    vlm_api_base: str = ""
+    vlm_api_key: str = ""
+    vlm_model: str = ""
+
     class Config:
         env_prefix = ""
         env_file = ".env"

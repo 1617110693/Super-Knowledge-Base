@@ -285,6 +285,7 @@ class LanceDBManager:
             # Convert to 0–1 similarity: (2.0 - distance) / 2.0
             distance = float(r.get("_distance", 0))
             score = (2.0 - distance) / 2.0
+            ctype = metadata.get("content_type", "text")
             formatted.append(
                 {
                     "chunk_id": r.get("chunk_id", ""),
@@ -296,12 +297,18 @@ class LanceDBManager:
                     "page_number": metadata.get("page", 0),
                     "page_start": metadata.get("page_start", 0),
                     "page_end": metadata.get("page_end", 0),
+                    "content_type": ctype,
                     "score": score,
                     "metadata": metadata,
                 }
             )
-        # Post-filter: remove parsing artifact chunks (< 20 meaningful chars like "$$")
-        return [r for r in formatted if len(r["content"].strip()) >= 20]
+        # Post-filter: remove parsing artifact chunks.
+        # Non-text chunks (image/table/equation) may have short content
+        # so we only apply the min-length check to text chunks.
+        return [
+            r for r in formatted
+            if r["content_type"] != "text" or len(r["content"].strip()) >= 20
+        ]
 
     def enrich_with_context(
         self,

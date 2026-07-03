@@ -385,3 +385,58 @@ class RecursiveChunker(Chunker):
         if current.strip():
             idx = self._split_text(current, list(separators), meta, idx, chunks)
         return idx
+
+
+def multimodal_chunks_from_content_list(
+    multimodal_items: list[dict],
+    metadata: dict,
+    *,
+    image_descriptions: dict[str, tuple[str, dict]] | None = None,
+) -> list:
+    """Generate Chunk objects for image/table/equation items.
+
+    Each chunk gets ``content_type`` in its metadata for search filtering.
+    Image descriptions (from VLM) are woven in when available.
+    """
+    chunks = []
+    for i, mi in enumerate(multimodal_items):
+        mtype = mi["type"]
+        page = mi.get("page_idx", 0) + 1  # 1-based
+
+        if mtype == "image":
+            desc_text = ""
+            img_name = mi.get("img_path", "").split("/")[-1] or f"image_{i}"
+            if image_descriptions and img_name in image_descriptions:
+                desc, entity = image_descriptions[img_name]
+                desc_text = desc
+            content = f"[Image: {img_name}]\n{desc_text or mi.get('text', '')}"
+            if page:
+                content += f"\nPage: {page}"
+
+        elif mtype == "table":
+            txt = mi.get("text", "")
+            content = f"[Table]\n{txt}"
+            if page:
+                content += f"\nPage: {page}"
+
+        elif mtype == "equation":
+            txt = mi.get("text", "")
+            content = f"[Equation]\n{txt}"
+            if page:
+                content += f"\nPage: {page}"
+
+        else:
+            content = mi.get("text", "")
+
+        chunks.append(Chunk(
+            content=content,
+            metadata={
+                **metadata,
+                "content_type": mtype,
+                "page": page,
+                "page_start": page,
+                "page_end": page,
+            },
+            chunk_index=-1,  # assigned later
+        ))
+    return chunks

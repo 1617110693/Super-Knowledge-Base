@@ -59,6 +59,9 @@ class ParseResult:
     Each block has ``page_idx``, ``type``, and text content — provides
     direct page-to-block mapping without fingerprint matching.
     Only available from the Precise API."""
+    extracted_images: Optional[dict[str, bytes]] = None
+    """Images extracted from the ZIP (filename → bytes).
+    Only available from the Precise API."""
 
 
 def is_supported(file_path: str | Path) -> bool:
@@ -471,6 +474,9 @@ def _download_and_extract(http: httpx.Client, zip_url: str) -> ParseResult:
     markdown = None
     json_content = None
     content_list_json = None
+    extracted_images: dict[str, bytes] = {}
+
+    _IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".svg"}
 
     with zipfile.ZipFile(BytesIO(data)) as zf:
         for name in zf.namelist():
@@ -490,6 +496,11 @@ def _download_and_extract(http: httpx.Client, zip_url: str) -> ParseResult:
                     # page_idx directly, giving us perfect page mapping
                     # without fingerprint matching.
                     content_list_json = raw
+            elif Path(name).suffix.lower() in _IMG_EXTS:
+                try:
+                    extracted_images[Path(name).name] = zf.read(name)
+                except Exception:
+                    pass
 
     if markdown is None:
         raise MinerUError("full.md not found in result archive")
@@ -498,6 +509,7 @@ def _download_and_extract(http: httpx.Client, zip_url: str) -> ParseResult:
         markdown=markdown,
         json_content=json_content,
         content_list_json=content_list_json,
+        extracted_images=extracted_images if extracted_images else None,
     )
 
 

@@ -47,6 +47,11 @@ export const CHAT_TOOLS: ToolDefinition[] = [
             type: "integer",
             description: "Number of neighboring chunks to include before/after each result (default 0, max 3). Set to 1-2 for more context around each hit.",
           },
+          content_type: {
+            type: "string",
+            enum: ["text", "image", "table", "equation"],
+            description: "Filter by content type. Omit for all. 'image'=figures/charts, 'table'=data tables, 'equation'=formulas.",
+          },
         },
         required: ["query"],
       },

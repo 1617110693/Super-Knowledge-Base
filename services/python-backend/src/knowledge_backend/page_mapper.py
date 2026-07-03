@@ -695,5 +695,76 @@ def _strip_html(html: str) -> str:
     return " ".join(text.split())
 
 
+def extract_multimodal_items(content_list: list) -> list[dict]:
+    """Extract image, table, and equation items from a content_list.json.
+
+    Returns a list of dicts with keys:
+    - type: "image" | "table" | "equation"
+    - item: the original content_list item
+    - text: plain-text representation (table body, latex, etc.)
+    - page_idx: 0-based page index
+    """
+    items: list[dict] = []
+    for item in content_list:
+        if not isinstance(item, dict):
+            continue
+        itype = str(item.get("type") or "").lower()
+        page_idx = item.get("page_idx")
+        if not isinstance(page_idx, int):
+            continue
+
+        if itype == "image" or itype == "picture":
+            caption = ""
+            for key in ("image_caption", "img_caption"):
+                val = item.get(key)
+                if isinstance(val, list):
+                    caption = "; ".join(str(v) for v in val if str(v).strip())
+                elif isinstance(val, str) and val.strip():
+                    caption = val
+            img_path = str(item.get("img_path") or "")
+            items.append({
+                "type": "image",
+                "item": item,
+                "text": caption,
+                "page_idx": page_idx,
+                "img_path": img_path,
+            })
+
+        elif itype == "table":
+            caption = ""
+            for key in ("table_caption",):
+                val = item.get(key)
+                if isinstance(val, list):
+                    caption = "; ".join(str(v) for v in val if str(v).strip())
+                elif isinstance(val, str) and val.strip():
+                    caption = val
+            body = item.get("table_body") or item.get("rows") or ""
+            if isinstance(body, list):
+                # Render grid to markdown table
+                rows = [str(c) for row in body for c in (row if isinstance(row, (list, tuple)) else [row])]
+                body_text = " | ".join(rows)
+            elif isinstance(body, str):
+                body_text = _strip_html(body) if body.strip().startswith("<") else body
+            else:
+                body_text = str(body)
+            items.append({
+                "type": "table",
+                "item": item,
+                "text": f"{caption}\n{body_text}".strip(),
+                "page_idx": page_idx,
+            })
+
+        elif itype == "equation":
+            latex = item.get("latex") or item.get("text") or ""
+            items.append({
+                "type": "equation",
+                "item": item,
+                "text": latex.strip() if isinstance(latex, str) else str(latex),
+                "page_idx": page_idx,
+            })
+
+    return items
+
+
 def _split_paragraphs(text: str) -> List[str]:
     return [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]

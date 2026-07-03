@@ -159,7 +159,7 @@ export function KBSettings() {
               const now = Date.now();
               if (now - lastUpdate < 800) return;
               lastUpdate = now;
-              setIndexing((prev) => ({ ...prev, [doc.id]: { ...prev[doc.id], progress: p, stage: p.stage, current: p.current, total: p.total } as any }));
+              setIndexing((prev) => ({ ...prev, [doc.id]: { percent: p.percent, stage: p.stage, current: p.current, total: p.total } as any }));
             });
             await saveDocumentChunks(kbId, doc.id, result.chunk_count!, result.embedding_model!, result.embedding_dim!);
             useKBStore.setState((s) => ({

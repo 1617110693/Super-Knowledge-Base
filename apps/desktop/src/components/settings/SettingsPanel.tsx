@@ -56,12 +56,55 @@ export function SettingsPanel() {
     }
   }, [settings]);
 
+  const formRef = useRef(form);
+  formRef.current = form; // sync on every render
+
+  const activeElRef = useRef<Element | null>(null);
+
   const handleSave = async () => {
-    await saveSettings(form);
+    // Blur the input that had focus BEFORE the Save button was clicked.
+    // (When clicking Save, the button becomes activeElement before onClick fires.)
+    const el = activeElRef.current;
+    if (el instanceof HTMLElement) el.blur();
+    await new Promise(r => setTimeout(r, 100));
+    await saveSettings(formRef.current);
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
-  const update = (field: keyof AppSettings, value: string | number | boolean) =>
-    setForm((p) => ({ ...p, [field]: value }));
+  const update = (field: keyof AppSettings, value: string | number | boolean) => {
+    const next = { ...formRef.current, [field]: value };
+    formRef.current = next; // immediate — doesn't wait for re-render
+    setForm(next);
+  };
+
+  // Uncontrolled input helper — avoids re-renders (and scroll jumps) on every keystroke.
+  // Syncs to form state via onBlur.  handleSave blurs before reading, so values are never lost.
+  function StableInput({ field, type, placeholder, className, min, max }: {
+    field: keyof AppSettings; type?: string; placeholder?: string; className?: string; min?: number; max?: number;
+  }) {
+    const v = (form as any)[field];
+    const ref = useRef<HTMLInputElement>(null);
+    // Sync external form changes back to DOM (e.g. after loadSettings)
+    useEffect(() => {
+      const el = ref.current;
+      if (el && document.activeElement !== el) {
+        const next = v != null ? String(v) : "";
+        if (el.value !== next) el.value = next;
+      }
+    }, [v]);
+    return (
+      <input ref={ref} type={type || "text"} defaultValue={v ?? ""}
+        placeholder={placeholder} min={min} max={max}
+        onBlur={(e) => {
+          const raw = e.target.value;
+          if (type === "number") {
+            const n = Number(raw);
+            if (!isNaN(n)) update(field, min != null && max != null ? Math.max(min, Math.min(max, n)) : n);
+          } else update(field, raw);
+        }}
+        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+        className={className || "w-full px-3 py-2 border rounded-md text-sm bg-background"} />
+    );
+  }
 
   // Collapse state
   const [openSections, setOpenSections] = useState<Set<string>>(new Set());
@@ -75,6 +118,10 @@ export function SettingsPanel() {
   function Section({ id, title, hint, children }: { id: string; title: string; hint?: string; children: React.ReactNode }) {
     const open = isOpen(id);
     const handleToggle = () => {
+      // Blur active element BEFORE collapsing — otherwise StableInputs
+      // inside this section are unmounted without ever firing onBlur,
+      // losing typed values.
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       const before = document.getElementById(`section-${id}`)?.getBoundingClientRect().top;
       toggle(id);
       if (before != null) {
@@ -241,11 +288,14 @@ export function SettingsPanel() {
   );
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="px-6 pt-4 pb-2 shrink-0">
-        <div className="flex items-center justify-between mb-3">
+    <div className="flex flex-col">
+      {/* Sticky header with Save button */}
+      <div className="sticky top-0 z-10 bg-background px-6 pt-4 pb-2 border-b">
+        <div className="flex items-center justify-between">
           <h2 className="text-2xl font-bold">{t("settings.title")}</h2>
-          <button onClick={handleSave}
+          <button
+            onMouseDown={() => { activeElRef.current = document.activeElement; }}
+            onClick={handleSave}
             className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:opacity-90">
             {saved ? <CheckCircle className="w-4 h-4" /> : <Save className="w-4 h-4" />}
             {saved ? t("settings.saved") : t("settings.save")}
@@ -253,15 +303,13 @@ export function SettingsPanel() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 pb-6 space-y-3">
+      <div className="px-6 py-4 space-y-3">
 
         {/* Data Directory */}
         <Section id="general" title={t("settings.general")} hint={form.data_dir || "~/.super-knowledge-base"}>
           <label className="block text-sm font-medium">{t("settings.dataDir")}</label>
           <div className="flex gap-2">
-            <input type="text" value={form.data_dir}
-              onChange={(e) => update("data_dir", e.target.value)} placeholder="~/.super-knowledge-base"
-              className="flex-1 px-3 py-2 border rounded-md text-sm bg-background" />
+            <StableInput field="data_dir" placeholder="~/.super-knowledge-base" className="flex-1 px-3 py-2 border rounded-md text-sm bg-background" />
             <button onClick={async () => { try { const { open } = await import("@tauri-apps/plugin-dialog"); const d = await open({ directory: true }); if (d) update("data_dir", d as string); } catch {} }}
               className="px-3 py-2 border rounded-md hover:bg-muted"><FolderOpen className="w-4 h-4" /></button>
             <button onClick={() => update("data_dir", "")} disabled={!form.data_dir}
@@ -274,9 +322,7 @@ export function SettingsPanel() {
         <Section id="mineru" title={t("settings.mineru")} hint={form.mineru_token ? "Token configured" : ""}>
           <div>
             <label className="block text-sm font-medium mb-1">{t("settings.mineruToken")}</label>
-            <input type="password" value={form.mineru_token}
-              onChange={(e) => update("mineru_token", e.target.value)}
-              className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+            <StableInput field="mineru_token" type="password" />
           </div>
           <p className="text-xs text-muted-foreground">
             {t("settings.mineruHint")}: <a href="https://mineru.net/apiManage/docs" target="_blank" className="text-primary underline">MinerU API</a>
@@ -292,8 +338,7 @@ export function SettingsPanel() {
               <div>
                 <label className="block text-xs font-medium mb-1">{t("settings.modelFile")}</label>
                 <div className="flex gap-2">
-                  <input type="text" value={form.local_embedding_model}
-                    onChange={(e) => update("local_embedding_model", e.target.value)}
+                  <StableInput field="local_embedding_model"
                     placeholder="Qwen3-Embedding-0.6B-Q8_0.gguf"
                     className="flex-1 px-3 py-2 border rounded-md text-sm bg-background" />
                   <button onClick={async () => { try { const { open } = await import("@tauri-apps/plugin-dialog"); const f = await open({ filters: [{ name: "GGUF", extensions: ["gguf"] }] }); if (f) update("local_embedding_model", f as string); } catch {} }}
@@ -321,9 +366,8 @@ export function SettingsPanel() {
               ].map(({ l, k, ph }) => (
                 <div key={k}>
                   <label className="block text-sm font-medium mb-1">{l}</label>
-                  <input type={k.includes("key") ? "password" : "text"} value={(form as any)[k]}
-                    onChange={(e) => update(k as keyof AppSettings, e.target.value)} placeholder={ph}
-                    className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+                  <StableInput field={k as keyof AppSettings}
+                    type={k.includes("key") ? "password" : "text"} placeholder={ph} />
                 </div>
               ))}
               <button onClick={testEmbed} disabled={testingEmbedding || !pythonRunning}
@@ -350,8 +394,8 @@ export function SettingsPanel() {
               <div>
                 <label className="block text-xs font-medium mb-1">{t("settings.modelFile")}</label>
                 <div className="flex gap-2">
-                  <input type="text" value={form.local_rerank_model}
-                    onChange={(e) => update("local_rerank_model", e.target.value)} placeholder="qwen3-reranker-0.6b-q8_0.gguf"
+                  <StableInput field="local_rerank_model"
+                    placeholder="qwen3-reranker-0.6b-q8_0.gguf"
                     className="flex-1 px-3 py-2 border rounded-md text-sm bg-background" />
                   <button onClick={async () => { try { const { open } = await import("@tauri-apps/plugin-dialog"); const f = await open({ filters: [{ name: "GGUF", extensions: ["gguf"] }] }); if (f) update("local_rerank_model", f as string); } catch {} }}
                     className="px-3 py-2 border rounded-md hover:bg-muted"><FolderOpen className="w-4 h-4" /></button>
@@ -378,9 +422,8 @@ export function SettingsPanel() {
               ].map(({ l, k, ph }) => (
                 <div key={k}>
                   <label className="block text-sm font-medium mb-1">{l}</label>
-                  <input type={k.includes("key") ? "password" : "text"} value={(form as any)[k]}
-                    onChange={(e) => update(k as keyof AppSettings, e.target.value)} placeholder={ph}
-                    className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+                  <StableInput field={k as keyof AppSettings}
+                    type={k.includes("key") ? "password" : "text"} placeholder={ph} />
                 </div>
               ))}
               <button onClick={testRnk} disabled={testingRerank || !pythonRunning}
@@ -435,7 +478,7 @@ export function SettingsPanel() {
               ].map(({ l, k, ph }) => (
                 <div key={k}>
                   <label className="block text-xs font-medium mb-1">{l}</label>
-                  <input type="number" value={(form as any)[k] ?? ph} onChange={(e) => update(k as any, Number(e.target.value))} placeholder={ph}
+                  <StableInput field={k as keyof AppSettings} type="number" placeholder={ph}
                     className="w-full px-2 py-1.5 border rounded-md text-xs bg-background" />
                 </div>
               ))}
@@ -460,6 +503,14 @@ export function SettingsPanel() {
           ))}
           <Toggle field="vlm_enabled" label={t("settings.vlmEnabled")} />
           <p className="text-xs text-muted-foreground">{t("settings.vlmEnabledHint")}</p>
+          <div>
+            <label className="block text-sm font-medium mb-1">{t("settings.vlmConcurrency")}</label>
+            <input type="number" min={1} max={20} defaultValue={form.vlm_concurrency || 5}
+              onBlur={(e) => update("vlm_concurrency", Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              className="w-24 px-3 py-2 border rounded-md text-sm bg-background" />
+            <p className="text-xs text-muted-foreground mt-1">{t("settings.vlmConcurrencyHint")}</p>
+          </div>
           <Toggle field="extract_multimodal" label={t("settings.extractMultimodal")} />
           <p className="text-xs text-muted-foreground">{t("settings.extractMultimodalHint")}</p>
           <button onClick={handleTestVLM} disabled={testingVLM || !form.vlm_api_base || !form.vlm_model}
@@ -488,15 +539,11 @@ export function SettingsPanel() {
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">{t("settings.chunkSize")}</label>
-            <input type="number" value={form.chunk_size}
-              onChange={(e) => update("chunk_size", parseInt(e.target.value) || 512)}
-              className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+            <StableInput field="chunk_size" type="number" />
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">{t("settings.chunkOverlap")}</label>
-            <input type="number" value={form.chunk_overlap}
-              onChange={(e) => update("chunk_overlap", parseInt(e.target.value) || 50)}
-              className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+            <StableInput field="chunk_overlap" type="number" />
           </div>
         </Section>
 
@@ -512,9 +559,7 @@ export function SettingsPanel() {
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">{t("settings.port")}</label>
-            <input type="number" value={form.python_port}
-              onChange={(e) => update("python_port", parseInt(e.target.value) || 17390)}
-              className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+            <StableInput field="python_port" type="number" />
           </div>
         </Section>
 

@@ -135,51 +135,76 @@ def _run_index(req: "IndexRequest", task_id: str):
                 if has_vlm and image_count > 0:
                     from ..vision import describe_image
                     import httpx
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
                     img_dir = doc_dir / "images"
-                    # Load existing descriptions so we can skip already-processed images on re-index
                     cached_meta = _load_image_meta(doc_dir)
                     cached_count = 0
-                    http = httpx.Client(timeout=60.0)
                     vlm_done = 0
-                    try:
-                        for mi in mm_items:
-                            if mi["type"] != "image":
-                                continue
-                            img_name = mi.get("img_path", "").split("/")[-1]
-                            if not img_name:
-                                continue
-                            img_file = img_dir / img_name
-                            if not img_file.exists():
-                                continue
-                            # Reuse cached description if valid (survives interrupted indexing)
-                            if _is_valid_description(cached_meta.get(img_name, {}).get("description", "")):
-                                cached = cached_meta[img_name]
-                                image_descriptions[img_name] = (cached["description"], cached.get("entity_info", {}))
-                                vlm_done += 1
-                                cached_count += 1
-                                _set_progress(task_id, "vlm", vlm_done, image_count)
-                                continue
-                            fmt = img_file.suffix.lstrip(".") or "png"
-                            try:
-                                desc, entity = describe_image(
-                                    img_file.read_bytes(), fmt,
-                                    vlm_api_base=config.vlm_api_base,
-                                    vlm_api_key=config.vlm_api_key,
-                                    vlm_model=config.vlm_model,
-                                    caption=mi.get("text", ""),
-                                    http=http,
-                                )
-                                image_descriptions[img_name] = (desc, entity)
-                                _save_image_meta(doc_dir, img_name, desc, entity)
-                            except Exception as e:
-                                import sys
-                                print(f"[index] VLM failed for {img_name}: {e}", file=sys.stderr)
-                                caption = mi.get("text", "")
-                                _save_image_meta(doc_dir, img_name, caption or "Image", {"entity_name": img_name, "entity_type": "image", "summary": caption})
+                    vlm_lock = threading.Lock()
+                    new_meta_entries: dict[str, tuple[str, dict]] = {}
+
+                    # Separate cached from pending
+                    pending: list[dict] = []
+                    for mi in mm_items:
+                        if mi["type"] != "image":
+                            continue
+                        img_name = mi.get("img_path", "").split("/")[-1]
+                        if not img_name:
+                            continue
+                        if not (img_dir / img_name).exists():
+                            continue
+                        if _is_valid_description(cached_meta.get(img_name, {}).get("description", "")):
+                            cached = cached_meta[img_name]
+                            image_descriptions[img_name] = (cached["description"], cached.get("entity_info", {}))
                             vlm_done += 1
+                            cached_count += 1
                             _set_progress(task_id, "vlm", vlm_done, image_count)
-                    finally:
-                        http.close()
+                        else:
+                            pending.append(mi)
+
+                    # Process pending images concurrently
+                    if pending:
+                        def _describe_one(mi: dict, api_base: str, api_key: str, model: str) -> tuple[str, str, dict]:
+                            img_name = mi.get("img_path", "").split("/")[-1]
+                            img_file = img_dir / img_name
+                            fmt = img_file.suffix.lstrip(".") or "png"
+                            caption = mi.get("text", "")
+                            with httpx.Client(timeout=60.0) as client:
+                                return describe_image(
+                                    img_file.read_bytes(), fmt,
+                                    vlm_api_base=api_base, vlm_api_key=api_key,
+                                    vlm_model=model, caption=caption, http=client,
+                                )
+
+                        workers = min(max(1, config.vlm_concurrency), len(pending))
+                        with ThreadPoolExecutor(max_workers=workers) as executor:
+                            futures = {
+                                executor.submit(
+                                    _describe_one, mi,
+                                    config.vlm_api_base, config.vlm_api_key, config.vlm_model,
+                                ): mi
+                                for mi in pending
+                            }
+                            for future in as_completed(futures):
+                                mi = futures[future]
+                                img_name = mi.get("img_path", "").split("/")[-1]
+                                try:
+                                    desc, entity = future.result()
+                                except Exception as e:
+                                    import sys
+                                    print(f"[index] VLM failed for {img_name}: {e}", file=sys.stderr)
+                                    caption = mi.get("text", "")
+                                    desc = caption or "Image"
+                                    entity = {"entity_name": img_name, "entity_type": "image", "summary": caption}
+                                image_descriptions[img_name] = (desc, entity)
+                                new_meta_entries[img_name] = (desc, entity)
+                                with vlm_lock:
+                                    vlm_done += 1
+                                    _set_progress(task_id, "vlm", vlm_done, image_count)
+
+                    # Write all descriptions at once
+                    if new_meta_entries:
+                        _save_image_meta_batch(doc_dir, new_meta_entries)
                     if cached_count > 0:
                         import sys
                         print(f"[index] Reused {cached_count} cached VLM descriptions", file=sys.stderr)
@@ -351,7 +376,12 @@ def _is_valid_description(desc: str) -> bool:
 
 
 def _save_image_meta(doc_dir: Path, filename: str, description: str, entity_info: dict):
-    """Save image description to images_meta.json for the UI to read."""
+    """Save a single image description (used by manual re-analyze)."""
+    _save_image_meta_batch(doc_dir, {filename: (description, entity_info)})
+
+
+def _save_image_meta_batch(doc_dir: Path, entries: dict[str, tuple[str, dict]]):
+    """Batch-save image descriptions to images_meta.json (single read + single write)."""
     import json as _json
     meta_path = doc_dir / "images_meta.json"
     meta = {}
@@ -360,11 +390,13 @@ def _save_image_meta(doc_dir: Path, filename: str, description: str, entity_info
             meta = _json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
             pass
-    meta[filename] = {
-        "description": description,
-        "entity_info": entity_info,
-        "generated_at": __import__("datetime").datetime.now().isoformat(),
-    }
+    now = __import__("datetime").datetime.now().isoformat()
+    for filename, (description, entity_info) in entries.items():
+        meta[filename] = {
+            "description": description,
+            "entity_info": entity_info,
+            "generated_at": now,
+        }
     meta_path.write_text(_json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
 

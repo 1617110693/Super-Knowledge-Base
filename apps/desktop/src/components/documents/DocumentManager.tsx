@@ -35,7 +35,6 @@ export function DocumentManager() {
         }
       });
     }, 2000);
-    }, 3000);
     return () => clearInterval(interval);
   }, [documents, kbId]);
 

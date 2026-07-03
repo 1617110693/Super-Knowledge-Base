@@ -11,11 +11,15 @@ A local-first desktop knowledge base for AI agents. Built with **Tauri v2 + Reac
 
 ### Document Management
 - **Multi-format**: PDF, DOCX, PPTX, XLSX, images, HTML, Markdown, plain text
-- **Auto pipeline**: Upload → MinerU Precise parse → chunk → embed → index — fully automatic
+- **Auto pipeline**: Upload → MinerU Precise parse → chunk → embed → index — fully automatic with progress tracking
+- **Progress display**: MinerU parse progress (real-time), indexing progress (chunking → VLM → embedding → storing) with percentage
 - **Split documents**: Large PDFs (>200 pages) auto-split into manageable parts, grouped under parent in file tree
 - **File manager**: Explorer-style with folder tree, rename, move, delete, open original file
-- **Markdown preview**: Full rendering with LaTeX math (KaTeX), HTML table math, section lazy loading, chunk-level scroll navigation with prev/next browsing
+- **Markdown preview**: Full rendering with LaTeX math (KaTeX), HTML table math, section lazy loading
+- **Document TOC**: Collapsible sidebar with heading tree, linear page bar, page jump input — bidirectional scroll sync
+- **Image gallery**: Thumbnail grid/list views, full-size dialog with prev/next, editable AI descriptions, VLM re-analyze
 - **Document editing**: Edit parsed Markdown, auto re-index on save
+- **Smart Back button**: Navigates back to wherever you came from (chat, KB, search)
 
 ### Knowledge Management
 - **Multiple KBs** with independent indexes, dashboard statistics bar
@@ -28,16 +32,20 @@ A local-first desktop knowledge base for AI agents. Built with **Tauri v2 + Reac
 - **Cloud APIs (OpenAI-compatible)**: OpenAI, Ollama, vLLM, LiteLLM, DashScope — any `/v1/embeddings` or `/rerank` endpoint
 - **Local models (llama.cpp)**: Built-in CPU inference via llama-server. Bundled with Qwen3-Embedding & Qwen3-Reranker GGUF models. Users can bring any GGUF file
 - **Independent toggles**: Embedding and rerank can use local or cloud models independently
-- **Test Connection** buttons for both local and cloud models
+- **VLM (Vision Language Model)**: AI-powered image descriptions during indexing with configurable concurrency (1-20), caching to skip already-described images on re-index, and toggle on/off
+- **Test Connection** buttons for Embedding, Rerank, LLM, and VLM
 
 ### LLM Chat (RAG)
 - Built-in chat module with multi-conversation support, persisted to data directory
 - **Tool calling**: LLM actively searches KBs, lists documents, reads content, fetches chunks by index
-- **SSE streaming**: Token-by-token display with 50ms throttle
+- **SSE streaming**: Token-by-token display with throttling for smooth rendering
 - **Multi-KB selection**: Search across multiple KBs with access isolation
 - **Citations**: Inline `[N]` badges and `[M-N]` range badges — click to preview source chunks with prev/next navigation and "View full document" button
+- **Thinking block**: Collapsible reasoning display (DeepSeek-R1 etc.) — auto-scroll during streaming, auto-collapse when done
+- **Image references**: LLM can reference document images — rendered as clickable thumbnails with full-screen preview
 - **Conversation actions**: Rename, delete, regenerate, copy messages
 - Code block copy, math rendering, auto-scroll toggle
+- **Sidebar popover**: When sidebar is collapsed, click Chat icon → floating panel with conversation history + new conversation
 
 ### MCP Server
 18 tools for AI agents — single executable, requires the app running (or minimized to tray):
@@ -61,15 +69,15 @@ A local-first desktop knowledge base for AI agents. Built with **Tauri v2 + Reac
 | `rename_document` | Rename a document |
 | `move_document` | Move a document to a folder path |
 | `list_folders` | List all folder paths in a KB |
-| `clean_orphans` | Clean orphaned data with detailed removed/skipped reports |
+| `clean_orphans` | Clean orphaned data: stale LanceDB tables, docs without content, orphan chunks, kb_id mismatches, .bak files |
 
 ### Desktop UI
 - Custom frameless window with dark/light/system theme
 - English/Chinese localization, built-in user guide
 - **System tray** — close to tray, backend stays alive for MCP
 - **Single instance** — launching the app again brings existing window to front
-- **Collapsible sidebar**: KB list + conversations with independent scrolling
-- Settings with tabbed navigation (General/Models/Chat/Data)
+- **Collapsible sidebar**: KB list + conversations with floating popover when collapsed
+- **Settings**: Collapsible card sections with sticky Save button, test connection buttons for all API configs, clean orphans with detailed feedback
 - **Data management**: KB ZIP import/export, settings.json import/export, one-click orphan cleanup
 
 ## Quick Start

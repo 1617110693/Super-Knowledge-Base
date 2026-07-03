@@ -24,7 +24,7 @@ pub struct AppState {
     pub file_store: FileStore,
     pub python_port: Mutex<u16>,
     pub settings_dir: PathBuf,
-    pub parse_progress: Arc<Mutex<HashMap<String, ParseProgress>>>,
+    pub parse_progress: Arc<Mutex<HashMap<String, Arc<Mutex<ParseProgress>>>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

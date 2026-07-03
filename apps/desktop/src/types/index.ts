@@ -154,6 +154,7 @@ export interface AppSettings {
   vlm_api_key: string;
   vlm_model: string;
   vlm_enabled: boolean;
+  vlm_concurrency: number;
   extract_multimodal: boolean;
   chunk_strategy: "fixed" | "semantic" | "recursive";
   chunk_size: number;
@@ -189,6 +190,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   vlm_api_key: "",
   vlm_model: "",
   vlm_enabled: true,
+  vlm_concurrency: 5,
   extract_multimodal: true,
   chunk_strategy: "recursive",
   chunk_size: 512,

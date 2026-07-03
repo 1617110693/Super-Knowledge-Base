@@ -4,6 +4,12 @@ use std::path::Path;
 fn default_llama_port() -> u16 { 8081 }
 fn default_llama_threads() -> u32 { 4 }
 fn default_true() -> bool { true }
+fn default_vlm_concurrency() -> u32 { 5 }
+fn default_max_tool_rounds() -> u32 { 100 }
+fn default_max_history_messages() -> u32 { 80 }
+fn default_max_search_result_chars() -> u32 { 2000 }
+fn default_max_document_chars() -> u32 { 30000 }
+fn default_max_chunk_chars() -> u32 { 800 }
 
 /// Application settings persisted to disk
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +36,8 @@ pub struct AppSettings {
     pub vlm_model: String,
     #[serde(default = "default_true")]
     pub vlm_enabled: bool,
+    #[serde(default = "default_vlm_concurrency")]
+    pub vlm_concurrency: u32,
     #[serde(default = "default_true")]
     pub extract_multimodal: bool,
     #[serde(default)]
@@ -49,6 +57,16 @@ pub struct AppSettings {
     pub chunk_overlap: u32,
     pub python_port: u16,
     pub theme: String,
+    #[serde(default = "default_max_tool_rounds")]
+    pub max_tool_rounds: u32,
+    #[serde(default = "default_max_history_messages")]
+    pub max_history_messages: u32,
+    #[serde(default = "default_max_search_result_chars")]
+    pub max_search_result_chars: u32,
+    #[serde(default = "default_max_document_chars")]
+    pub max_document_chars: u32,
+    #[serde(default = "default_max_chunk_chars")]
+    pub max_chunk_chars: u32,
 }
 
 impl Default for AppSettings {
@@ -69,6 +87,7 @@ impl Default for AppSettings {
             vlm_api_key: String::new(),
             vlm_model: String::new(),
             vlm_enabled: true,
+            vlm_concurrency: 5,
             extract_multimodal: true,
             use_local_embedding: false,
             local_embedding_model: String::new(),
@@ -81,6 +100,11 @@ impl Default for AppSettings {
             chunk_overlap: 50,
             python_port: 17390,
             theme: "system".to_string(),
+            max_tool_rounds: 100,
+            max_history_messages: 80,
+            max_search_result_chars: 2000,
+            max_document_chars: 30000,
+            max_chunk_chars: 800,
         }
     }
 }

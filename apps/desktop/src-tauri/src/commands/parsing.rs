@@ -87,14 +87,15 @@ pub async fn start_parsing(
         None,
     )?;
 
-    // Create progress shared between command and background task
+    // Create progress shared between command and background task.
+    // Store the SAME Arc in the map so get_parse_progress sees live updates.
     let progress = Arc::new(Mutex::new(ParseProgress {
         percent: 0,
         stage: "starting".into(),
     }));
     {
         let mut map = state.parse_progress.lock().unwrap();
-        map.insert(doc_id.clone(), progress.lock().unwrap().clone());
+        map.insert(doc_id.clone(), progress.clone());
     }
 
     // Spawn parse task (async, runs in background)
@@ -174,7 +175,7 @@ pub async fn get_parse_progress(
         return Ok(None);
     }
     let map = state.parse_progress.lock().unwrap();
-    Ok(map.get(&doc_id).cloned())
+    Ok(map.get(&doc_id).and_then(|arc| Some(arc.lock().unwrap().clone())))
 }
 
 #[tauri::command]

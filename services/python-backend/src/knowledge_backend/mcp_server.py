@@ -672,38 +672,53 @@ def add_document(
         img_dir.mkdir(exist_ok=True)
         for fname, data in parse_result.extracted_images.items():
             (img_dir / fname).write_bytes(data)
-        # Generate VLM descriptions if configured (skip cached)
+        # Generate VLM descriptions if configured (skip cached, process concurrently)
         has_vlm = _config.vlm_enabled and bool(_config.vlm_api_base.strip() and _config.vlm_model.strip())
         if has_vlm:
             from .vision import describe_image
-            from .api.documents import _load_image_meta, _is_valid_description, _save_image_meta
+            from .api.documents import _load_image_meta, _is_valid_description, _save_image_meta_batch
             import httpx
+            from concurrent.futures import ThreadPoolExecutor, as_completed
             cached_meta = _load_image_meta(doc_dir)
-            http = httpx.Client(timeout=60.0)
-            try:
-                for fname, data in parse_result.extracted_images.items():
-                    # Reuse cached description if valid
-                    if _is_valid_description(cached_meta.get(fname, {}).get("description", "")):
-                        image_descriptions[fname] = (
-                            cached_meta[fname]["description"],
-                            cached_meta[fname].get("entity_info", {}),
-                        )
-                        continue
-                    fmt = Path(fname).suffix.lstrip(".") or "png"
-                    desc, entity = describe_image(
-                        data, fmt,
-                        vlm_api_base=_config.vlm_api_base,
-                        vlm_api_key=_config.vlm_api_key,
-                        vlm_model=_config.vlm_model,
-                        http=http,
+            new_meta_entries: dict[str, tuple[str, dict]] = {}
+            pending: list[tuple[str, bytes]] = []
+
+            for fname, data in parse_result.extracted_images.items():
+                if _is_valid_description(cached_meta.get(fname, {}).get("description", "")):
+                    image_descriptions[fname] = (
+                        cached_meta[fname]["description"],
+                        cached_meta[fname].get("entity_info", {}),
                     )
-                    image_descriptions[fname] = (desc, entity)
-                    try:
-                        _save_image_meta(doc_dir, fname, desc, entity)
-                    except Exception:
-                        pass
-            finally:
-                http.close()
+                else:
+                    pending.append((fname, data))
+
+            if pending:
+                def _describe_one(fname: str, data: bytes) -> tuple[str, str, dict]:
+                    fmt = Path(fname).suffix.lstrip(".") or "png"
+                    with httpx.Client(timeout=60.0) as client:
+                        return fname, *describe_image(
+                            data, fmt,
+                            vlm_api_base=_config.vlm_api_base,
+                            vlm_api_key=_config.vlm_api_key,
+                            vlm_model=_config.vlm_model,
+                            http=client,
+                        )
+
+                workers = min(max(1, _config.vlm_concurrency), len(pending))
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    futures = {executor.submit(_describe_one, fname, data): fname for fname, data in pending}
+                    for future in as_completed(futures):
+                        try:
+                            fname, desc, entity = future.result()
+                        except Exception:
+                            fname = futures[future]
+                            desc = "[Image - no description available]"
+                            entity = {"entity_name": fname, "entity_type": "image", "summary": ""}
+                        image_descriptions[fname] = (desc, entity)
+                        new_meta_entries[fname] = (desc, entity)
+
+            if new_meta_entries:
+                _save_image_meta_batch(doc_dir, new_meta_entries)
 
     # Index: chunk + embed with page mapping
     from .page_mapper import PageMapper

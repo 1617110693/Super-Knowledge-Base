@@ -51,6 +51,7 @@ class BackendConfig(BaseSettings):
     vlm_api_key: str = ""
     vlm_model: str = ""
     vlm_enabled: bool = True
+    vlm_concurrency: int = 5
 
     class Config:
         env_prefix = ""

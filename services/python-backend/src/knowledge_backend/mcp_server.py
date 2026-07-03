@@ -11,7 +11,7 @@ Configuration is read from the same settings.json via the backend's config modul
 import json
 import os
 import uuid
-import base64
+
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
@@ -60,6 +60,12 @@ def search_knowledge_base(
     Use this FIRST for any question — it returns the most relevant chunks.
     Set context_window > 0 to also get neighboring chunks for each hit.
     Use doc_id_filter to restrict to a specific document after discovering its relevance.
+
+    Results include content_type (text/image/table/equation). When you see
+    content_type='image' chunks, you MUST call read_document_image to fetch the
+    actual image and display it inline — NEVER invent or guess image URLs.
+    Images are key visual evidence; always include them in your answer when
+    relevant.
 
     After searching, use get_chunk_by_index if you need more adjacent context,
     or get_document_summary to understand the source document's structure.
@@ -129,7 +135,11 @@ def search_all_knowledge_bases(
 
     Use this when you don't know which KB contains relevant information.
     After finding results, use the returned kb_id with search_knowledge_base
-    for deeper search within that KB, or get_document_summary to explore a document."""
+    for deeper search within that KB, or get_document_summary to explore a document.
+
+    Results include content_type (text/image/table/equation). When you see
+    content_type='image' chunks, call read_document_image to display the actual
+    image — NEVER make up image URLs. Always include relevant images in your answer."""
     db = _get_db()
     try:
         embedder = OpenAICompatibleEmbedder(
@@ -225,7 +235,8 @@ def search_document(
     """Search within a SINGLE document. Use when you already know which document
     contains the answer and want precise results without KB-wide noise.
 
-    This is a focused version of search_knowledge_base scoped to one doc_id."""
+    This is a focused version of search_knowledge_base scoped to one doc_id.
+    Results include content_type — display image chunks with read_document_image."""
     return search_knowledge_base(
         query=query,
         kb_id=kb_id,
@@ -1087,21 +1098,30 @@ def get_chunks_by_page(kb_id: str, doc_id: str, page: int) -> dict:
 
 @mcp.tool
 def read_document_image(kb_id: str, doc_id: str, image_name: str) -> dict:
-    """Read an image file from a document's extracted images.
+    """Read an image from a document and return its absolute file path for display.
 
-    Each document may have images extracted during MinerU parsing. Use this
-    to retrieve the actual image binary when a search result has content_type='image'
-    or when an image chunk references a specific image file.
+    IMAGE WORKFLOW — Follow these steps when you see image chunks in search results:
 
-    Returns the image as a base64-encoded data URI that can be displayed directly.
-    Use this sparingly — only fetch images the user has asked to see."""
+    1. Search results with content_type='image' refer to images. The chunk
+       content looks like: "[Image: abc123.jpg]\\nDescription text..."
+    2. Extract the image filename from the chunk content (e.g. "abc123.jpg").
+    3. Call this tool with the filename to get the absolute path.
+    4. Display the image inline using markdown with the file:// protocol:
+       ![description](file://<absolute_path>)
+
+    When you're not sure which image name to use, call with any name — if it
+    doesn't exist, the response includes available_images for that document.
+
+    IMPORTANT: Always include images in your answer when the user asks about
+    visual content, diagrams, charts, or photos. Images are key information,
+    not optional — they supplement your text answer with visual evidence.
+    NEVER make up or guess image URLs — always use this tool."""
     doc_dir = Path(DATA_DIR) / f"kb_{kb_id}" / "docs" / doc_id / "images"
     if not doc_dir.exists():
         return {"error": f"Document or images directory not found: {doc_id}"}
 
     img_path = doc_dir / image_name
     if not img_path.exists():
-        # List available images for convenience
         available = sorted([
             p.name for p in doc_dir.iterdir()
             if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}
@@ -1120,13 +1140,12 @@ def read_document_image(kb_id: str, doc_id: str, image_name: str) -> dict:
     mime_type = mime_map.get(ext, "application/octet-stream")
 
     try:
-        data = img_path.read_bytes()
-        encoded = base64.b64encode(data).decode("ascii")
+        abs_path = str(img_path.resolve())
         return {
             "name": image_name,
+            "absolute_path": abs_path,
             "mime_type": mime_type,
-            "size_bytes": len(data),
-            "data_uri": f"data:{mime_type};base64,{encoded}",
+            "size_bytes": img_path.stat().st_size,
         }
     except Exception as e:
         return {"error": f"Failed to read image: {e}"}

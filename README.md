@@ -63,7 +63,7 @@ Search results and chunks include `content_type` (`text`, `image`, `table`, `equ
 | `get_document_chunks` | Get document chunks with `limit` param (N=first N, -N=last N, 0=all). Includes `content_type` |
 | `get_chunk_by_index` | Fetch a single chunk by doc_id + chunk_index. Includes `content_type` |
 | `get_chunks_by_page` | Fetch all chunks on a specific page of a document |
-| `read_document_image` | Read an extracted document image (by name) as a base64 data URI for display |
+| `read_document_image` | Read a document's extracted image — returns absolute file path for inline display |
 | `create_knowledge_base` | Create a new KB |
 | `delete_knowledge_base` | Delete a KB and all its data |
 | `rename_knowledge_base` | Rename a KB and update description |

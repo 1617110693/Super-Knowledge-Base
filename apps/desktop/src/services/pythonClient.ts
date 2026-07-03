@@ -199,6 +199,28 @@ export async function testEmbedding(params: {
   });
 }
 
+export async function testLLM(params: {
+  api_base: string;
+  api_key: string;
+  model: string;
+}): Promise<{ valid: boolean; status: string; detail?: string }> {
+  return pythonFetch("/config/validate-llm", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export async function testVLM(params: {
+  api_base: string;
+  api_key: string;
+  model: string;
+}): Promise<{ valid: boolean; status: string; detail?: string }> {
+  return pythonFetch("/config/validate-vlm", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
 export async function testRerank(params: {
   api_base: string;
   api_key: string;

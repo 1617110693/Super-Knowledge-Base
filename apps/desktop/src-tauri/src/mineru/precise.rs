@@ -16,6 +16,10 @@ pub struct PreciseResult {
     /// The content_list.json from the ZIP — each block has page_idx directly,
     /// giving perfect page mapping without fingerprint matching.
     pub content_list_json: Option<String>,
+    /// Images extracted from the ZIP (filename → bytes).
+    pub extracted_images: Vec<(String, Vec<u8>)>,
+    /// Raw ZIP bytes for dev-mode caching.
+    pub raw_zip: Vec<u8>,
 }
 
 /// Parse a document using MinerU's Precise API (v4/extract/task).
@@ -209,6 +213,7 @@ async fn download_and_extract_markdown(
     // Download the ZIP file
     let resp = client.get(zip_url).send().await?;
     let zip_bytes = resp.bytes().await?;
+    let raw_zip = zip_bytes.to_vec(); // clone for caching
 
     // Extract the ZIP in memory — find both full.md and the JSON metadata
     let cursor = std::io::Cursor::new(zip_bytes);
@@ -218,6 +223,7 @@ async fn download_and_extract_markdown(
     let mut markdown: Option<String> = None;
     let mut json_content: Option<String> = None;
     let mut content_list_json: Option<String> = None;
+    let mut extracted_images: Vec<(String, Vec<u8>)> = Vec::new();
 
     eprintln!("[SKB] MinerU ZIP contains {} entries:", archive.len());
     for i in 0..archive.len() {
@@ -259,6 +265,27 @@ async fn download_and_extract_markdown(
                     eprintln!("[SKB]   -> failed to read JSON: {e}");
                 }
             }
+        } else {
+            // Check for image files
+            let lower = name.to_lowercase();
+            let is_img = lower.ends_with(".png") || lower.ends_with(".jpg")
+                || lower.ends_with(".jpeg") || lower.ends_with(".gif")
+                || lower.ends_with(".bmp") || lower.ends_with(".webp");
+            if is_img {
+                match read_zip_bytes(&mut file) {
+                    Ok(data) => {
+                        let fname = std::path::Path::new(&name)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or(name.clone());
+                        eprintln!("[SKB]   -> extracted image: {fname} ({} bytes)", data.len());
+                        extracted_images.push((fname, data));
+                    }
+                    Err(e) => {
+                        eprintln!("[SKB]   -> failed to read image: {e}");
+                    }
+                }
+            }
         }
     }
 
@@ -267,9 +294,87 @@ async fn download_and_extract_markdown(
             markdown: md,
             json_content,
             content_list_json,
+            extracted_images,
+            raw_zip,
         }),
         None => Err(AppError::MinerU(
             "full.md not found in result archive".to_string(),
         )),
+    }
+}
+
+fn read_zip_bytes(file: &mut zip::read::ZipFile) -> Result<Vec<u8>, std::io::Error> {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+/// Parse a local MinerU ZIP bundle (dev-mode replay).
+/// Extracts markdown, JSON, and images directly from the file.
+pub fn parse_local_zip(path: &std::path::Path) -> Result<PreciseResult, AppError> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| AppError::MinerU(format!("Cannot open ZIP: {}", e)))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| AppError::MinerU(format!("Failed to open ZIP: {}", e)))?;
+
+    let mut markdown: Option<String> = None;
+    let mut json_content: Option<String> = None;
+    let mut content_list_json: Option<String> = None;
+    let mut extracted_images: Vec<(String, Vec<u8>)> = Vec::new();
+
+    let zip_data = std::fs::read(path).unwrap_or_default();
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)
+            .map_err(|e| AppError::MinerU(format!("Failed to read ZIP entry: {}", e)))?;
+        let name = file.name().to_string();
+        let name_lower = name.to_lowercase();
+
+        if name_lower.ends_with("full.md") || name_lower == "full.md" {
+            let mut content = String::new();
+            use std::io::Read;
+            file.read_to_string(&mut content)
+                .map_err(|e| AppError::MinerU(format!("Failed to read markdown: {}", e)))?;
+            markdown = Some(content);
+        } else if name_lower.ends_with(".json") {
+            let mut content = String::new();
+            use std::io::Read;
+            match file.read_to_string(&mut content) {
+                Ok(_) => {
+                    if content.contains("\"pdf_info\"") {
+                        json_content = Some(content);
+                    } else if content.contains("\"page_idx\"") && content.contains("\"type\"") {
+                        content_list_json = Some(content);
+                    }
+                }
+                Err(_) => {}
+            }
+        } else {
+            let lower = name.to_lowercase();
+            let is_img = lower.ends_with(".png") || lower.ends_with(".jpg")
+                || lower.ends_with(".jpeg") || lower.ends_with(".gif")
+                || lower.ends_with(".bmp") || lower.ends_with(".webp");
+            if is_img {
+                if let Ok(data) = read_zip_bytes(&mut file) {
+                    let fname = std::path::Path::new(&name)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or(name.clone());
+                    extracted_images.push((fname, data));
+                }
+            }
+        }
+    }
+
+    match markdown {
+        Some(md) => Ok(PreciseResult {
+            markdown: md,
+            json_content,
+            content_list_json,
+            extracted_images,
+            raw_zip: zip_data,
+        }),
+        None => Err(AppError::MinerU("full.md not found in ZIP".to_string())),
     }
 }

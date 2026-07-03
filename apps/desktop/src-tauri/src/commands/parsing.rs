@@ -19,11 +19,16 @@ pub async fn start_parsing(
     let doc_dir = state.file_store.get_doc_dir(&kb_id, &doc_id);
     let ext = doc.file_type;
     let original_path = doc_dir.join(format!("original.{}", ext));
+    let zip_path = doc_dir.join("mineru_bundle.zip");
+
+    // Detect ZIP bundle: prefer mineru_bundle.zip if it exists
+    let is_zip = zip_path.exists();
+    let parse_path = if is_zip { &zip_path } else { &original_path };
 
     // Markdown and plain-text files: skip MinerU, directly use content as parsed result
     let is_text = matches!(ext.as_str(), "md" | "markdown" | "txt");
-    if is_text {
-        let content = std::fs::read_to_string(&original_path)?;
+    if is_text && !is_zip {
+        let content = std::fs::read_to_string(parse_path)?;
         state
             .file_store
             .save_parsed_markdown(&kb_id, &doc_id, &content)?;
@@ -43,25 +48,34 @@ pub async fn start_parsing(
     }
 
     // Always use Precise API (requires token, supports up to 200 MB / 200 pages)
-    let file_size = std::fs::metadata(&original_path)
+    let file_size = std::fs::metadata(parse_path)
         .map(|m| m.len())
         .unwrap_or(0);
 
-    if settings.mineru_token.is_empty() {
-        return Err(AppError::InvalidInput(
-            "MinerU token not configured. Please go to Settings and add your MinerU API token.".to_string(),
-        ));
-    }
-    if file_size > 200 * 1024 * 1024 {
+    // Size check only for MinerU API (ZIP bundles can be larger)
+    if !is_zip && file_size > 200 * 1024 * 1024 {
         return Err(AppError::InvalidInput(format!(
             "File too large: {} bytes. Maximum is 200 MB for Precise mode.",
             file_size
         )));
     }
 
-    let mode = ParseMode::Precise {
-        token: settings.mineru_token.clone(),
-        file_path: original_path,
+    // Token check only for MinerU API
+    if !is_zip && settings.mineru_token.is_empty() {
+        return Err(AppError::InvalidInput(
+            "MinerU token not configured. Please go to Settings and add your MinerU API token.".to_string(),
+        ));
+    }
+
+    let mode = if is_zip {
+        ParseMode::LocalZip {
+            file_path: parse_path.to_path_buf(),
+        }
+    } else {
+        ParseMode::Precise {
+            token: settings.mineru_token.clone(),
+            file_path: parse_path.to_path_buf(),
+        }
     };
 
     // Update document status
@@ -91,6 +105,12 @@ pub async fn start_parsing(
                 if let Some(ref content_list) = precise_result.content_list_json {
                     let _ = file_store.save_content_list_json(&kb_id_clone, &doc_id_clone, content_list);
                 }
+                // Save extracted images
+                if !precise_result.extracted_images.is_empty() {
+                    let _ = file_store.save_images(&kb_id_clone, &doc_id_clone, &precise_result.extracted_images);
+                }
+                // Cache MinerU ZIP for replay
+                let _ = file_store.save_mineru_zip(&kb_id_clone, &doc_id_clone, &precise_result.raw_zip);
                 let _ = file_store.update_document_status(
                     &kb_id_clone,
                     &doc_id_clone,

@@ -253,6 +253,7 @@ export const translations = {
   "settings.testing": { en: "Testing...", "zh-CN": "测试中…" },
   "settings.testSuccess": { en: "Connected — embedding dimension: {dim}", "zh-CN": "连接成功 — 向量维度: {dim}" },
   "settings.testSuccessRerank": { en: "Connected", "zh-CN": "连接成功" },
+  "settings.testSuccessPass": { en: "Connected", "zh-CN": "连接成功" },
   "settings.testFailed": { en: "Connection failed", "zh-CN": "连接失败" },
   "error.search": { en: "Search Error", "zh-CN": "搜索错误" },
   "error.upload": { en: "Upload Error", "zh-CN": "上传错误" },

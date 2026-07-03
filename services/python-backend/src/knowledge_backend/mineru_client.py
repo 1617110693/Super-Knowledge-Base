@@ -33,7 +33,7 @@ POLL_INTERVAL = 3  # seconds between polls
 SUPPORTED_EXTENSIONS = frozenset({
     ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
     ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif",
-    ".html", ".htm",
+    ".html", ".htm", ".zip",
 })
 
 # Model selection by file category (per MinerU API docs)
@@ -62,6 +62,8 @@ class ParseResult:
     extracted_images: Optional[dict[str, bytes]] = None
     """Images extracted from the ZIP (filename → bytes).
     Only available from the Precise API."""
+    raw_zip: Optional[bytes] = None
+    """Raw ZIP bytes (saved for dev mode caching)."""
 
 
 def is_supported(file_path: str | Path) -> bool:
@@ -510,6 +512,7 @@ def _download_and_extract(http: httpx.Client, zip_url: str) -> ParseResult:
         json_content=json_content,
         content_list_json=content_list_json,
         extracted_images=extracted_images if extracted_images else None,
+        raw_zip=data,
     )
 
 

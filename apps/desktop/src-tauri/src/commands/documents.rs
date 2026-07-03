@@ -46,7 +46,7 @@ pub async fn upload_document(
     let supported = [
         "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx",
         "png", "jpg", "jpeg", "jp2", "webp", "gif", "bmp", "html",
-        "md", "markdown", "txt",
+        "md", "markdown", "txt", "zip",
     ];
     if !supported.contains(&extension.as_str()) {
         return Err(AppError::InvalidInput(format!(
@@ -55,10 +55,19 @@ pub async fn upload_document(
         )));
     }
 
-    // Create document entry (main doc keeps the original file; parts created below)
+    // ZIP bundles: use a sensible doc name and save as mineru_bundle.zip
+    let is_zip = extension == "zip";
+    let doc_name = if is_zip {
+        // Strip .zip and assume original was PDF
+        file_name.strip_suffix(".zip").unwrap_or(&file_name).to_string() + ".pdf"
+    } else {
+        file_name.clone()
+    };
+
+    // Create document entry
     let mut doc = state
         .file_store
-        .add_document(&kb_id, file_name.clone(), extension.clone(), file_size, None)?;
+        .add_document(&kb_id, doc_name.clone(), if is_zip { "pdf".to_string() } else { extension.clone() }, file_size, None)?;
 
     // If uploading into a folder, set the path
     if let Some(ref fp) = folder_path {
@@ -67,12 +76,20 @@ pub async fn upload_document(
         }
     }
 
-    // Copy original file to document directory
-    let dest_path = state
-        .file_store
-        .get_doc_dir(&kb_id, &doc.id)
-        .join(format!("original.{}", extension));
+    // Copy file to document directory (ZIP → mineru_bundle.zip, others → original.ext)
+    let dest_name = if is_zip {
+        "mineru_bundle.zip".to_string()
+    } else {
+        format!("original.{}", extension)
+    };
+    let dest_path = state.file_store.get_doc_dir(&kb_id, &doc.id).join(&dest_name);
     std::fs::copy(path, &dest_path)?;
+
+    // For ZIPs: also save as original.pdf for start_parsing compatibility
+    if is_zip {
+        let orig_path = state.file_store.get_doc_dir(&kb_id, &doc.id).join("original.pdf");
+        std::fs::copy(path, &orig_path)?;
+    }
 
     // For PDFs: check if splitting is needed (Precise mode: ≤200 pages, ≤200MB)
     let mut parts = Vec::new();
@@ -240,6 +257,45 @@ pub async fn get_document_content(
     doc_id: String,
 ) -> CommandResult<DocumentContent> {
     state.file_store.get_document_content(&kb_id, &doc_id)
+}
+
+#[tauri::command]
+pub async fn list_document_images(
+    state: State<'_, AppState>,
+    kb_id: String,
+    doc_id: String,
+) -> CommandResult<Vec<String>> {
+    state.file_store.list_document_images(&kb_id, &doc_id)
+}
+
+#[tauri::command]
+pub async fn get_image_meta(
+    state: State<'_, AppState>,
+    kb_id: String,
+    doc_id: String,
+) -> CommandResult<serde_json::Value> {
+    state.file_store.get_image_meta(&kb_id, &doc_id)
+}
+
+#[tauri::command]
+pub async fn save_image_desc(
+    state: State<'_, AppState>,
+    kb_id: String,
+    doc_id: String,
+    filename: String,
+    description: String,
+) -> CommandResult<()> {
+    state.file_store.save_image_desc(&kb_id, &doc_id, &filename, &description)
+}
+
+#[tauri::command]
+pub async fn read_document_image(
+    state: State<'_, AppState>,
+    kb_id: String,
+    doc_id: String,
+    filename: String,
+) -> CommandResult<Vec<u8>> {
+    state.file_store.read_document_image(&kb_id, &doc_id, &filename)
 }
 
 #[tauri::command]
@@ -419,6 +475,18 @@ pub async fn copy_document_to_kb(
     let cl_src = source_doc_dir.join("content_list.json");
     if cl_src.exists() {
         std::fs::copy(&cl_src, target_doc_dir.join("content_list.json"))?;
+    }
+    // Copy extracted images
+    let img_src = source_doc_dir.join("images");
+    if img_src.exists() && img_src.is_dir() {
+        let img_dst = target_doc_dir.join("images");
+        std::fs::create_dir_all(&img_dst)?;
+        for entry in std::fs::read_dir(&img_src)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                std::fs::copy(entry.path(), img_dst.join(entry.file_name()))?;
+            }
+        }
     }
 
     // Update path and status

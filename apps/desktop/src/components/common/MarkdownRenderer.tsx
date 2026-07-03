@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -7,6 +7,7 @@ import rehypeRaw from "rehype-raw";
 import "katex/dist/katex.min.css";
 import { open } from "@tauri-apps/plugin-shell";
 import { Check, Copy } from "lucide-react";
+import { readDocumentImage } from "../../services/tauriBridge";
 
 // ── Math inside HTML (e.g. <td>$x$</td>) ──
 function rehypeMathInHtml() {
@@ -76,6 +77,8 @@ interface Props {
   className?: string;
   sources?: any[];
   onSourceClick?: (source: any) => void;
+  imgKbId?: string;
+  imgDocId?: string;
 }
 
 function CodeBlock({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -92,7 +95,37 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
   );
 }
 
-export function MarkdownRenderer({ children, className, sources, onSourceClick }: Props) {
+// Per-render image cache: filename → data URL
+const _imgCache = new Map<string, string>();
+
+function InlineImg({ src, alt, imgKbId, imgDocId }: { src?: string; alt?: string; imgKbId?: string; imgDocId?: string }) {
+  const [dataUrl, setDataUrl] = useState(() => _imgCache.get(src || "") || "");
+  const pendingRef = useRef(false);
+
+  useEffect(() => {
+    if (!src || !imgKbId || !imgDocId) return;
+    if (dataUrl || pendingRef.current) return;
+    // Only intercept relative image paths (from MinerU markdown)
+    const name = src.replace(/\\/g, "/").split("/").pop() || src;
+    if (name === src && !src.startsWith("images/")) return; // not a doc image
+    pendingRef.current = true;
+    (async () => {
+      try {
+        const bytes = await readDocumentImage(imgKbId!, imgDocId!, name);
+        const blob = new Blob([new Uint8Array(bytes)]);
+        const url = URL.createObjectURL(blob);
+        _imgCache.set(src, url);
+        setDataUrl(url);
+      } catch {
+        // Image not found in doc — fall back to original src
+      }
+    })();
+  }, [src, imgKbId, imgDocId, dataUrl]);
+
+  return <img src={dataUrl || src} alt={alt || ""} className="max-w-full h-auto rounded-lg my-2" loading="lazy" />;
+}
+
+export function MarkdownRenderer({ children, className, sources, onSourceClick, imgKbId, imgDocId }: Props) {
   const count = sources?.length || 0;
   const content = count ? embedBadges(children, count) : children;
 
@@ -131,6 +164,9 @@ export function MarkdownRenderer({ children, className, sources, onSourceClick }
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeRaw, rehypeMathInHtml, [rehypeKatex, { strict: false, throwOnError: false }]]}
         components={{
+          img({ src, alt }: any) {
+            return <InlineImg src={src} alt={alt} imgKbId={imgKbId} imgDocId={imgDocId} />;
+          },
           a({ href, children: aChildren, ...props }) {
             if (href && /^https?:\/\//.test(href)) {
               return <a href={href} onClick={e => { e.preventDefault(); open(href!); }}

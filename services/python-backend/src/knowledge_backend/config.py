@@ -43,6 +43,9 @@ class BackendConfig(BaseSettings):
     # Multimodal processing
     extract_multimodal: bool = True
 
+    # Dev mode: enable developer endpoints (ZIP save/load for testing)
+    dev_mode: bool = False
+
     # VLM (Vision Language Model) for image descriptions
     vlm_api_base: str = ""
     vlm_api_key: str = ""

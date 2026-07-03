@@ -713,9 +713,10 @@ def extract_multimodal_items(content_list: list) -> list[dict]:
         if not isinstance(page_idx, int):
             continue
 
-        if itype == "image" or itype == "picture":
+        # image, picture, chart are all visual content — treat as images
+        if itype in ("image", "picture", "chart"):
             caption = ""
-            for key in ("image_caption", "img_caption"):
+            for key in ("image_caption", "img_caption", "chart_caption"):
                 val = item.get(key)
                 if isinstance(val, list):
                     caption = "; ".join(str(v) for v in val if str(v).strip())

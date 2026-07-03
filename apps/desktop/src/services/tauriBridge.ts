@@ -171,6 +171,22 @@ export async function saveDocumentContent(
   return invoke("save_document_content", { kbId, docId, content });
 }
 
+export async function listDocumentImages(kbId: string, docId: string): Promise<string[]> {
+  return invoke("list_document_images", { kbId, docId });
+}
+
+export async function readDocumentImage(kbId: string, docId: string, filename: string): Promise<number[]> {
+  return invoke("read_document_image", { kbId, docId, filename });
+}
+
+export async function getImageMeta(kbId: string, docId: string): Promise<Record<string, any>> {
+  return invoke("get_image_meta", { kbId, docId });
+}
+
+export async function saveImageDesc(kbId: string, docId: string, filename: string, description: string): Promise<void> {
+  return invoke("save_image_desc", { kbId, docId, filename, description });
+}
+
 // ── Parsing ──
 
 export async function startParsing(

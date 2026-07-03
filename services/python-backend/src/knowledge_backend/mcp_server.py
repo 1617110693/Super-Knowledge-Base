@@ -614,21 +614,36 @@ def add_document(
             return {"error": f"File not found: {file_path}"}
         doc_name = fp.name
         file_type = fp.suffix.lstrip(".").lower()
-        if not is_supported(fp):
+        if not is_supported(fp) and file_type != "zip":
             return {"error": f"Unsupported file type: {file_type}"}
 
-        # Parse with MinerU
-        file_size = fp.stat().st_size
-        parse_result = None
-        try:
-            if file_size <= 10 * 1024 * 1024 and not _config.mineru_token:
-                parse_result = parse_document_agent(str(fp))
-            elif _config.mineru_token:
-                parse_result = parse_document(str(fp), _config.mineru_token)
-            else:
-                return {"error": "File too large for agent mode and no MinerU token configured"}
-        except MinerUError as e:
-            return {"error": f"MinerU parse failed: {e}"}
+        # If it's a MinerU ZIP bundle (dev mode replay), extract directly
+        if file_type == "zip":
+            from .mineru_client import _download_and_extract
+            import httpx
+            try:
+                with httpx.Client(timeout=60.0) as _http:
+                    parse_result = _download_and_extract(_http, f"file:///{fp.as_posix()}")
+                    # _download_and_extract tries HTTP, which won't work for local files.
+                    # Fallback: extract the ZIP ourselves
+                    parse_result = _extract_local_zip(fp)
+                doc_name = fp.stem + ".pdf"  # original was PDF
+                file_type = "pdf"
+            except Exception as e:
+                return {"error": f"ZIP extraction failed: {e}"}
+        else:
+            # Parse with MinerU
+            file_size = fp.stat().st_size
+            parse_result = None
+            try:
+                if file_size <= 10 * 1024 * 1024 and not _config.mineru_token:
+                    parse_result = parse_document_agent(str(fp))
+                elif _config.mineru_token:
+                    parse_result = parse_document(str(fp), _config.mineru_token)
+                else:
+                    return {"error": "File too large for agent mode and no MinerU token configured"}
+            except MinerUError as e:
+                return {"error": f"MinerU parse failed: {e}"}
 
         markdown_content = parse_result.markdown
 
@@ -636,6 +651,13 @@ def add_document(
     doc_dir = Path(DATA_DIR) / f"kb_{kb_id}" / "docs" / doc_id
     doc_dir.mkdir(parents=True, exist_ok=True)
     (doc_dir / "full.md").write_text(markdown_content, encoding="utf-8")
+
+    # Save MinerU ZIP for dev mode caching/replay
+    if _config.dev_mode and parse_result and parse_result.raw_zip:
+        try:
+            (doc_dir / "mineru_bundle.zip").write_bytes(parse_result.raw_zip)
+        except Exception:
+            pass
 
     # Save MinerU JSON for page number tracking
     if parse_result and parse_result.json_content:
@@ -667,6 +689,12 @@ def add_document(
                         http=http,
                     )
                     image_descriptions[fname] = (desc, entity)
+                    # Also save to images_meta.json for UI
+                    try:
+                        from .api.documents import _save_image_meta
+                        _save_image_meta(doc_dir, fname, desc, entity)
+                    except Exception:
+                        pass
             finally:
                 http.close()
 
@@ -754,6 +782,51 @@ def add_document(
     _update_kb_counts(kb_id)
 
     return {"doc_id": doc_id, "name": doc_name, "chunk_count": len(chunks), "status": "indexed"}
+
+
+def _extract_local_zip(zip_path: Path) -> "ParseResult":
+    """Extract a local MinerU ZIP bundle (dev mode replay)."""
+    import zipfile
+    from io import BytesIO
+    from .mineru_client import ParseResult
+
+    data = zip_path.read_bytes()
+    markdown = None
+    json_content = None
+    content_list_json = None
+    extracted_images: dict[str, bytes] = {}
+    _IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".svg"}
+
+    with zipfile.ZipFile(BytesIO(data)) as zf:
+        for name in zf.namelist():
+            nl = name.lower()
+            if nl.endswith("full.md") or nl == "full.md":
+                markdown = zf.read(name).decode("utf-8")
+            elif nl.endswith(".json"):
+                try:
+                    raw = zf.read(name).decode("utf-8")
+                except Exception:
+                    continue
+                if '"pdf_info"' in raw:
+                    json_content = raw
+                elif '"page_idx"' in raw and '"type"' in raw:
+                    content_list_json = raw
+            elif Path(name).suffix.lower() in _IMG_EXTS:
+                try:
+                    extracted_images[Path(name).name] = zf.read(name)
+                except Exception:
+                    pass
+
+    if markdown is None:
+        raise ValueError("full.md not found in ZIP")
+
+    return ParseResult(
+        markdown=markdown,
+        json_content=json_content,
+        content_list_json=content_list_json,
+        extracted_images=extracted_images or None,
+        raw_zip=data,
+    )
 
 
 def _update_kb_counts(kb_id: str):

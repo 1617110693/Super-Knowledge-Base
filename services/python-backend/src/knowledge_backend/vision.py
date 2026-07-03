@@ -5,26 +5,18 @@ rich text descriptions of images extracted from documents.
 """
 
 import base64
-import json
+import re
 import sys
 from typing import Optional
 
 import httpx
 
-VISION_PROMPT = """You are an expert image analyst. Describe this image in detail, focusing on:
-1. What is depicted (charts, diagrams, photos, etc.)
+VISION_PROMPT = """You are an expert image analyst. Describe this image in detail, covering:
+1. What is depicted (chart, diagram, photo, table, formula, etc.)
 2. Key information and data visible in the image
-3. How it relates to its surrounding context (if provided)
+3. How it relates to its surrounding context (if provided below)
 
-Return a JSON object with:
-{
-  "detailed_description": "comprehensive description of the image",
-  "entity_info": {
-    "entity_name": "descriptive name for this image",
-    "entity_type": "image",
-    "summary": "one-sentence summary"
-  }
-}"""
+Return ONLY the description text — no JSON, no markdown fences, no extra commentary."""
 
 
 def _has_vlm_config(vlm_api_base: str, vlm_api_key: str, vlm_model: str) -> bool:
@@ -53,7 +45,6 @@ def describe_image(
     b64 = base64.b64encode(image_bytes).decode("ascii")
     mime = f"image/{image_format}" if image_format else "image/png"
 
-    # Build user prompt with optional context
     context_parts = []
     if caption:
         context_parts.append(f"Caption: {caption}")
@@ -90,23 +81,14 @@ def describe_image(
         result = resp.json()
         text = result["choices"][0]["message"]["content"]
 
-        # Parse JSON from LLM response
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            # Try to extract JSON from markdown code blocks
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0]
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0]
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError:
-                return text, _make_entity(caption)
+        # Strip markdown fences if present, then use the text directly
+        desc = re.sub(r'^```(?:json)?\s*\n?', '', text.strip())
+        desc = re.sub(r'\n?```\s*$', '', desc)
+        desc = desc.strip()
 
-        desc = parsed.get("detailed_description", text)
-        entity = parsed.get("entity_info", _make_entity(caption))
-        return desc, entity
+        if desc:
+            return desc, _make_entity(caption)
+        return _fallback_description(caption)
 
     except Exception as e:
         print(f"[vision] VLM call failed: {e}", file=sys.stderr)
@@ -117,7 +99,7 @@ def describe_image(
 
 
 def _fallback_description(caption: str) -> tuple[str, dict]:
-    desc = caption.strip() if caption else "No description available."
+    desc = caption.strip() if caption else "[Image - no description available]"
     return desc, _make_entity(caption)
 
 

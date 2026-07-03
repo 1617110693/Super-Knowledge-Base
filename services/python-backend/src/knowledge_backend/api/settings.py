@@ -155,3 +155,35 @@ def validate_rerank(req: ValidateRerankRequest):
             }
     except Exception as e:
         return {"valid": False, "status": "error", "detail": str(e)}
+
+
+@router.post("/config/validate-vlm")
+def validate_vlm(req: ValidateEmbeddingRequest):
+    """Test VLM API connectivity with a minimal chat request."""
+    base = req.api_base.rstrip("/")
+    headers = {"Authorization": f"Bearer {req.api_key}", "Content-Type": "application/json"}
+    body = {"model": req.model, "messages": [{"role": "user", "content": "Reply: ok"}], "max_tokens": 5}
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(f"{base}/chat/completions", json=body, headers=headers)
+            if resp.status_code == 200:
+                return {"valid": True, "status": "ok"}
+            return {"valid": False, "status": f"HTTP {resp.status_code}", "detail": resp.text[:300]}
+    except Exception as e:
+        return {"valid": False, "status": "error", "detail": str(e)}
+
+
+@router.post("/config/validate-llm")
+def validate_llm(req: ValidateEmbeddingRequest):
+    """Test LLM (Chat) API connectivity."""
+    base = req.api_base.rstrip("/")
+    headers = {"Authorization": f"Bearer {req.api_key}", "Content-Type": "application/json"}
+    body = {"model": req.model, "messages": [{"role": "user", "content": "Reply: ok"}], "max_tokens": 5}
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(f"{base}/chat/completions", json=body, headers=headers)
+            if resp.status_code == 200:
+                return {"valid": True, "status": "ok"}
+            return {"valid": False, "status": f"HTTP {resp.status_code}", "detail": resp.text[:300]}
+    except Exception as e:
+        return {"valid": False, "status": "error", "detail": str(e)}

@@ -12,6 +12,10 @@ pub enum ParseMode {
         token: String,
         file_path: PathBuf,
     },
+    /// Local ZIP mode: extracts a pre-downloaded MinerU bundle directly
+    LocalZip {
+        file_path: PathBuf,
+    },
 }
 
 /// Parse a document using the MinerU Precise API.
@@ -20,6 +24,9 @@ pub async fn parse_document(mode: ParseMode) -> Result<PreciseResult, AppError> 
     match mode {
         ParseMode::Precise { token, file_path } => {
             precise::parse_with_precise(&token, &file_path).await
+        }
+        ParseMode::LocalZip { file_path } => {
+            precise::parse_local_zip(&file_path)
         }
     }
 }

@@ -3,8 +3,10 @@ import { useParams, useNavigate } from "react-router-dom";
 import { MarkdownRenderer } from "../common/MarkdownRenderer";
 import { getDocumentContent, saveDocumentContent, saveDocumentChunks } from "../../services/tauriBridge";
 import { indexDocument, getChunkRange, searchDocument } from "../../services/pythonClient";
+import { listDocumentImages, readDocumentImage } from "../../services/tauriBridge";
 import { useI18n } from "../../i18n";
-import { FileText, Loader2, ArrowLeft, Pencil, Check, X, Search, XCircle, ChevronRight, List, ChevronDown, PanelLeftClose, PanelLeft } from "lucide-react";
+import { FileText, Loader2, ArrowLeft, Pencil, Check, X, Search, XCircle, ChevronRight, List, ChevronDown, PanelLeftClose, PanelLeft, Image as ImageIcon, LayoutGrid, Rows3 } from "lucide-react";
+import { ImageDialog } from "./ImageDialog";
 import type { SearchResult } from "../../types";
 
 /** Split into ~3000-char sections */
@@ -57,7 +59,49 @@ export function DocumentPreview() {
     return v ? parseInt(v) : null;
   });
   const [scrollTarget, setScrollTarget] = useState<{ text: string; pos: number } | null>(null);
+  const [imageNames, setImageNames] = useState<string[]>([]);
+  const [imageSrcs, setImageSrcs] = useState<Map<string, string>>(new Map());
+  const [imagesOpen, setImagesOpen] = useState(false);
+  const [galleryMode, setGalleryMode] = useState<"grid" | "list">("grid");
+  const [dialogIdx, setDialogIdx] = useState<number | null>(null);
   const docScrollRef = useRef<HTMLDivElement>(null);
+
+  // Load document images
+  useEffect(() => {
+    if (!kbId || !docId) return;
+    (async () => {
+      try {
+        const names = await listDocumentImages(kbId, docId);
+        setImageNames(names);
+        if (names.length > 0) {
+          const srcs = new Map<string, string>();
+          for (const name of names.slice(0, 20)) { // limit first load
+            try {
+              const bytes = await readDocumentImage(kbId, docId, name);
+              const blob = new Blob([new Uint8Array(bytes)]);
+              srcs.set(name, URL.createObjectURL(blob));
+            } catch {}
+          }
+          setImageSrcs(srcs);
+        }
+      } catch {}
+    })();
+  }, [kbId, docId]);
+
+  // Load all thumbnails when images panel opens (not lazy)
+  useEffect(() => {
+    if (!imagesOpen || !kbId || !docId) return;
+    (async () => {
+      for (const name of imageNames) {
+        if (imageSrcs.has(name)) continue;
+        try {
+          const bytes = await readDocumentImage(kbId, docId, name);
+          const blob = new Blob([new Uint8Array(bytes)]);
+          setImageSrcs(prev => { const m = new Map(prev); m.set(name, URL.createObjectURL(blob)); return m; });
+        } catch {}
+      }
+    })();
+  }, [imagesOpen, kbId, docId, imageNames]);
 
   useEffect(() => {
     if (!kbId || !docId) return;
@@ -257,6 +301,80 @@ export function DocumentPreview() {
           disabled={saving} />
       ) : (
         <div className="flex gap-3">
+          {/* Sidebar column: DocToc handles its own toggle button.
+              Image toggle sits below it when both are closed. */}
+          <div className="flex flex-col gap-1 shrink-0">
+            {/* Image gallery toggle button — only when TOC is closed too */}
+            {!imagesOpen && !tocOpen && imageNames.length > 0 && (
+              <button onClick={() => setImagesOpen(true)}
+                className="p-2 hover:bg-muted rounded-lg text-muted-foreground"
+                title={`${imageNames.length} images`}>
+                <ImageIcon className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Image gallery panel */}
+            {imagesOpen && (
+              <div className="w-56 border rounded-lg bg-card overflow-hidden flex flex-col max-h-[calc(100vh-200px)]">
+              <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/50 shrink-0">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Images ({imageNames.length})</span>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setGalleryMode(galleryMode === "grid" ? "list" : "grid")}
+                    className="p-1 hover:bg-muted rounded text-muted-foreground" title="Toggle view">
+                    {galleryMode === "grid" ? <Rows3 className="w-3 h-3" /> : <LayoutGrid className="w-3 h-3" />}
+                  </button>
+                  <button onClick={() => setImagesOpen(false)} className="p-1 hover:bg-muted rounded text-muted-foreground">
+                    <PanelLeftClose className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div className={`overflow-y-auto flex-1 p-1.5 ${galleryMode === "grid" ? "grid grid-cols-2 gap-1.5" : "space-y-1"}`}>
+                {imageNames.map((name, i) => (
+                  galleryMode === "grid" ? (
+                    <button key={name} onClick={async () => {
+                      if (!imageSrcs.has(name)) {
+                        try {
+                          const bytes = await readDocumentImage(kbId!, docId!, name);
+                          const blob = new Blob([new Uint8Array(bytes)]);
+                          setImageSrcs(prev => { const m = new Map(prev); m.set(name, URL.createObjectURL(blob)); return m; });
+                        } catch {}
+                      }
+                      setDialogIdx(i);
+                    }}
+                    className="aspect-square rounded-md overflow-hidden border bg-muted/30 hover:ring-2 ring-primary transition-all">
+                      {imageSrcs.has(name)
+                        ? <img src={imageSrcs.get(name)} alt={name} className="w-full h-full object-cover" />
+                        : <div className="w-full h-full flex items-center justify-center text-[10px] text-muted-foreground">Load</div>
+                      }
+                    </button>
+                  ) : (
+                    <button key={name} onClick={async () => {
+                      if (!imageSrcs.has(name)) {
+                        try {
+                          const bytes = await readDocumentImage(kbId!, docId!, name);
+                          const blob = new Blob([new Uint8Array(bytes)]);
+                          setImageSrcs(prev => { const m = new Map(prev); m.set(name, URL.createObjectURL(blob)); return m; });
+                        } catch {}
+                      }
+                      setDialogIdx(i);
+                    }}
+                    className="flex items-center gap-2 w-full px-2 py-1.5 rounded hover:bg-muted text-left transition-colors">
+                      <div className="w-8 h-8 rounded overflow-hidden border bg-muted/30 shrink-0">
+                        {imageSrcs.has(name)
+                          ? <img src={imageSrcs.get(name)} alt={name} className="w-full h-full object-cover" />
+                          : <div className="w-full h-full flex items-center justify-center"><ImageIcon className="w-3 h-3 text-muted-foreground/50" /></div>
+                        }
+                      </div>
+                      <span className="text-xs truncate flex-1">{name}</span>
+                    </button>
+                  )
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* TOC panel — hidden when images panel is open */}
+          {!imagesOpen && (
           <DocToc
             headings={headings}
             tocOpen={tocOpen}
@@ -271,10 +389,22 @@ export function DocumentPreview() {
             pageJumpError={pageJumpError}
             t={t}
           />
+          )}
+          </div>{/* end sidebar column */}
           <div className="flex-1 min-w-0">
-            <DocView content={content} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollTarget={scrollTarget} scrollRef={docScrollRef} />
+            <DocView content={content} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollTarget={scrollTarget} scrollRef={docScrollRef} kbId={kbId} docId={docId} />
           </div>
         </div>
+      )}
+      {dialogIdx != null && kbId && docId && (
+        <ImageDialog
+          images={imageNames.map(name => ({ name }))}
+          currentIdx={dialogIdx}
+          onClose={() => setDialogIdx(null)}
+          kbId={kbId} docId={docId}
+          onPrev={() => setDialogIdx(i => i != null && i > 0 ? i - 1 : i)}
+          onNext={() => setDialogIdx(i => i != null && i < imageNames.length - 1 ? i + 1 : i)}
+        />
       )}
     </div>
   );
@@ -475,10 +605,11 @@ function DocToc({
   );
 }
 
-function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef }: {
+function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbId, docId }: {
   content: string; startCharMap: Map<number, number>; chunkIdx: number | null;
   scrollTarget?: { text: string; pos: number } | null;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
+  kbId?: string; docId?: string;
 }) {
   const sections = useMemo(() => splitSections(content), [content]);
   const sectionOffsets = useMemo(() => buildSectionOffsets(content, sections), [content, sections]);
@@ -642,7 +773,7 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef }: {
     return (
       <div ref={containerRef} id="doc-preview-scroll" className="max-h-[calc(100vh-200px)] overflow-y-auto rounded-lg border bg-card prose prose-sm max-w-none dark:prose-invert p-6">
         <div data-section-idx={0}>
-          <MarkdownRenderer>{content}</MarkdownRenderer>
+          <MarkdownRenderer imgKbId={kbId} imgDocId={docId}>{content}</MarkdownRenderer>
         </div>
       </div>
     );
@@ -655,7 +786,7 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef }: {
           if (i < EAGER || rendered.has(i)) {
             return (
               <div key={i} data-section-idx={i} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 200px" }}>
-                <MarkdownRenderer>{sec}</MarkdownRenderer>
+                <MarkdownRenderer imgKbId={kbId} imgDocId={docId}>{sec}</MarkdownRenderer>
               </div>
             );
           }

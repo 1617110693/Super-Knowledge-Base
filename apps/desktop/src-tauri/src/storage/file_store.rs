@@ -818,6 +818,102 @@ impl FileStore {
         Ok(())
     }
 
+    /// List image filenames, filtered to actual images (not equation renders).
+    /// Only returns images that have an entry in images_meta.json or
+    /// are referenced by image/chart/picture types in content_list.json.
+    pub fn list_document_images(&self, kb_id: &str, doc_id: &str) -> CommandResult<Vec<String>> {
+        let img_dir = self.get_doc_dir(kb_id, doc_id).join("images");
+        if !img_dir.exists() || !img_dir.is_dir() {
+            return Ok(Vec::new());
+        }
+        let all_names: Vec<String> = std::fs::read_dir(&img_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+            .collect();
+        if all_names.is_empty() { return Ok(Vec::new()); }
+
+        // Filter: only return images that appear in images_meta.json
+        let meta_path = self.get_doc_dir(kb_id, doc_id).join("images_meta.json");
+        if meta_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&meta_path) {
+                if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&data) {
+                    if let Some(obj) = meta.as_object() {
+                        let filtered: Vec<String> = all_names
+                            .iter()
+                            .filter(|n| obj.contains_key(*n))
+                            .cloned()
+                            .collect();
+                        if !filtered.is_empty() {
+                            return Ok(filtered);
+                        }
+                    }
+                }
+            }
+        }
+        // Fallback: if no meta yet, return all (they'll be filtered after indexing)
+        Ok(all_names)
+    }
+
+    /// Read an image file from the document's images directory.
+    pub fn read_document_image(&self, kb_id: &str, doc_id: &str, filename: &str) -> CommandResult<Vec<u8>> {
+        let path = self.get_doc_dir(kb_id, doc_id).join("images").join(filename);
+        if !path.exists() { return Err(crate::error::AppError::InvalidInput("Image not found".into())); }
+        Ok(std::fs::read(&path)?)
+    }
+
+    /// Get image metadata from images_meta.json, falling back to defaults.
+    pub fn get_image_meta(&self, kb_id: &str, doc_id: &str) -> CommandResult<serde_json::Value> {
+        let path = self.get_doc_dir(kb_id, doc_id).join("images_meta.json");
+        if path.exists() {
+            let data = std::fs::read_to_string(&path)?;
+            Ok(serde_json::from_str(&data).unwrap_or(serde_json::json!({})))
+        } else {
+            Ok(serde_json::json!({}))
+        }
+    }
+
+    /// Save description for a single image in images_meta.json.
+    pub fn save_image_desc(&self, kb_id: &str, doc_id: &str, filename: &str, description: &str) -> CommandResult<()> {
+        let path = self.get_doc_dir(kb_id, doc_id).join("images_meta.json");
+        let mut meta: serde_json::Value = if path.exists() {
+            let data = std::fs::read_to_string(&path)?;
+            serde_json::from_str(&data).unwrap_or(serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+        if let Some(obj) = meta.as_object_mut() {
+            let entry = obj.entry(filename.to_string()).or_insert(serde_json::json!({}));
+            entry["description"] = serde_json::Value::String(description.to_string());
+            entry["edited_at"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
+        }
+        std::fs::write(&path, serde_json::to_string_pretty(&meta)?)?;
+        Ok(())
+    }
+
+    /// Save raw MinerU ZIP for dev-mode caching.
+    pub fn save_mineru_zip(&self, kb_id: &str, doc_id: &str, data: &[u8]) -> CommandResult<()> {
+        let path = self.get_doc_dir(kb_id, doc_id).join("mineru_bundle.zip");
+        std::fs::write(&path, data)?;
+        Ok(())
+    }
+
+    /// Save images extracted from MinerU ZIP.
+    pub fn save_images(
+        &self,
+        kb_id: &str,
+        doc_id: &str,
+        images: &[(String, Vec<u8>)],
+    ) -> CommandResult<()> {
+        if images.is_empty() { return Ok(()); }
+        let img_dir = self.get_doc_dir(kb_id, doc_id).join("images");
+        std::fs::create_dir_all(&img_dir)?;
+        for (name, data) in images {
+            std::fs::write(img_dir.join(name), data)?;
+        }
+        Ok(())
+    }
+
     /// Save the MinerU content_list.json (each block has page_idx + type).
     pub fn save_content_list_json(
         &self,

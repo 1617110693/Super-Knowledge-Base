@@ -3,6 +3,7 @@ use std::path::Path;
 
 fn default_llama_port() -> u16 { 8081 }
 fn default_llama_threads() -> u32 { 4 }
+fn default_true() -> bool { true }
 
 /// Application settings persisted to disk
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +22,14 @@ pub struct AppSettings {
     pub llm_api_key: String,
     #[serde(default)]
     pub llm_model: String,
+    #[serde(default)]
+    pub vlm_api_base: String,
+    #[serde(default)]
+    pub vlm_api_key: String,
+    #[serde(default)]
+    pub vlm_model: String,
+    #[serde(default = "default_true")]
+    pub extract_multimodal: bool,
     #[serde(default)]
     pub use_local_embedding: bool,
     #[serde(default)]
@@ -54,6 +63,10 @@ impl Default for AppSettings {
             llm_api_base: "https://api.openai.com/v1".to_string(),
             llm_api_key: String::new(),
             llm_model: "gpt-4o-mini".to_string(),
+            vlm_api_base: String::new(),
+            vlm_api_key: String::new(),
+            vlm_model: String::new(),
+            extract_multimodal: true,
             use_local_embedding: false,
             local_embedding_model: String::new(),
             use_local_rerank: false,

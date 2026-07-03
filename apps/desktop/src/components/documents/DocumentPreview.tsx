@@ -536,14 +536,15 @@ function DocToc({
   headings: Heading[];
   tocOpen: boolean;
   setTocOpen: (v: boolean) => void;
-  jumpToChunk: (ci: number) => void;
+  jumpToChunk: (ci: number, heading?: { text: string; pos: number }) => void;
   hasPageData: boolean;
   maxPage: number;
   pageChunksMap: Map<number, number[]>;
   pageInput: string; setPageInput: (v: string) => void;
   handlePageJump: () => void;
   pageJumpError: string;
-  t: (key: string, vars?: Record<string, string | number>) => string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  t: (key: any, vars?: Record<string, string | number>) => string;
 }) {
   if (!tocOpen) {
     return (
@@ -808,7 +809,7 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbI
   // Single section: render with data-section-idx for consistency
   if (sections.length <= 1) {
     return (
-      <div ref={containerRef} id="doc-preview-scroll" className="max-h-[calc(100vh-200px)] overflow-y-auto rounded-lg border bg-card prose prose-sm max-w-none dark:prose-invert p-6">
+      <div ref={containerRef as React.RefObject<HTMLDivElement>} id="doc-preview-scroll" className="max-h-[calc(100vh-200px)] overflow-y-auto rounded-lg border bg-card prose prose-sm max-w-none dark:prose-invert p-6">
         <div data-section-idx={0}>
           <MarkdownRenderer imgKbId={kbId} imgDocId={docId}>{content}</MarkdownRenderer>
         </div>
@@ -817,7 +818,7 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbI
   }
 
   return (
-    <div ref={containerRef} id="doc-preview-scroll" className="max-h-[calc(100vh-200px)] overflow-y-auto rounded-lg border bg-card">
+    <div ref={containerRef as React.RefObject<HTMLDivElement>} id="doc-preview-scroll" className="max-h-[calc(100vh-200px)] overflow-y-auto rounded-lg border bg-card">
       <div className="prose prose-sm max-w-none dark:prose-invert p-6">
         {sections.map((sec, i) => {
           if (i < EAGER || rendered.has(i)) {

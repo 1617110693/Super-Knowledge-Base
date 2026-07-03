@@ -1,6 +1,6 @@
 {
   "name": "super-knowledge-base",
-  "version": "2.5.2",
+  "version": "3.0.0",
   "private": true,
   "description": "Local Agent Knowledge Base — desktop app with MCP server integration",
   "workspaces": [

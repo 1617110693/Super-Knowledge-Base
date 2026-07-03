@@ -1,7 +1,8 @@
 use crate::error::{AppError, CommandResult};
 use crate::mineru::{self, ParseMode};
-use crate::models::{ParseStatus, ParseTask};
+use crate::models::{ParseProgress, ParseStatus, ParseTask};
 use crate::AppState;
+use std::sync::{Arc, Mutex};
 use tauri::State;
 
 #[tauri::command]
@@ -86,30 +87,42 @@ pub async fn start_parsing(
         None,
     )?;
 
+    // Create progress shared between command and background task
+    let progress = Arc::new(Mutex::new(ParseProgress {
+        percent: 0,
+        stage: "starting".into(),
+    }));
+    {
+        let mut map = state.parse_progress.lock().unwrap();
+        map.insert(doc_id.clone(), progress.lock().unwrap().clone());
+    }
+
     // Spawn parse task (async, runs in background)
     let file_store = state.file_store.clone();
     let kb_id_clone = kb_id.clone();
     let doc_id_clone = doc_id.clone();
+    let progress_clone = progress.clone();
+    let parse_progress_map = state.parse_progress.clone();
 
     tokio::spawn(async move {
-        let result = mineru::parse_document(mode).await;
+        let result = mineru::parse_document(mode, Some(progress_clone)).await;
+        // Clean up progress entry
+        {
+            let mut map = parse_progress_map.lock().unwrap();
+            map.remove(&doc_id_clone);
+        }
         match result {
             Ok(precise_result) => {
-                // Save parsed markdown
                 let _ = file_store.save_parsed_markdown(&kb_id_clone, &doc_id_clone, &precise_result.markdown);
-                // Save MinerU JSON for page number tracking
                 if let Some(ref json) = precise_result.json_content {
                     let _ = file_store.save_mineru_json(&kb_id_clone, &doc_id_clone, json);
                 }
-                // Save content_list.json for direct page_idx-based mapping
                 if let Some(ref content_list) = precise_result.content_list_json {
                     let _ = file_store.save_content_list_json(&kb_id_clone, &doc_id_clone, content_list);
                 }
-                // Save extracted images
                 if !precise_result.extracted_images.is_empty() {
                     let _ = file_store.save_images(&kb_id_clone, &doc_id_clone, &precise_result.extracted_images);
                 }
-                // Cache MinerU ZIP for replay
                 let _ = file_store.save_mineru_zip(&kb_id_clone, &doc_id_clone, &precise_result.raw_zip);
                 let _ = file_store.update_document_status(
                     &kb_id_clone,
@@ -129,11 +142,13 @@ pub async fn start_parsing(
         }
     });
 
-    // Return an initial "running" task (simplified — in production we'd track the task_id)
     Ok(ParseTask {
         task_id: doc_id.clone(),
         state: crate::models::ParseTaskState::Running,
-        progress: None,
+        progress: Some(ParseProgress {
+            percent: 0,
+            stage: "starting".into(),
+        }),
         full_zip_url: None,
         err_msg: None,
     })
@@ -149,12 +164,25 @@ pub async fn poll_parse_status(
 }
 
 #[tauri::command]
+pub async fn get_parse_progress(
+    state: State<'_, AppState>,
+    kb_id: String,
+    doc_id: String,
+) -> CommandResult<Option<ParseProgress>> {
+    let doc = state.file_store.get_document(&kb_id, &doc_id)?;
+    if doc.parse_status != ParseStatus::Parsing {
+        return Ok(None);
+    }
+    let map = state.parse_progress.lock().unwrap();
+    Ok(map.get(&doc_id).cloned())
+}
+
+#[tauri::command]
 pub async fn cancel_parse_task(
     state: State<'_, AppState>,
     kb_id: String,
     doc_id: String,
 ) -> CommandResult<()> {
-    // For now, just mark as failed
     state.file_store.update_document_status(
         &kb_id,
         &doc_id,

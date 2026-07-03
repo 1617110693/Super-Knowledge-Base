@@ -14,7 +14,9 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use crate::models::ParseProgress;
 
 /// Main application state
 pub struct AppState {
@@ -22,6 +24,7 @@ pub struct AppState {
     pub file_store: FileStore,
     pub python_port: Mutex<u16>,
     pub settings_dir: PathBuf,
+    pub parse_progress: Arc<Mutex<HashMap<String, ParseProgress>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -80,6 +83,7 @@ pub fn run() {
                 file_store,
                 python_port: Mutex::new(port),
                 settings_dir: default_dir,
+                parse_progress: Arc::new(Mutex::new(HashMap::new())),
             });
             app.manage(python_service::PythonProcess(Mutex::new(None)));
 
@@ -172,6 +176,7 @@ pub fn run() {
             documents::open_document_file,
             parsing::start_parsing,
             parsing::poll_parse_status,
+            parsing::get_parse_progress,
             parsing::cancel_parse_task,
             python_service::get_python_backend_url,
             python_service::start_python_backend,

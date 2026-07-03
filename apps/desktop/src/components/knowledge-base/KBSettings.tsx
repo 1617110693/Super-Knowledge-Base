@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useKBStore } from "../../stores/useKBStore";
 import { useI18n } from "../../i18n";
-import { indexDocument } from "../../services/pythonClient";
+import { indexDocument, waitForIndex } from "../../services/pythonClient";
 import {
   FileText, Layers, Upload, Trash2, Loader2,
   CheckCircle, XCircle, Clock, Eye,
@@ -42,12 +42,20 @@ function formatFileSize(bytes: number): string {
   return (bytes / 1024).toFixed(1) + " KB";
 }
 
+type ProgressInfo = { percent: number; stage: string; current: number; total: number } | undefined;
+
+function formatProgress(p: ProgressInfo): string {
+  if (!p) return "Idx 0%";
+  if (p.stage === "vlm" && p.total > 0) return `VLM ${p.current}/${p.total}`;
+  return `Idx ${p.percent}%`;
+}
+
 /** Combined KB workspace: overview stats + document management + search entry */
 export function KBSettings() {
   const { kbId } = useParams<{ kbId: string }>();
   const navigate = useNavigate();
   const { t } = useI18n();
-  const { knowledgeBases, documents, loadKBs, loadDocuments, uploadDocument, deleteDocument, refreshDocument, setActiveKB, updateKB, copyKB, reindexDocument, reindexAll, indexingIds } = useKBStore();
+  const { knowledgeBases, documents, loadKBs, loadDocuments, uploadDocument, deleteDocument, refreshDocument, setActiveKB, updateKB, copyKB, reindexDocument, reindexAll, indexingProgress } = useKBStore();
   const [dragOver, setDragOver] = useState(false);
   const uploadingRef = useRef(false);
   const [indexing, setIndexing] = useState<Record<string, boolean>>({});
@@ -109,6 +117,7 @@ export function KBSettings() {
 
   // Poll MinerU parsing + trigger index when parsing finishes
   const indexedRef = useRef<Set<string>>(new Set());
+  const [parseProgress, setParseProgress] = useState<Record<string, { percent: number; stage: string }>>({});
   useEffect(() => {
     if (!kbId) return;
     const interval = setInterval(async () => {
@@ -118,6 +127,11 @@ export function KBSettings() {
       for (const doc of flat) {
         if (doc.parse_status === "parsing") {
           refreshDocument(kbId, doc.id);
+          import("../../services/tauriBridge").then(({ getParseProgress }) => {
+            getParseProgress(kbId, doc.id).then(p => {
+              if (p) setParseProgress(prev => ({ ...prev, [doc.id]: p }));
+            });
+          });
         }
       }
       // When parsing finishes, trigger index once
@@ -134,20 +148,27 @@ export function KBSettings() {
               "../../services/tauriBridge"
             );
             const content = await getDocumentContent(kbId, doc.id);
-            const result = await indexDocument({
+            const { task_id } = await indexDocument({
               kb_id: kbId,
               doc_id: doc.id,
               doc_name: doc.name,
               markdown_content: content.markdown,
             });
-            await saveDocumentChunks(kbId, doc.id, result.chunk_count, result.embedding_model, result.embedding_dim);
+            let lastUpdate = 0;
+            const result = await waitForIndex(task_id, (p) => {
+              const now = Date.now();
+              if (now - lastUpdate < 800) return;
+              lastUpdate = now;
+              setIndexing((prev) => ({ ...prev, [doc.id]: { ...prev[doc.id], progress: p, stage: p.stage, current: p.current, total: p.total } as any }));
+            });
+            await saveDocumentChunks(kbId, doc.id, result.chunk_count!, result.embedding_model!, result.embedding_dim!);
             useKBStore.setState((s) => ({
               documents: updateDocInTreeLocal(s.documents, doc.id, {
                 chunk_count: result.chunk_count,
                 embedding_model: result.embedding_model,
               } as Partial<Document>),
               knowledgeBases: s.knowledgeBases.map((k) =>
-                k.id === kbId ? { ...k, embedding_model: result.embedding_model, embedding_dim: result.embedding_dim } : k
+                k.id === kbId ? { ...k, embedding_model: result.embedding_model || "", embedding_dim: result.embedding_dim || 0 } : k
               ),
             }));
           } catch (e) {
@@ -614,7 +635,10 @@ export function KBSettings() {
                 const isPart = !!doc.parent_doc_id;
                 const status = STATUS_MAP[doc.parse_status] || STATUS_MAP.pending;
                 const isParseFailed = doc.parse_status === "failed";
-                const isIndexing = indexing[doc.id] || indexingIds.has(doc.id);
+                const localProgress = (typeof indexing[doc.id] === "object" && indexing[doc.id]) as { percent: number; stage: string; current: number; total: number } | false;
+                const storeProgress = indexingProgress[doc.id];
+                const progressInfo = storeProgress || localProgress || undefined;
+                const isIndexing = !!indexing[doc.id] || (doc.id in indexingProgress);
                 const isIndexed = !isIndexing && doc.chunk_count > 0;
                 // Extract part number from name like "xxx_part2.pdf"
                 const partMatch = doc.name.match(/_part(\d+)/);
@@ -686,9 +710,10 @@ export function KBSettings() {
                             return total > 0 ? <span className="text-green-600">{total}c</span> : <span>{t(status.labelKey)}</span>;
                           })()
                         ) :
-                         isIndexing ? <span className="text-blue-600">Idx</span>
+                         isIndexing ? <span className="text-blue-600">{formatProgress(progressInfo)}</span>
                          : isParseFailed ? <span className="text-red-500 cursor-pointer hover:underline" onClick={(e) => { e.stopPropagation(); setErrorDetailTarget(doc.parse_error ?? null); }}>Failed</span>
                          : isIndexed ? <span className="text-green-600">{doc.chunk_count}c</span>
+                         : doc.parse_status === "parsing" && parseProgress[doc.id] ? <span>{parseProgress[doc.id].percent}%</span>
                          : <span>{t(status.labelKey)}</span>}
                       </span>
                     </div>
@@ -718,7 +743,7 @@ export function KBSettings() {
                   {hasParts && isExpanded && doc.parts!.map(part => {
                     const pStatus = STATUS_MAP[part.parse_status] || STATUS_MAP.pending;
                     const pIsFailed = part.parse_status === "failed";
-                    const pIsIndexing = indexing[part.id] || indexingIds.has(part.id);
+                    const pIsIndexing = indexing[part.id] || (part.id in indexingProgress);
                     const pIsIndexed = !pIsIndexing && part.chunk_count > 0;
                     const pMatch = part.name.match(/_part(\d+)/);
                     const pNum = pMatch ? parseInt(pMatch[1]) : null;
@@ -736,9 +761,10 @@ export function KBSettings() {
                           </span>
                           <span className="text-[10px] text-muted-foreground/60 truncate hidden sm:inline">{formatFileSize(part.file_size)}</span>
                           <span className="text-[10px] text-muted-foreground/60">
-                            {pIsIndexing ? <span className="text-blue-600">Idx</span>
+                            {pIsIndexing ? <span className="text-blue-600">{formatProgress(indexingProgress[part.id] || (typeof indexing[part.id] === "object" && indexing[part.id]) || undefined)}</span>
                              : pIsFailed ? <span className="text-red-500 cursor-pointer hover:underline" onClick={(e) => { e.stopPropagation(); setErrorDetailTarget(part.parse_error ?? null); }}>Failed</span>
                              : pIsIndexed ? <span className="text-green-600">{part.chunk_count}c</span>
+                             : part.parse_status === "parsing" && parseProgress[part.id] ? <span>{parseProgress[part.id].percent}%</span>
                              : <span>{t(pStatus.labelKey)}</span>}
                           </span>
                         </div>

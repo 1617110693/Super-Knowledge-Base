@@ -1,6 +1,8 @@
 use crate::error::AppError;
+use crate::models::ParseProgress;
 use reqwest::Client;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -25,7 +27,11 @@ pub struct PreciseResult {
 /// Parse a document using MinerU's Precise API (v4/extract/task).
 /// This mode requires a token and supports files up to 200MB / 200 pages.
 /// Returns both the markdown and the JSON metadata (for page number tracking).
-pub async fn parse_with_precise(token: &str, file_path: &Path) -> Result<PreciseResult, AppError> {
+pub async fn parse_with_precise(
+    token: &str,
+    file_path: &Path,
+    progress: Option<Arc<Mutex<ParseProgress>>>,
+) -> Result<PreciseResult, AppError> {
     // For precise mode with local files, the recommended flow is:
     // 1. Use the batch upload API (api/v4/file-urls/batch) to get upload URLs
     // 2. Upload the file to the pre-signed URL
@@ -45,14 +51,22 @@ pub async fn parse_with_precise(token: &str, file_path: &Path) -> Result<Precise
         .map_err(|e| AppError::MinerU(format!("Failed to create HTTP client: {}", e)))?;
 
     // Step 1: Request upload URL
+    if let Some(ref p) = progress {
+        p.lock().unwrap().stage = "uploading".into();
+        p.lock().unwrap().percent = 5;
+    }
     let batch_response = request_upload_urls(token, &client, file_name).await?;
     let (batch_id, upload_url) = batch_response;
 
     // Step 2: Upload file to pre-signed URL
+    if let Some(ref p) = progress {
+        p.lock().unwrap().stage = "uploading".into();
+        p.lock().unwrap().percent = 10;
+    }
     upload_file_to_url(&client, &upload_url, file_path).await?;
 
     // Step 3 & 4: Poll for batch results
-    let result = poll_batch_results(token, &client, &batch_id, file_name).await?;
+    let result = poll_batch_results(token, &client, &batch_id, file_name, progress.clone()).await?;
 
     Ok(result)
 }
@@ -154,14 +168,22 @@ async fn poll_batch_results(
     client: &Client,
     batch_id: &str,
     file_name: &str,
+    progress: Option<Arc<Mutex<ParseProgress>>>,
 ) -> Result<PreciseResult, AppError> {
     let url = format!(
         "https://mineru.net/api/v4/extract-results/batch/{}",
         batch_id
     );
 
-    for _ in 0..MAX_POLL_ATTEMPTS {
+    for attempt in 0..MAX_POLL_ATTEMPTS {
         sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
+
+        // Update progress: 10% + polling progress (up to 80%)
+        if let Some(ref p) = progress {
+            let mut pg = p.lock().unwrap();
+            pg.stage = "processing".into();
+            pg.percent = 10 + ((attempt as f32 / MAX_POLL_ATTEMPTS as f32) * 80.0) as u8;
+        }
 
         let resp = client
             .get(&url)
@@ -185,11 +207,24 @@ async fn poll_batch_results(
 
             if state == "done" {
                 // Download the result ZIP
+                if let Some(ref p) = progress {
+                    let mut pg = p.lock().unwrap();
+                    pg.stage = "downloading".into();
+                    pg.percent = 90;
+                }
                 let full_zip_url = item["full_zip_url"]
                     .as_str()
                     .ok_or_else(|| AppError::MinerU("Missing full_zip_url".to_string()))?;
 
-                return download_and_extract_markdown(client, full_zip_url, file_name).await;
+                let result = download_and_extract_markdown(client, full_zip_url, file_name).await;
+
+                if let Some(ref p) = progress {
+                    let mut pg = p.lock().unwrap();
+                    pg.stage = "done".into();
+                    pg.percent = 100;
+                }
+
+                return result;
             } else if state == "failed" {
                 let err = item["err_msg"]
                     .as_str()

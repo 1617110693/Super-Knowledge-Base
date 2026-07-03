@@ -76,6 +76,7 @@ pub struct DocumentContent {
     pub id: String,
     pub name: String,
     pub markdown: String,
+    pub md_available: bool,
     pub metadata: serde_json::Value,
 }
 
@@ -101,9 +102,8 @@ pub enum ParseTaskState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParseProgress {
-    pub extracted_pages: u32,
-    pub total_pages: u32,
-    pub start_time: String,
+    pub percent: u8,
+    pub stage: String,
 }
 
 /// Knowledge base registry stored as JSON

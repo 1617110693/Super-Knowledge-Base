@@ -13,6 +13,36 @@ import { getChunkByIndex, getChunkRange } from "../../services/pythonClient";
 import { listDocuments } from "../../services/tauriBridge";
 import type { ChatMessage, SearchResult, ToolCall } from "../../types";
 
+function ThinkingBlock({ reasoning, isStreaming }: { reasoning: string; isStreaming: boolean }) {
+  const [open, setOpen] = useState(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const wasStreamingRef = useRef(isStreaming);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [reasoning]);
+
+  useEffect(() => {
+    if (wasStreamingRef.current && !isStreaming) setOpen(false);
+    wasStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+
+  return (
+    <div className="mb-2 border rounded-lg overflow-hidden bg-amber-50/30 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800">
+      <button onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 dark:text-amber-400 hover:bg-amber-100/50 dark:hover:bg-amber-900/30 transition-colors">
+        {isStreaming ? <Loader2 className="w-3 h-3 animate-spin shrink-0" /> : <ChevronDown className={`w-3 h-3 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />}
+        💭 {isStreaming ? "Thinking..." : "Thought process"}
+      </button>
+      {open && (
+        <div ref={scrollRef} className="max-h-48 overflow-y-auto px-3 py-2 border-t border-amber-200 dark:border-amber-800">
+          <div className="text-xs text-muted-foreground whitespace-pre-wrap break-words leading-relaxed">{reasoning}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Normalize LaTeX math delimiters so remark-math can process them. */
 function normalizeMath(text: string): string {
   text = text.replace(/\\\((.+?)\\\)/gs, (_, m) => `$${m}$`);
@@ -162,6 +192,10 @@ function MessageRow({
       )}
       <div className="relative max-w-[80%]">
         <div className={`rounded-xl px-4 py-2.5 text-sm ${msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+          {/* Reasoning / thinking block */}
+          {msg.role === "assistant" && msg.reasoning ? (
+            <ThinkingBlock reasoning={msg.reasoning} isStreaming={isStreaming} />
+          ) : null}
           {msg.role === "assistant" && msg.content ? (
             isStreaming ? (
               <div className="whitespace-pre-wrap break-words">{msg.content}</div>
@@ -169,6 +203,7 @@ function MessageRow({
               <MarkdownRenderer
                 className="prose prose-sm max-w-none dark:prose-invert text-sm"
                 sources={msg.sources}
+                imgSources={msg.sources}
                 onSourceClick={(s) => setPreviewChunk(s as SearchResult)}
               >
                 {msg.content}
@@ -311,6 +346,7 @@ export function ChatPage() {
 
       const mathInstr = "Wrap ALL math in $..$ or $$..$$. Single symbols too: $x$, $\\alpha$, $A$. Display equations: $$A^T A$$. No bare LaTeX.";
       const citeInstr = "IMPORTANT: Each search result has an 'index' field (1,2,3...) AND a 'chunk_index' field (document position). Use the INDEX number for citation: write [N] where N is the result index, NOT the chunk_index. Example: if result index=1 has chunk_index=8, cite it as [1], not [8].";
+      const imageInstr = "IMPORTANT — IMAGE REFERENCES: When your search results include content_type='image' chunks, ALWAYS include the image in your response using markdown: ![description](images/filename.jpg). Extract the exact filename from the chunk content (look for 'Image: hash.jpg' or 'images/hash.jpg'). The image will render inline as a clickable thumbnail for the user. Never skip images — they are key visual information that supplements your text answer.";
       const kbNames = selectedKbIds.length > 0
         ? selectedKbIds.map((id) => knowledgeBases.find((kb) => kb.id === id)?.name || id).join(", ")
         : "";
@@ -322,7 +358,7 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
 3. DO NOT use get_document or get_document_chunks to answer questions — documents can be hundreds of pages and will overflow context. These tools are for browsing/document management, not Q&A.
 4. get_document_summary gives you a document's structure (headings, chunk count) without loading content — use it to understand what a document covers.`;
       const systemMsg = selectedKbIds.length > 0
-        ? `${ragInstr}\n\n${citeInstr}\n\n${mathInstr}`
+        ? `${ragInstr}\n\n${citeInstr}\n\n${imageInstr}\n\n${mathInstr}`
         : `You are a helpful assistant. ${mathInstr}`;
 
       // Build conversation history including tool messages
@@ -363,6 +399,7 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
         const decoder = new TextDecoder();
 
         let fullContent = "";
+        let fullReasoning = "";
         const toolCallsAcc = new Map<number, { id: string; name: string; arguments: string }>();
         let finishReason = "";
 
@@ -370,7 +407,7 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
         let lastFlush = 0;
         let flushTimer: ReturnType<typeof setTimeout> | null = null;
         const flushContent = () => {
-          updateLastAssistant(currentConv.id, fullContent, allSources);
+          updateLastAssistant(currentConv.id, fullContent, allSources, fullReasoning);
           lastFlush = Date.now();
           flushTimer = null;
         };
@@ -389,6 +426,11 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
               const delta = choice?.delta;
               finishReason = choice?.finish_reason || finishReason;
 
+              if (delta?.reasoning_content) {
+                fullReasoning += delta.reasoning_content;
+                // Update reasoning immediately for smooth streaming display
+                updateLastAssistant(currentConv.id, fullContent, allSources, fullReasoning);
+              }
               if (delta?.content) {
                 fullContent += delta.content;
                 // Throttle: push to store every 80ms to avoid stuttery re-renders
@@ -419,7 +461,7 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
         if (finishReason === "stop" && toolCallsAcc.size === 0) {
           if (flushTimer) clearTimeout(flushTimer);
           fullContent = normalizeMath(fullContent);
-          updateLastAssistant(currentConv.id, fullContent, allSources);
+          updateLastAssistant(currentConv.id, fullContent, allSources, fullReasoning);
           break;
         }
 

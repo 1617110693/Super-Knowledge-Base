@@ -29,6 +29,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub vlm_model: String,
     #[serde(default = "default_true")]
+    pub vlm_enabled: bool,
+    #[serde(default = "default_true")]
     pub extract_multimodal: bool,
     #[serde(default)]
     pub use_local_embedding: bool,
@@ -66,6 +68,7 @@ impl Default for AppSettings {
             vlm_api_base: String::new(),
             vlm_api_key: String::new(),
             vlm_model: String::new(),
+            vlm_enabled: true,
             extract_multimodal: true,
             use_local_embedding: false,
             local_embedding_model: String::new(),

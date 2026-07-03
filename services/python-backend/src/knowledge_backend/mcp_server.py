@@ -672,14 +672,23 @@ def add_document(
         img_dir.mkdir(exist_ok=True)
         for fname, data in parse_result.extracted_images.items():
             (img_dir / fname).write_bytes(data)
-        # Generate VLM descriptions if configured
-        has_vlm = bool(_config.vlm_api_base.strip() and _config.vlm_model.strip())
+        # Generate VLM descriptions if configured (skip cached)
+        has_vlm = _config.vlm_enabled and bool(_config.vlm_api_base.strip() and _config.vlm_model.strip())
         if has_vlm:
             from .vision import describe_image
+            from .api.documents import _load_image_meta, _is_valid_description, _save_image_meta
             import httpx
+            cached_meta = _load_image_meta(doc_dir)
             http = httpx.Client(timeout=60.0)
             try:
                 for fname, data in parse_result.extracted_images.items():
+                    # Reuse cached description if valid
+                    if _is_valid_description(cached_meta.get(fname, {}).get("description", "")):
+                        image_descriptions[fname] = (
+                            cached_meta[fname]["description"],
+                            cached_meta[fname].get("entity_info", {}),
+                        )
+                        continue
                     fmt = Path(fname).suffix.lstrip(".") or "png"
                     desc, entity = describe_image(
                         data, fmt,
@@ -689,9 +698,7 @@ def add_document(
                         http=http,
                     )
                     image_descriptions[fname] = (desc, entity)
-                    # Also save to images_meta.json for UI
                     try:
-                        from .api.documents import _save_image_meta
                         _save_image_meta(doc_dir, fname, desc, entity)
                     except Exception:
                         pass
@@ -1138,7 +1145,40 @@ def clean_orphans() -> dict:
     finally:
         db2.close()
 
-    # 5. Re-count chunks/docs for all KBs
+    # 5. Remove chunks whose documents no longer have full.md
+    db3 = _get_db()
+    try:
+        for kb_id in registry_ids:
+            table = db3.get_table(kb_id)
+            if table is None:
+                continue
+            try:
+                docs_dir = Path(DATA_DIR) / f"kb_{kb_id}" / "docs"
+                # Use native to_list() — to_pandas() may fail if pandas not installed
+                all_rows = table.search().limit(100000).to_list()
+                all_doc_ids = set()
+                for row in all_rows:
+                    did = str(row.get("doc_id", ""))
+                    if did:
+                        all_doc_ids.add(did)
+
+                dead_docs: list[str] = []
+                for did in all_doc_ids:
+                    if not (docs_dir / did / "full.md").exists():
+                        dead_docs.append(did)
+
+                for did in dead_docs:
+                    try:
+                        table.delete(f"doc_id = '{did}'")
+                        removed.append(f"Removed orphan chunks for doc {did} in KB {kb_id}")
+                    except Exception:
+                        pass
+            except Exception as e:
+                skipped.append(f"Orphan check for KB {kb_id}: {e}")
+    finally:
+        db3.close()
+
+    # 6. Re-count chunks/docs for all KBs
     for kb_id in registry_ids:
         try:
             _update_kb_counts(kb_id)

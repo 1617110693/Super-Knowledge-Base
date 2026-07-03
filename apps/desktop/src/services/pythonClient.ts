@@ -68,6 +68,18 @@ export async function searchDocument(
 
 // ── Index Document ──
 
+export interface IndexProgress {
+  stage: string;
+  current: number;
+  total: number;
+  percent: number;
+  done: boolean;
+  chunk_count?: number;
+  embedding_model?: string;
+  embedding_dim?: number;
+  error?: string;
+}
+
 export async function indexDocument(params: {
   kb_id: string;
   doc_id: string;
@@ -78,23 +90,27 @@ export async function indexDocument(params: {
     chunk_size?: number;
     chunk_overlap?: number;
   };
-}): Promise<{ doc_id: string; chunk_count: number; status: string; embedding_model: string; embedding_dim: number }> {
-  const result = await pythonFetch<{
-    doc_id: string;
-    chunk_count: number;
-    status: string;
-    embedding_model?: string;
-    embedding_dim?: number;
-  }>("/index", {
+}): Promise<{ task_id: string }> {
+  return pythonFetch<{ task_id: string }>("/index", {
     method: "POST",
     body: JSON.stringify(params),
   });
-  // Ensure defaults for older backends that don't return these fields
-  return {
-    ...result,
-    embedding_model: result.embedding_model || "",
-    embedding_dim: result.embedding_dim || 0,
-  };
+}
+
+export async function pollIndexProgress(taskId: string): Promise<IndexProgress> {
+  return pythonFetch<IndexProgress>(`/index/progress/${taskId}`);
+}
+
+export async function waitForIndex(taskId: string, onProgress?: (p: IndexProgress) => void): Promise<IndexProgress> {
+  while (true) {
+    const p = await pollIndexProgress(taskId);
+    onProgress?.(p);
+    if (p.done) {
+      if (p.error) throw new Error(p.error);
+      return p;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
 }
 
 // ── Chat ──

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { Link, useLocation, useParams, useNavigate } from "react-router-dom";
 import { useKBStore } from "../../stores/useKBStore";
 import { useSettingsStore } from "../../stores/useSettingsStore";
@@ -22,6 +22,25 @@ export function Sidebar() {
   const [chatExpanded, setChatExpanded] = useState(true);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [chatPopover, setChatPopover] = useState(false);
+  const chatBtnRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  // Close chat popover on outside click / Escape
+  useEffect(() => {
+    if (!chatPopover) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (chatBtnRef.current?.contains(target)) return;       // button click → toggle
+      if (popoverRef.current?.contains(target)) return;       // inside popover → ignore
+      setChatPopover(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setChatPopover(false); };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", handler); document.removeEventListener("keydown", onKey); };
+  }, [chatPopover]);
+
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem(COLLAPSED_KEY) === "true"; } catch { return false; }
   });
@@ -71,15 +90,41 @@ export function Sidebar() {
               </button>
             ))}
 
-            {/* Chat */}
-            <button onClick={() => {
-              if (activeConversationId) navigate(`/chat/${activeConversationId}`);
-              else { const id = newConversation(); navigate(`/chat/${id}`); }
-            }}
-              title={t("nav.chat")}
-              className={`p-2 rounded-lg transition-colors w-full flex justify-center ${location.pathname.startsWith("/chat") ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}>
-              <MessageSquare className="w-4 h-4" />
-            </button>
+            {/* Chat — floating popover when collapsed */}
+            <div className="relative">
+              <button onClick={() => setChatPopover(!chatPopover)}
+                ref={chatBtnRef}
+                title={t("nav.chat")}
+                className={`p-2 rounded-lg transition-colors w-full flex justify-center ${location.pathname.startsWith("/chat") ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}>
+                <MessageSquare className="w-4 h-4" />
+              </button>
+              {chatPopover && (
+                <div ref={popoverRef} className="fixed z-50 w-64 bg-card border rounded-xl shadow-xl overflow-hidden"
+                  style={{ left: (chatBtnRef.current?.getBoundingClientRect().right ?? 60) + 8, top: (chatBtnRef.current?.getBoundingClientRect().top ?? 100) - 4 }}>
+                  <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/50">
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{t("nav.chat")}</span>
+                    <button onClick={(e) => { e.stopPropagation(); const id = newConversation(); navigate(`/chat/${id}`); setChatPopover(false); }}
+                      className="p-0.5 hover:bg-background rounded" title={t("chat.new")}>
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {recentConversations.length === 0 ? (
+                      <p className="text-xs text-muted-foreground px-3 py-4 text-center">{t("chat.empty")}</p>
+                    ) : (
+                      recentConversations.map((conv) => (
+                        <Link key={conv.id} to={`/chat/${conv.id}`}
+                          onClick={() => { setActiveConversation(conv.id); setChatPopover(false); }}
+                          className={`flex items-center gap-2 px-3 py-2 text-sm transition-colors truncate ${activeConversationId === conv.id && location.pathname.startsWith("/chat") ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-muted-foreground"}`}>
+                          <MessageSquare className="w-3 h-3 shrink-0" />
+                          <span className="truncate text-xs">{conv.title || conv.messages[0]?.content?.slice(0, 40) || t("chat.new")}</span>
+                        </Link>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Settings */}

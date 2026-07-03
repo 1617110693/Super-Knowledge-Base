@@ -20,7 +20,7 @@ interface ChatState {
   newConversation: () => string;
   setActiveConversation: (id: string) => void;
   addMessage: (convId: string, msg: ChatMessage) => void;
-  updateLastAssistant: (convId: string, content: string, sources?: SearchResult[]) => void;
+  updateLastAssistant: (convId: string, content: string, sources?: SearchResult[], reasoning?: string) => void;
   updateLastAssistantWithToolCalls: (convId: string, content: string, toolCalls: ToolCall[], sources?: SearchResult[]) => void;
   deleteConversation: (id: string) => void;
   clearAll: () => void;
@@ -81,12 +81,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ conversations });
   },
 
-  updateLastAssistant: (convId, content, sources?) => {
+  updateLastAssistant: (convId, content, sources?, reasoning?) => {
     const conversations = get().conversations.map((c) => {
       if (c.id !== convId) return c;
       const messages = [...c.messages];
       if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
-        messages[messages.length - 1] = { ...messages[messages.length - 1], content, sources };
+        messages[messages.length - 1] = { ...messages[messages.length - 1], content, sources, reasoning };
       }
       return { ...c, messages, updatedAt: new Date().toISOString() };
     });

@@ -211,6 +211,8 @@ export const translations = {
   "settings.llm": { en: "LLM for Chat (OpenAI-compatible)", "zh-CN": "对话 LLM（OpenAI 兼容）" },
   "settings.vlm": { en: "VLM for Image Description (Optional)", "zh-CN": "VLM 图片描述（可选）" },
   "settings.vlmHint": { en: "Configure a Vision Language Model to generate AI descriptions for images in documents. Leave empty to use MinerU captions only.", "zh-CN": "配置视觉语言模型为文档中的图片生成 AI 描述。留空则仅使用 MinerU 提取的图片标题。" },
+  "settings.vlmEnabled": { en: "Enable VLM image description", "zh-CN": "启用 VLM 图片描述" },
+  "settings.vlmEnabledHint": { en: "When enabled, images are sent to the VLM during indexing to generate AI descriptions. Disable to use only MinerU captions (faster indexing).", "zh-CN": "开启后在索引时将图片发送给 VLM 生成 AI 描述。关闭则仅使用 MinerU 标题（索引更快）。" },
   "settings.extractMultimodal": { en: "Extract images & tables", "zh-CN": "提取图片和表格" },
   "settings.extractMultimodalHint": { en: "Extract images, tables, and equations as separate searchable chunks. Images are saved to disk and indexed with text descriptions.", "zh-CN": "将图片、表格和公式提取为独立可搜索的 chunk。图片保存到磁盘并用文本描述索引。" },
   "settings.toolLimits": { en: "Tool Limits", "zh-CN": "工具调用限制" },

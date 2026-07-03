@@ -2,9 +2,10 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useKBStore } from "../../stores/useKBStore";
 import { useI18n } from "../../i18n";
-import { indexDocument } from "../../services/pythonClient";
+import { indexDocument, waitForIndex } from "../../services/pythonClient";
+import { getParseProgress } from "../../services/tauriBridge";
 import { Upload, FileText, Trash2, Loader2, CheckCircle, XCircle, Clock, Eye } from "lucide-react";
-import type { Document } from "../../types";
+import type { Document, ParseProgress } from "../../types";
 
 const STATUS_MAP: Record<string, { icon: React.ReactNode; labelKey: "parse.pending" | "parse.parsing" | "parse.done" | "parse.failed" }> = {
   pending: { icon: <Clock className="w-4 h-4 text-yellow-500" />, labelKey: "parse.pending" },
@@ -19,15 +20,21 @@ export function DocumentManager() {
   const { t } = useI18n();
   const { documents, loadDocuments, uploadDocument, deleteDocument, refreshDocument } = useKBStore();
   const [uploading, setUploading] = useState(false);
-  const [indexing, setIndexing] = useState<Record<string, boolean>>({});
+  const [indexing, setIndexing] = useState<Record<string, { percent: number; stage: string; current: number; total: number }>>({});
+  const [parseProgress, setParseProgress] = useState<Record<string, ParseProgress>>({});
 
   useEffect(() => { if (kbId) loadDocuments(kbId); }, [kbId]);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      documents.filter((d) => d.parse_status === "parsing").forEach((d) => {
-        if (kbId) refreshDocument(kbId, d.id);
+      documents.filter((d) => d.parse_status === "parsing").forEach(async (d) => {
+        if (kbId) {
+          refreshDocument(kbId, d.id);
+          const p = await getParseProgress(kbId, d.id);
+          if (p) setParseProgress(prev => ({ ...prev, [d.id]: p }));
+        }
       });
+    }, 2000);
     }, 3000);
     return () => clearInterval(interval);
   }, [documents, kbId]);
@@ -54,12 +61,17 @@ export function DocumentManager() {
   const handleIndex = async (doc: Document) => {
     if (!kbId) return;
     try {
-      setIndexing((p) => ({ ...p, [doc.id]: true }));
-      const { getDocumentContent } = await import("../../services/tauriBridge");
+      setIndexing((p) => ({ ...p, [doc.id]: { percent: 0, stage: "starting", current: 0, total: 0 } }));
+      const { getDocumentContent, saveDocumentChunks } = await import("../../services/tauriBridge");
       const content = await getDocumentContent(kbId, doc.id);
-      await indexDocument({ kb_id: kbId, doc_id: doc.id, doc_name: doc.name, markdown_content: content.markdown });
-      setIndexing((p) => ({ ...p, [doc.id]: false }));
-    } catch (e) { console.error(e); setIndexing((p) => ({ ...p, [doc.id]: false })); }
+      const { task_id } = await indexDocument({ kb_id: kbId, doc_id: doc.id, doc_name: doc.name, markdown_content: content.markdown });
+      const result = await waitForIndex(task_id, (p) => {
+        setIndexing((prev) => ({ ...prev, [doc.id]: { percent: p.percent, stage: p.stage, current: p.current, total: p.total } }));
+      });
+      await saveDocumentChunks(kbId, doc.id, result.chunk_count!, result.embedding_model!, result.embedding_dim!);
+      setIndexing((p) => { const { [doc.id]: _, ...rest } = p; return rest; });
+      await loadDocuments(kbId);
+    } catch (e) { console.error(e); setIndexing((p) => { const { [doc.id]: _, ...rest } = p; return rest; }); }
   };
 
   return (
@@ -99,12 +111,15 @@ export function DocumentManager() {
                 </div>
                 <div className="flex items-center gap-2 ml-4">
                   <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                    {status.icon}{t(status.labelKey)}
+                    {status.icon}
+                    {doc.parse_status === "parsing" && parseProgress[doc.id]
+                      ? `${parseProgress[doc.id].percent}%`
+                      : t(status.labelKey)}
                   </span>
                   {doc.parse_status === "done" && (
-                    <button onClick={() => handleIndex(doc)} disabled={indexing[doc.id]}
+                    <button onClick={() => handleIndex(doc)} disabled={doc.id in indexing}
                       className="px-2 py-1 bg-blue-500 text-white rounded text-xs font-medium hover:bg-blue-600 disabled:opacity-50">
-                      {indexing[doc.id] ? t("docs.indexing") : t("docs.index")}
+                      {doc.id in indexing ? (indexing[doc.id]?.stage === "vlm" && indexing[doc.id]?.total > 0 ? `VLM ${indexing[doc.id]?.current}/${indexing[doc.id]?.total}` : `Idx ${indexing[doc.id]?.percent ?? 0}%`) : t("docs.index")}
                     </button>
                   )}
                   <button onClick={() => navigate(`/kb/${kbId}/documents/${doc.id}`)}

@@ -178,6 +178,33 @@ def clean_orphans():
     except Exception as e:
         results.append(f"Error in kb_id repair: {e}")
 
+    # 5. Remove LanceDB chunks whose documents no longer have full.md
+    try:
+        db3 = LanceDBManager(lancedb_dir)
+        try:
+            for kb_id in registry_ids:
+                table = db3.get_table(kb_id)
+                if table is None:
+                    continue
+                try:
+                    docs_dir = data_dir / f"kb_{kb_id}" / "docs"
+                    all_rows = table.search().limit(50000).to_list()
+                    dead_docs: set[str] = set()
+                    for row in all_rows:
+                        did = str(row.get("doc_id", ""))
+                        if did and did not in dead_docs:
+                            if not (docs_dir / did / "full.md").exists():
+                                dead_docs.add(did)
+                    for did in dead_docs:
+                        table.delete(f"doc_id = '{did}'")
+                        results.append(f"Removed orphan chunks for doc {did} in KB {kb_id}")
+                except Exception as e:
+                    results.append(f"Error checking orphans in KB {kb_id}: {e}")
+        finally:
+            db3.close()
+    except Exception as e:
+        results.append(f"Error in orphan chunk cleanup: {e}")
+
     # Return cleaned count (orphans removed) + repaired count separately
     actual_cleaned = sum(1 for r in results if "Removed" in r)
     return {"cleaned": actual_cleaned, "details": results}

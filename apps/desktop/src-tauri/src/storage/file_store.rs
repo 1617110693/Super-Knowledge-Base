@@ -692,10 +692,10 @@ impl FileStore {
     pub fn get_document_content(&self, kb_id: &str, doc_id: &str) -> CommandResult<crate::models::DocumentContent> {
         let doc_dir = self.get_doc_dir(kb_id, doc_id);
         let md_path = doc_dir.join("full.md");
-        let markdown = if md_path.exists() {
-            std::fs::read_to_string(&md_path)?
+        let (markdown, md_available) = if md_path.exists() {
+            (std::fs::read_to_string(&md_path)?, true)
         } else {
-            String::from("*Document is still being parsed...*")
+            (String::new(), false)
         };
 
         let meta_path = doc_dir.join("parse_meta.json");
@@ -734,6 +734,7 @@ impl FileStore {
             id: doc_id.to_string(),
             name,
             markdown,
+            md_available,
             metadata,
         })
     }

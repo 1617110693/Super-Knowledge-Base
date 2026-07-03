@@ -34,17 +34,19 @@ export interface DocumentContent {
   id: string;
   name: string;
   markdown: string;
+  md_available: boolean;
   metadata: Record<string, unknown>;
+}
+
+export interface ParseProgress {
+  percent: number;
+  stage: string;
 }
 
 export interface ParseTask {
   task_id: string;
   state: "pending" | "running" | "done" | "failed" | "converting";
-  progress?: {
-    extracted_pages: number;
-    total_pages: number;
-    start_time: string;
-  };
+  progress?: ParseProgress;
   full_zip_url?: string;
   err_msg?: string;
 }
@@ -65,6 +67,7 @@ export interface ToolCall {
 export interface ChatMessage {
   role: "user" | "assistant" | "tool";
   content: string;
+  reasoning?: string;
   sources?: SearchResult[];
   tool_calls?: ToolCall[];
   tool_call_id?: string;
@@ -150,6 +153,7 @@ export interface AppSettings {
   vlm_api_base: string;
   vlm_api_key: string;
   vlm_model: string;
+  vlm_enabled: boolean;
   extract_multimodal: boolean;
   chunk_strategy: "fixed" | "semantic" | "recursive";
   chunk_size: number;
@@ -184,6 +188,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   vlm_api_base: "",
   vlm_api_key: "",
   vlm_model: "",
+  vlm_enabled: true,
   extract_multimodal: true,
   chunk_strategy: "recursive",
   chunk_size: 512,

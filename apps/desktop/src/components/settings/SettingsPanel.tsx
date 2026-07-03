@@ -458,6 +458,8 @@ export function SettingsPanel() {
                 className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
             </div>
           ))}
+          <Toggle field="vlm_enabled" label={t("settings.vlmEnabled")} />
+          <p className="text-xs text-muted-foreground">{t("settings.vlmEnabledHint")}</p>
           <Toggle field="extract_multimodal" label={t("settings.extractMultimodal")} />
           <p className="text-xs text-muted-foreground">{t("settings.extractMultimodalHint")}</p>
           <button onClick={handleTestVLM} disabled={testingVLM || !form.vlm_api_base || !form.vlm_model}

@@ -188,12 +188,17 @@ class Chunker:
         return parts if parts else [table_text]
 
     @staticmethod
-    def _annotate_char_positions(text: str, chunks: List[Chunk]) -> None:
+    def _annotate_char_positions(text: str, chunks: List[Chunk], chunk_overlap: int = 0) -> None:
         """Find each chunk's content in the original text and annotate
         its start_char position.  Copies metadata so chunks don't share dicts."""
         pos = 0
         for c in chunks:
-            idx = text.find(c.content, pos)
+            # Search from current position; if not found (common for overlapping
+            # chunks where the overlap starts before pos), retry from the overlap
+            # window or the document start.
+            idx = text.find(c.content, max(0, pos - chunk_overlap))
+            if idx < 0:
+                idx = text.find(c.content, 0)
             c.metadata = dict(c.metadata)  # detach from shared dict
             if idx >= 0:
                 c.metadata["start_char"] = idx
@@ -257,7 +262,7 @@ class FixedSizeChunker(Chunker):
             start += self.chunk_size - self.chunk_overlap
             chunk_index += 1
         chunks = self._restore_tables(chunks, table_map, self.chunk_size)
-        self._annotate_char_positions(text, chunks)
+        self._annotate_char_positions(text, chunks, self.chunk_overlap)
         self._annotate_page_info(chunks, page_mapper)
         return chunks
 
@@ -313,7 +318,7 @@ class SemanticChunker(Chunker):
                 Chunk(content=current.strip(), metadata=meta, chunk_index=chunk_index)
             )
         chunks = self._restore_tables(chunks, table_map, self.chunk_size)
-        self._annotate_char_positions(text, chunks)
+        self._annotate_char_positions(text, chunks, self.chunk_overlap)
         self._annotate_page_info(chunks, page_mapper)
         return chunks
 
@@ -339,7 +344,7 @@ class RecursiveChunker(Chunker):
         chunks: List[Chunk] = []
         self._split_text(protected, list(self.SEPARATORS), meta, 0, chunks)
         chunks = self._restore_tables(chunks, table_map, self.chunk_size)
-        self._annotate_char_positions(text, chunks)
+        self._annotate_char_positions(text, chunks, self.chunk_overlap)
         self._annotate_page_info(chunks, page_mapper)
         return chunks
 

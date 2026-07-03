@@ -2,10 +2,10 @@ import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { MarkdownRenderer } from "../common/MarkdownRenderer";
 import { getDocumentContent, saveDocumentContent, saveDocumentChunks } from "../../services/tauriBridge";
-import { indexDocument, getChunkRange, searchDocument } from "../../services/pythonClient";
+import { indexDocument, waitForIndex, getChunkRange, searchDocument } from "../../services/pythonClient";
 import { listDocumentImages, readDocumentImage } from "../../services/tauriBridge";
 import { useI18n } from "../../i18n";
-import { FileText, Loader2, ArrowLeft, Pencil, Check, X, Search, XCircle, ChevronRight, List, ChevronDown, PanelLeftClose, PanelLeft, Image as ImageIcon, LayoutGrid, Rows3 } from "lucide-react";
+import { FileText, Loader2, ArrowLeft, Pencil, Check, X, Search, XCircle, ChevronRight, List, ChevronDown, PanelLeftClose, PanelLeft, Image as ImageIcon, LayoutGrid, Rows3, AlertTriangle } from "lucide-react";
 import { ImageDialog } from "./ImageDialog";
 import type { SearchResult } from "../../types";
 
@@ -54,6 +54,7 @@ export function DocumentPreview() {
     try { localStorage.setItem(`skb-toc-${docId}`, String(v)); } catch {}
   };
 
+  const [mdAvailable, setMdAvailable] = useState(true);
   const [chunkIdx, setChunkIdx] = useState<number | null>(() => {
     const v = new URLSearchParams(window.location.search).get("ci");
     return v ? parseInt(v) : null;
@@ -111,6 +112,7 @@ export function DocumentPreview() {
         const doc = await getDocumentContent(kbId, docId);
         setDocName(doc.name || doc.id);
         setContent(doc.markdown);
+        setMdAvailable(doc.md_available !== false);
       } catch { setDocName(docId); }
       try {
         const res = await getChunkRange({ kb_id: kbId, doc_id: docId, start: 0, end: 2000 });
@@ -176,14 +178,15 @@ export function DocumentPreview() {
     setSaving(true); setEditError("");
     try {
       await saveDocumentContent(kbId, docId, editContent);
-      const r = await indexDocument({ kb_id: kbId, doc_id: docId, doc_name: docName, markdown_content: editContent });
-      await saveDocumentChunks(kbId, docId, r.chunk_count, r.embedding_model, r.embedding_dim);
+      const { task_id } = await indexDocument({ kb_id: kbId, doc_id: docId, doc_name: docName, markdown_content: editContent });
+      const r = await waitForIndex(task_id);
+      await saveDocumentChunks(kbId, docId, r.chunk_count!, r.embedding_model!, r.embedding_dim!);
       setContent(editContent); setEditing(false);
     } catch (e) { setEditError(String(e)); }
     setSaving(false);
   };
 
-  if (loading || !content) {
+  if (loading) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -192,9 +195,28 @@ export function DocumentPreview() {
     );
   }
 
+  if (!mdAvailable) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 p-6 max-w-md mx-auto text-center">
+        <AlertTriangle className="w-10 h-10 text-amber-500" />
+        <div>
+          <p className="text-sm font-medium">This document has no parsed content.</p>
+          <p className="text-xs text-muted-foreground mt-1">It may be a parent document whose parts were indexed, or the parse has not completed.</p>
+        </div>
+        <div className="bg-muted rounded-lg p-3 w-full text-left">
+          <p className="text-[10px] text-muted-foreground font-mono break-all">KB: {kbId}</p>
+          <p className="text-[10px] text-muted-foreground font-mono break-all">Doc: {docId}</p>
+        </div>
+        <button onClick={() => navigate(`/kb/${kbId}`)} className="px-3 py-1.5 border rounded-md text-xs hover:bg-muted">
+          ← Back to knowledge base
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <button onClick={() => navigate(`/kb/${kbId}`)} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4">
+      <button onClick={() => navigate(-1)} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4">
         <ArrowLeft className="w-4 h-4" /> Back
       </button>
       <div className="flex items-center gap-3 mb-6">
@@ -698,16 +720,31 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbI
     else { const old = sentinelsRef.current.get(idx); if (old) obsRef.current?.unobserve(old); sentinelsRef.current.delete(idx); }
   }, []);
 
-  // Scroll to target heading/chunk.  Uses heading char position directly
-  // (via charToSection) to find the target section, bypassing the
-  // chunk→section mapping which has an off-by-one from chunk boundaries.
+  // Scroll to target heading/chunk.
   useEffect(() => {
     if (chunkIdx == null) return;
 
-    // Determine target section: prefer heading position if available
-    const secIdx = scrollTarget
-      ? charToSection(scrollTarget.pos)
-      : chunkSection.get(chunkIdx) ?? null;
+    let secIdx: number | null = null;
+    if (scrollTarget) {
+      secIdx = charToSection(scrollTarget.pos);
+    } else {
+      // Use start_char from the API to find the section.
+      // If char position falls right on a section boundary newline,
+      // advance past it so we land in the correct (next) section.
+      const sc = startCharMap.get(chunkIdx);
+      if (sc != null) {
+        secIdx = charToSection(sc);
+        // If sc points to a newline that separates sections, the
+        // previous section's content may include that newline,
+        // causing charToSection to return the wrong section.
+        // Check and correct.
+        if (sc > 0 && secIdx < sections.length - 1 &&
+            (content[sc] === '\n' || content[sc - 1] === '\n')) {
+          secIdx = charToSection(sc + 1);
+        }
+      }
+      secIdx = secIdx ?? chunkSection.get(chunkIdx) ?? null;
+    }
 
     // Ensure the target section will be rendered
     if (secIdx != null) {
@@ -766,7 +803,7 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbI
     }, 150);
 
     return () => clearTimeout(timer);
-  }, [chunkIdx, scrollTarget, sections.length, charToSection, chunkSection]);
+  }, [chunkIdx, scrollTarget, sections.length, charToSection, chunkSection, startCharMap]);
 
   // Single section: render with data-section-idx for consistency
   if (sections.length <= 1) {

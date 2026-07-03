@@ -50,6 +50,7 @@ class BackendConfig(BaseSettings):
     vlm_api_base: str = ""
     vlm_api_key: str = ""
     vlm_model: str = ""
+    vlm_enabled: bool = True
 
     class Config:
         env_prefix = ""

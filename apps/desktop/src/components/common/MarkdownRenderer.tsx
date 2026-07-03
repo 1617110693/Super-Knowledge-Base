@@ -79,6 +79,7 @@ interface Props {
   onSourceClick?: (source: any) => void;
   imgKbId?: string;
   imgDocId?: string;
+  imgSources?: { kb_id: string; doc_id: string; content?: string }[];
 }
 
 function CodeBlock({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -95,37 +96,122 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
   );
 }
 
-// Per-render image cache: filename → data URL
+/* Shared cache: filename → data URL (survives component re-renders) */
 const _imgCache = new Map<string, string>();
+const _imgResolveCache = new Map<string, { kb_id: string; doc_id: string }>();
 
-function InlineImg({ src, alt, imgKbId, imgDocId }: { src?: string; alt?: string; imgKbId?: string; imgDocId?: string }) {
-  const [dataUrl, setDataUrl] = useState(() => _imgCache.get(src || "") || "");
+function InlineImg({ src, alt, imgKbId, imgDocId, imgSources }: {
+  src?: string; alt?: string; imgKbId?: string; imgDocId?: string;
+  imgSources?: { kb_id: string; doc_id: string; content?: string }[];
+}) {
+  const [dataUrl, setDataUrl] = useState<string | null>(() => _imgCache.get(src || "") || null);
+  const [error, setError] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const pendingRef = useRef(false);
 
-  useEffect(() => {
-    if (!src || !imgKbId || !imgDocId) return;
-    if (dataUrl || pendingRef.current) return;
-    // Only intercept relative image paths (from MinerU markdown)
-    const name = src.replace(/\\/g, "/").split("/").pop() || src;
-    if (name === src && !src.startsWith("images/")) return; // not a doc image
-    pendingRef.current = true;
-    (async () => {
-      try {
-        const bytes = await readDocumentImage(imgKbId!, imgDocId!, name);
-        const blob = new Blob([new Uint8Array(bytes)]);
-        const url = URL.createObjectURL(blob);
-        _imgCache.set(src, url);
-        setDataUrl(url);
-      } catch {
-        // Image not found in doc — fall back to original src
-      }
-    })();
-  }, [src, imgKbId, imgDocId, dataUrl]);
+  const name = (src || "").replace(/\\/g, "/").split("/").pop() || src || "";
+  const isDocImage = src?.startsWith("images/") || (!src?.match(/^https?:\/\//) && name !== src);
+  // Document preview has explicit kb/doc; chat relies on imgSources
+  const isDocPreview = !!(imgKbId && imgDocId);
 
-  return <img src={dataUrl || src} alt={alt || ""} className="max-w-full h-auto rounded-lg my-2" loading="lazy" />;
+  useEffect(() => {
+    if (!src) return;
+    if (error || pendingRef.current) return;
+    if (dataUrl && dataUrl !== src) return;
+    if (!isDocImage) { setDataUrl(src); return; }
+
+    // Build candidate (kb, doc) pairs to try
+    const candidates: { kb_id: string; doc_id: string }[] = [];
+
+    // 1. Explicit props (document preview)
+    if (imgKbId && imgDocId) candidates.push({ kb_id: imgKbId, doc_id: imgDocId });
+
+    // 2. From imgSources: put content-matching sources first, then the rest
+    if (imgSources) {
+      const matching: typeof candidates = [];
+      const others: typeof candidates = [];
+      const seen = new Set<string>();
+      const add = (kb: string, did: string) => {
+        const key = `${kb}/${did}`;
+        if (!seen.has(key)) { seen.add(key); others.push({ kb_id: kb, doc_id: did }); }
+      };
+      for (const s of imgSources) {
+        if (s.content?.includes(name)) {
+          matching.push({ kb_id: s.kb_id, doc_id: s.doc_id });
+        } else {
+          add(s.kb_id, s.doc_id);
+        }
+      }
+      candidates.push(...matching, ...others);
+    }
+
+    if (candidates.length === 0) return;
+
+    pendingRef.current = true;
+    let loaded = false;
+    (async () => {
+      for (const { kb_id, doc_id } of candidates) {
+        try {
+          const bytes = await readDocumentImage(kb_id, doc_id, name);
+          const blob = new Blob([new Uint8Array(bytes)]);
+          const url = URL.createObjectURL(blob);
+          _imgCache.set(src, url);
+          _imgResolveCache.set(name, { kb_id, doc_id });
+          setDataUrl(url);
+          loaded = true;
+          break;
+        } catch { /* try next candidate */ }
+      }
+      if (!loaded) setError(true);
+      pendingRef.current = false;
+    })();
+  }, [src, name, imgKbId, imgDocId, isDocImage, dataUrl, error]);
+
+  if (!src) return null;
+  if (error) {
+    return <span className="inline-flex items-center gap-1 text-muted-foreground text-xs bg-muted/50 rounded px-2 py-1 my-1">
+      🖼 {alt || name || "image"}
+    </span>;
+  }
+
+  const imgUrl = dataUrl || src;
+
+  // Document preview: full-size image, no thumbnail
+  if (isDocPreview) {
+    return (
+      <span className="inline-block my-2">
+        <img src={imgUrl} alt={alt || ""} className="max-w-full h-auto rounded-lg" loading="lazy" />
+      </span>
+    );
+  }
+
+  // Chat: thumbnail with click-to-expand overlay
+  return (
+    <span className="inline-block my-2">
+      {/* Thumbnail — always rendered, never removed */}
+      <span className="block relative group cursor-pointer border rounded-lg overflow-hidden bg-muted/30 max-w-[260px]"
+        onClick={() => setExpanded(true)} style={{ contain: "paint layout" }}>
+        <img src={imgUrl} alt={alt || ""}
+          className="block w-full max-h-40 object-contain" loading="lazy" />
+        {alt ? <span className="block px-2 py-1 text-[10px] text-muted-foreground truncate leading-relaxed">{alt}</span> : null}
+      </span>
+      {/* Fullscreen overlay — rendered on top, thumbnail stays */}
+      {expanded && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 cursor-default"
+          onClick={() => setExpanded(false)}>
+          <img src={imgUrl} alt={alt || ""}
+            className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl" />
+          <button onClick={() => setExpanded(false)}
+            className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white text-lg leading-none w-8 h-8 flex items-center justify-center">
+            ✕
+          </button>
+        </div>
+      )}
+    </span>
+  );
 }
 
-export function MarkdownRenderer({ children, className, sources, onSourceClick, imgKbId, imgDocId }: Props) {
+export function MarkdownRenderer({ children, className, sources, onSourceClick, imgKbId, imgDocId, imgSources }: Props) {
   const count = sources?.length || 0;
   const content = count ? embedBadges(children, count) : children;
 
@@ -165,7 +251,7 @@ export function MarkdownRenderer({ children, className, sources, onSourceClick, 
         rehypePlugins={[rehypeRaw, rehypeMathInHtml, [rehypeKatex, { strict: false, throwOnError: false }]]}
         components={{
           img({ src, alt }: any) {
-            return <InlineImg src={src} alt={alt} imgKbId={imgKbId} imgDocId={imgDocId} />;
+            return <InlineImg src={src} alt={alt} imgKbId={imgKbId} imgDocId={imgDocId} imgSources={imgSources} />;
           },
           a({ href, children: aChildren, ...props }) {
             if (href && /^https?:\/\//.test(href)) {

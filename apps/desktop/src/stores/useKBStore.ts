@@ -11,7 +11,7 @@ interface KBState {
   documents: Document[];
   loading: boolean;
   error: string | null;
-  indexingIds: Set<string>;
+  indexingProgress: Record<string, { percent: number; stage: string; current: number; total: number }>;
   viewMode: ViewMode;
   sortMode: SortMode;
 
@@ -64,7 +64,7 @@ export const useKBStore = create<KBState>((set, get) => ({
   documents: [],
   loading: false,
   error: null,
-  indexingIds: new Set(),
+  indexingProgress: {},
   viewMode: (localStorage.getItem("kbViewMode") as ViewMode) || "card",
   sortMode: (localStorage.getItem("kbSortMode") as SortMode) || "manual",
 
@@ -169,35 +169,43 @@ export const useKBStore = create<KBState>((set, get) => ({
 
         // 4. Index (if parsing succeeded)
         if (parsed.parse_status === "done") {
-          set((s) => ({ indexingIds: new Set([...s.indexingIds, d.id]) }));
+          set((s) => ({ indexingProgress: { ...s.indexingProgress, [d.id]: { percent: 0, stage: "starting", current: 0, total: 0 } } }));
           try {
             const { getDocumentContent, saveDocumentChunks } = await import(
               "../services/tauriBridge"
             );
-            const { indexDocument } = await import("../services/pythonClient");
+            const { indexDocument, waitForIndex } = await import("../services/pythonClient");
             const content = await getDocumentContent(kbId, d.id);
-            const result = await indexDocument({
+            const { task_id } = await indexDocument({
               kb_id: kbId,
               doc_id: d.id,
               doc_name: d.name,
               markdown_content: content.markdown,
             });
-            await saveDocumentChunks(kbId, d.id, result.chunk_count, result.embedding_model, result.embedding_dim);
-            set((s) => ({
-              documents: updateDocInTree(s.documents, d.id, {
-                chunk_count: result.chunk_count,
-                embedding_model: result.embedding_model,
-              } as Partial<Document>),
-              knowledgeBases: s.knowledgeBases.map((k) =>
-                k.id === kbId ? { ...k, embedding_model: result.embedding_model, embedding_dim: result.embedding_dim } : k
-              ),
-              indexingIds: new Set([...s.indexingIds].filter((id) => id !== d.id)),
-            }));
+            let lastUpdate = 0;
+            const result = await waitForIndex(task_id, (p) => {
+              const now = Date.now();
+              if (now - lastUpdate < 800) return; // throttle to ~1.2 Hz
+              lastUpdate = now;
+              set((s) => ({ indexingProgress: { ...s.indexingProgress, [d.id]: { percent: p.percent, stage: p.stage, current: p.current, total: p.total } } }));
+            });
+            await saveDocumentChunks(kbId, d.id, result.chunk_count!, result.embedding_model!, result.embedding_dim!);
+            set((s) => {
+              const { [d.id]: _, ...rest } = s.indexingProgress;
+              return {
+                documents: updateDocInTree(s.documents, d.id, {
+                  chunk_count: result.chunk_count,
+                  embedding_model: result.embedding_model,
+                } as Partial<Document>),
+                knowledgeBases: s.knowledgeBases.map((k) =>
+                  k.id === kbId ? { ...k, embedding_model: result.embedding_model || "", embedding_dim: result.embedding_dim || 0 } : k
+                ),
+                indexingProgress: rest,
+              };
+            });
           } catch (e) {
             console.error("Auto-index failed:", e);
-            set((s) => ({
-              indexingIds: new Set([...s.indexingIds].filter((id) => id !== d.id)),
-            }));
+            set((s) => { const { [d.id]: _, ...rest } = s.indexingProgress; return { indexingProgress: rest }; });
           }
         }
       } catch { /* parse failed, keep original doc */ }
@@ -230,32 +238,40 @@ export const useKBStore = create<KBState>((set, get) => ({
   },
 
   reindexDocument: async (kbId: string, docId: string, docName: string) => {
-    set((s) => ({ indexingIds: new Set([...s.indexingIds, docId]) }));
+    set((s) => ({ indexingProgress: { ...s.indexingProgress, [docId]: { percent: 0, stage: "starting", current: 0, total: 0 } } }));
     try {
       const { getDocumentContent, saveDocumentChunks } = await import("../services/tauriBridge");
-      const { indexDocument } = await import("../services/pythonClient");
+      const { indexDocument, waitForIndex } = await import("../services/pythonClient");
       const content = await getDocumentContent(kbId, docId);
-      const result = await indexDocument({
+      const { task_id } = await indexDocument({
         kb_id: kbId,
         doc_id: docId,
         doc_name: docName,
         markdown_content: content.markdown,
       });
-      await saveDocumentChunks(kbId, docId, result.chunk_count, result.embedding_model, result.embedding_dim);
+      let lastUpdate = 0;
+      const result = await waitForIndex(task_id, (p) => {
+        const now = Date.now();
+        if (now - lastUpdate < 800) return;
+        lastUpdate = now;
+        set((s) => ({ indexingProgress: { ...s.indexingProgress, [docId]: { percent: p.percent, stage: p.stage, current: p.current, total: p.total } } }));
+      });
+      await saveDocumentChunks(kbId, docId, result.chunk_count!, result.embedding_model!, result.embedding_dim!);
       // Reload KBs from registry to get updated chunk_count totals
       await get().loadKBs();
-      set((s) => ({
-        documents: updateDocInTree(s.documents, docId, {
-          chunk_count: result.chunk_count,
-          embedding_model: result.embedding_model,
-        } as Partial<Document>),
-        indexingIds: new Set([...s.indexingIds].filter((id) => id !== docId)),
-      }));
+      set((s) => {
+        const { [docId]: _, ...rest } = s.indexingProgress;
+        return {
+          documents: updateDocInTree(s.documents, docId, {
+            chunk_count: result.chunk_count,
+            embedding_model: result.embedding_model,
+          } as Partial<Document>),
+          indexingProgress: rest,
+        };
+      });
     } catch (e) {
       console.error("Re-index failed:", e);
-      set((s) => ({
-        indexingIds: new Set([...s.indexingIds].filter((id) => id !== docId)),
-      }));
+      set((s) => { const { [docId]: _, ...rest } = s.indexingProgress; return { indexingProgress: rest }; });
     }
   },
 

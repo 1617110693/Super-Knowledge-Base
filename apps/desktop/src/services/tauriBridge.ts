@@ -7,6 +7,7 @@ import type {
   Document,
   DocumentContent,
   ParseTask,
+  ParseProgress,
   AppSettings,
 } from "../types";
 
@@ -201,6 +202,13 @@ export async function pollParseStatus(
   docId: string
 ): Promise<Document> {
   return invoke("poll_parse_status", { kbId, docId });
+}
+
+export async function getParseProgress(
+  kbId: string,
+  docId: string
+): Promise<ParseProgress | null> {
+  return invoke("get_parse_progress", { kbId, docId });
 }
 
 // ── Python Backend ──

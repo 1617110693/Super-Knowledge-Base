@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef, useCallback, useLayoutEffect } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { MarkdownRenderer } from "../common/MarkdownRenderer";
 import { getDocumentContent, saveDocumentContent, saveDocumentChunks } from "../../services/tauriBridge";
@@ -52,23 +52,12 @@ export function DocumentPreview() {
     try { localStorage.setItem(`skb-toc-${docId}`, String(v)); } catch {}
   };
 
-  // Reading position: restore last chunk index from localStorage if no URL param
   const [chunkIdx, setChunkIdx] = useState<number | null>(() => {
     const v = new URLSearchParams(window.location.search).get("ci");
-    if (v) return parseInt(v);
-    try {
-      const saved = localStorage.getItem(`skb-lastci-${docId}`);
-      return saved ? parseInt(saved) : null;
-    } catch { return null; }
+    return v ? parseInt(v) : null;
   });
+  const [scrollTarget, setScrollTarget] = useState<{ text: string; pos: number } | null>(null);
   const docScrollRef = useRef<HTMLDivElement>(null);
-
-  // Persist reading position on chunkIdx change
-  useEffect(() => {
-    if (chunkIdx != null && docId) {
-      try { localStorage.setItem(`skb-lastci-${docId}`, String(chunkIdx)); } catch {}
-    }
-  }, [chunkIdx, docId]);
 
   useEffect(() => {
     if (!kbId || !docId) return;
@@ -105,9 +94,10 @@ export function DocumentPreview() {
   const handleStartEdit = () => { setEditContent(content); setEditError(""); setEditing(true); };
   const handleCancelEdit = () => { setEditing(false); setEditContent(""); };
 
-  const jumpToChunk = useCallback((ci: number) => {
+  const jumpToChunk = useCallback((ci: number, heading?: { text: string; pos: number }) => {
     setSearchResults(null);
     window.history.replaceState({}, "", `?ci=${ci}`);
+    setScrollTarget(heading || null);
     setChunkIdx(ci);
   }, []);
 
@@ -282,7 +272,7 @@ export function DocumentPreview() {
             t={t}
           />
           <div className="flex-1 min-w-0">
-            <DocView content={content} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollRef={docScrollRef} />
+            <DocView content={content} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollTarget={scrollTarget} scrollRef={docScrollRef} />
           </div>
         </div>
       )}
@@ -370,11 +360,16 @@ function extractHeadings(
   const headings: Heading[] = [];
   let m: RegExpExecArray | null;
   while ((m = HEADING_RE.exec(content)) !== null) {
-    const ci = findChunk(m.index);
+    // Look up the chunk for the heading TEXT position (after "### "),
+    // not the `#` character position.  This prevents off-by-one when
+    // a chunk boundary falls exactly between the markdown prefix and
+    // the heading text.
+    const textPos = m.index + m[1].length + 1; // past "### "
+    const ci = findChunk(textPos);
     headings.push({
       level: m[1].length,
       text: m[2].trim(),
-      charOffset: m.index,
+      charOffset: textPos,
       chunkIndex: ci,
       page: ci != null ? findPage(ci) || undefined : undefined,
     });
@@ -431,7 +426,7 @@ function DocToc({
           ) : (
             headings.map((h, i) => (
               <button key={i}
-                onClick={() => { if (h.chunkIndex != null) jumpToChunk(h.chunkIndex); }}
+                onClick={() => { if (h.chunkIndex != null) jumpToChunk(h.chunkIndex, { text: h.text, pos: h.charOffset }); }}
                 className="block w-full text-left px-2 py-1 rounded hover:bg-muted text-xs truncate transition-colors"
                 style={{ paddingLeft: `${4 + (h.level - 1) * 10}px` }}>
                 {h.text}
@@ -480,14 +475,15 @@ function DocToc({
   );
 }
 
-function DocView({ content, startCharMap, chunkIdx, scrollRef }: {
+function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef }: {
   content: string; startCharMap: Map<number, number>; chunkIdx: number | null;
+  scrollTarget?: { text: string; pos: number } | null;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   const sections = useMemo(() => splitSections(content), [content]);
   const sectionOffsets = useMemo(() => buildSectionOffsets(content, sections), [content, sections]);
 
-  // Build sorted chunk entries: [chunkIndex, startChar, endChar]
+  // Build sorted chunk entries including char ranges
   const chunkEntries = useMemo(() => {
     const sorted = [...startCharMap.entries()].sort((a, b) => a[0] - b[0]);
     return sorted.map(([idx, start], i) => {
@@ -495,6 +491,16 @@ function DocView({ content, startCharMap, chunkIdx, scrollRef }: {
       return { chunkIndex: idx, startChar: start, endChar: end };
     });
   }, [startCharMap, content]);
+
+  // Map char position → section index (direct, no chunk intermediary)
+  const charToSection = useMemo(() => {
+    return (pos: number): number => {
+      for (let i = sectionOffsets.length - 1; i >= 0; i--) {
+        if (pos >= sectionOffsets[i]) return i;
+      }
+      return 0;
+    };
+  }, [sectionOffsets]);
 
   // Map chunk_idx → section_idx
   const chunkSection = useMemo(() => {
@@ -510,7 +516,6 @@ function DocView({ content, startCharMap, chunkIdx, scrollRef }: {
   const obsRef = useRef<IntersectionObserver | null>(null);
   const sentinelsRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const highlightRef = useRef<HTMLElement | null>(null);
-  const scrollVersionRef = useRef(0);
 
   const EAGER = 5;
 
@@ -562,86 +567,75 @@ function DocView({ content, startCharMap, chunkIdx, scrollRef }: {
     else { const old = sentinelsRef.current.get(idx); if (old) obsRef.current?.unobserve(old); sentinelsRef.current.delete(idx); }
   }, []);
 
-  // Scroll to target chunk.  Uses a ref-based scrollVersion so the
-  // effect fires on every chunkIdx change regardless of whether the
-  // rendered set changed (fixes the bug where repeated jumps to the
-  // same section would stop working after the first one).
-  useLayoutEffect(() => {
+  // Scroll to target heading/chunk.  Uses heading char position directly
+  // (via charToSection) to find the target section, bypassing the
+  // chunk→section mapping which has an off-by-one from chunk boundaries.
+  useEffect(() => {
     if (chunkIdx == null) return;
-    const version = ++scrollVersionRef.current;
 
-    const container = containerRef.current;
-    if (!container) return;
+    // Determine target section: prefer heading position if available
+    const secIdx = scrollTarget
+      ? charToSection(scrollTarget.pos)
+      : chunkSection.get(chunkIdx) ?? null;
 
-    // Clear previous highlight
-    if (highlightRef.current) {
-      highlightRef.current.style.backgroundColor = "";
-      highlightRef.current = null;
-    }
-
-    // If the target section isn't rendered yet, ensure it is, then retry
-    if (targetSecIdx != null && !renderedRef.current.has(targetSecIdx)) {
+    // Ensure the target section will be rendered
+    if (secIdx != null) {
       setRendered(prev => {
+        if (prev.has(secIdx)) return prev;
         const s = new Set(prev);
-        for (let i = Math.max(0, targetSecIdx - 3); i <= Math.min(sections.length - 1, targetSecIdx + 3); i++) s.add(i);
+        for (let i = Math.max(0, secIdx - 3); i <= Math.min(sections.length - 1, secIdx + 3); i++) s.add(i);
         return s;
       });
     }
 
-    // Defer the scroll by one frame so React has time to mount the
-    // target section element if it was just added to `rendered`.
-    const raf = requestAnimationFrame(() => {
-      // Check version to avoid duplicate scrolls from stale effects
-      if (version !== scrollVersionRef.current) return;
+    const timer = setTimeout(() => {
+      const container = containerRef.current;
+      if (!container) return;
 
-      if (targetSecIdx != null) {
-        const sectionEl = container.querySelector(`[data-section-idx="${targetSecIdx}"]`) as HTMLElement | null;
+      if (highlightRef.current) {
+        highlightRef.current.style.backgroundColor = "";
+        highlightRef.current = null;
+      }
+
+      if (secIdx != null) {
+        const sectionEl = container.querySelector(
+          `[data-section-idx="${secIdx}"]`
+        ) as HTMLElement | null;
         if (sectionEl) {
+          // Try to find the heading element within the section
+          let targetEl: HTMLElement = sectionEl;
+          if (scrollTarget) {
+            const stripMd = (s: string) => s.replace(/\s+/g, " ").replace(/[$*_`~]/g, "").trim();
+            const want = stripMd(scrollTarget.text);
+            const domHeadings = sectionEl.querySelectorAll("h1, h2, h3");
+            for (const h of domHeadings) {
+              if (stripMd(h.textContent || "") === want) { targetEl = h as HTMLElement; break; }
+            }
+            if (targetEl === sectionEl) {
+              for (const h of domHeadings) {
+                const t = stripMd(h.textContent || "");
+                if (t && want && (t.includes(want) || want.includes(t))) { targetEl = h as HTMLElement; break; }
+              }
+            }
+          }
+          targetEl.scrollIntoView({ block: "start", behavior: "instant" });
           sectionEl.style.backgroundColor = "#fef3c7";
           sectionEl.style.transition = "background-color 0.5s";
           highlightRef.current = sectionEl;
-          const tid = setTimeout(() => {
+          setTimeout(() => {
             if (highlightRef.current === sectionEl) {
               sectionEl.style.backgroundColor = "";
               highlightRef.current = null;
             }
           }, 2500);
-
-          const entry = chunkEntries.find(e => e.chunkIndex === chunkIdx);
-          const secStart = sectionOffsets[targetSecIdx] ?? 0;
-          const secEnd = targetSecIdx + 1 < sectionOffsets.length
-            ? sectionOffsets[targetSecIdx + 1]
-            : content.length;
-          const secLen = secEnd - secStart;
-          const ratio = secLen > 0 && entry
-            ? Math.max(0, Math.min(1, (entry.startChar - secStart) / secLen))
-            : 0;
-
-          const containerRect = container.getBoundingClientRect();
-          const sectionRect = sectionEl.getBoundingClientRect();
-          const chunkTop = sectionRect.top + sectionRect.height * ratio;
-          const offset = chunkTop - containerRect.top - containerRect.height * 0.25;
-          container.scrollTo({ top: container.scrollTop + offset, behavior: "instant" });
         }
       } else {
-        // Single section or no section: scroll to top
         container.scrollTo({ top: 0, behavior: "instant" });
-        const inner = container.firstElementChild as HTMLElement | null;
-        if (inner) {
-          inner.style.backgroundColor = "#fef3c7";
-          inner.style.transition = "background-color 0.5s";
-          highlightRef.current = inner;
-          const tid = setTimeout(() => {
-            if (highlightRef.current === inner) {
-              inner.style.backgroundColor = "";
-              highlightRef.current = null;
-            }
-          }, 2500);
-        }
       }
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [chunkIdx, targetSecIdx, chunkEntries, sectionOffsets, sections.length, content.length]);
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [chunkIdx, scrollTarget, sections.length, charToSection, chunkSection]);
 
   // Single section: render with data-section-idx for consistency
   if (sections.length <= 1) {

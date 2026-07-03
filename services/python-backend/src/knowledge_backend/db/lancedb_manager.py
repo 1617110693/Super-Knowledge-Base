@@ -463,6 +463,7 @@ class LanceDBManager:
         except Exception:
             pass
 
+        ctype = metadata.get("content_type", "text")
         return {
             "chunk_id": r.get("chunk_id", ""),
             "doc_id": r.get("doc_id", ""),
@@ -473,6 +474,7 @@ class LanceDBManager:
             "page_number": r.get("page_number", 0),
             "page_start": metadata.get("page_start", r.get("page_number", 0)),
             "page_end": metadata.get("page_end", r.get("page_number", 0)),
+            "content_type": ctype,
             "metadata": metadata,
             "prev_exists": prev_exists,
             "next_exists": next_exists,

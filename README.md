@@ -48,19 +48,22 @@ A local-first desktop knowledge base for AI agents. Built with **Tauri v2 + Reac
 - **Sidebar popover**: When sidebar is collapsed, click Chat icon → floating panel with conversation history + new conversation
 
 ### MCP Server
-18 tools for AI agents — single executable, requires the app running (or minimized to tray):
+20 tools for AI agents — single executable, requires the app running (or minimized to tray).
+Search results and chunks include `content_type` (`text`, `image`, `table`, `equation`) for content-aware rendering.
 
 | Tool | Description |
 |------|-------------|
-| `search_knowledge_base` | Hybrid search with reranking, optional context window |
+| `search_knowledge_base` | Hybrid search with reranking, optional context window. Results include `content_type` |
 | `search_all_knowledge_bases` | Global search across all KBs without specifying a target |
 | `search_document` | Search within a single document — precise, no KB-wide noise |
 | `list_knowledge_bases` | List all KBs with stats, detect orphaned data |
 | `list_documents` | List all documents in a KB with metadata |
 | `get_document` | Document content with `max_chars` truncation safeguard |
 | `get_document_summary` | Structured summary: metadata + heading outline + first/last chunk previews |
-| `get_document_chunks` | Get document chunks with `limit` param (N=first N, -N=last N, 0=all) |
-| `get_chunk_by_index` | Fetch a single chunk by doc_id + chunk_index |
+| `get_document_chunks` | Get document chunks with `limit` param (N=first N, -N=last N, 0=all). Includes `content_type` |
+| `get_chunk_by_index` | Fetch a single chunk by doc_id + chunk_index. Includes `content_type` |
+| `get_chunks_by_page` | Fetch all chunks on a specific page of a document |
+| `read_document_image` | Read an extracted document image (by name) as a base64 data URI for display |
 | `create_knowledge_base` | Create a new KB |
 | `delete_knowledge_base` | Delete a KB and all its data |
 | `rename_knowledge_base` | Rename a KB and update description |

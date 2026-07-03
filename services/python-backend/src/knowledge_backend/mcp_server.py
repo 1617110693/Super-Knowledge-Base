@@ -11,6 +11,7 @@ Configuration is read from the same settings.json via the backend's config modul
 import json
 import os
 import uuid
+import base64
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
@@ -1014,6 +1015,11 @@ def get_document_chunks(kb_id: str, doc_id: str, limit: int = 0) -> dict:
             chunks = chunks[limit:]
 
         def _format_chunk(c):
+            raw_meta = {}
+            try:
+                raw_meta = json.loads(c.get("metadata_json", "{}")) if c.get("metadata_json") else {}
+            except (json.JSONDecodeError, TypeError):
+                pass
             return {
                 "chunk_id": c.get("chunk_id", ""),
                 "content": c.get("content", ""),
@@ -1021,7 +1027,8 @@ def get_document_chunks(kb_id: str, doc_id: str, limit: int = 0) -> dict:
                 "page_number": c.get("page_number", 0),
                 "page_start": c.get("page_start"),
                 "page_end": c.get("page_end"),
-                "metadata": json.loads(c.get("metadata_json", "{}")) if c.get("metadata_json") else {},
+                "content_type": raw_meta.get("content_type", "text"),
+                "metadata": raw_meta,
             }
 
         result = {
@@ -1076,6 +1083,53 @@ def get_chunks_by_page(kb_id: str, doc_id: str, page: int) -> dict:
         }
     finally:
         db.close()
+
+
+@mcp.tool
+def read_document_image(kb_id: str, doc_id: str, image_name: str) -> dict:
+    """Read an image file from a document's extracted images.
+
+    Each document may have images extracted during MinerU parsing. Use this
+    to retrieve the actual image binary when a search result has content_type='image'
+    or when an image chunk references a specific image file.
+
+    Returns the image as a base64-encoded data URI that can be displayed directly.
+    Use this sparingly — only fetch images the user has asked to see."""
+    doc_dir = Path(DATA_DIR) / f"kb_{kb_id}" / "docs" / doc_id / "images"
+    if not doc_dir.exists():
+        return {"error": f"Document or images directory not found: {doc_id}"}
+
+    img_path = doc_dir / image_name
+    if not img_path.exists():
+        # List available images for convenience
+        available = sorted([
+            p.name for p in doc_dir.iterdir()
+            if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}
+        ])
+        return {
+            "error": f"Image not found: {image_name}",
+            "available_images": available,
+        }
+
+    ext = img_path.suffix.lower()
+    mime_map = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp",
+        ".svg": "image/svg+xml",
+    }
+    mime_type = mime_map.get(ext, "application/octet-stream")
+
+    try:
+        data = img_path.read_bytes()
+        encoded = base64.b64encode(data).decode("ascii")
+        return {
+            "name": image_name,
+            "mime_type": mime_type,
+            "size_bytes": len(data),
+            "data_uri": f"data:{mime_type};base64,{encoded}",
+        }
+    except Exception as e:
+        return {"error": f"Failed to read image: {e}"}
 
 
 # ── Entry Point ──

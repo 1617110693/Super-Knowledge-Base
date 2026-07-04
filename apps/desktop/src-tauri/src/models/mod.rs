@@ -78,6 +78,8 @@ pub struct DocumentContent {
     pub markdown: String,
     pub md_available: bool,
     pub metadata: serde_json::Value,
+    #[serde(default)]
+    pub page_offset: i32,
 }
 
 /// MinerU parse task info

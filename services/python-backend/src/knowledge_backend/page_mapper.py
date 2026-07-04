@@ -15,6 +15,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+# Bump this when page mapping logic changes to invalidate stale caches
+_CACHE_VERSION = 2
+
 
 @dataclass
 class PageBoundary:
@@ -57,7 +60,7 @@ class PageMapper:
         if cache_path.exists() and latest_mtime > 0:
             try:
                 cache = json.loads(cache_path.read_text(encoding="utf-8"))
-                if cache.get("mtime") == latest_mtime:
+                if cache.get("mtime") == latest_mtime and cache.get("version") == _CACHE_VERSION:
                     pm = cls.__new__(cls)
                     pm._pages = [PageBoundary(**p) for p in cache["pages"]]
                     pm._match_rate = cache.get("match_rate", 0)
@@ -83,6 +86,7 @@ class PageMapper:
         # Write cache
         try:
             cache = {
+                "version": _CACHE_VERSION,
                 "mtime": latest_mtime,
                 "match_rate": pm._match_rate,
                 "pages": [{"start_char": p.start_char, "end_char": p.end_char,
@@ -98,18 +102,20 @@ class PageMapper:
     def _from_content_list(
         cls, cl_path: Path, layout_path: Path, markdown_text: str
     ) -> Optional["PageMapper"]:
-        """Build page mapper from content_list.json + mineru_result.json.
+        """Build page mapper from content_list.json.
 
-        Matches every individual block (not whole pages) against the markdown.
-        Each block's short, unique text is much easier to locate than a whole
-        page worth of text — this gives near-100% match rates.
+        Uses simple forward substring search for each block's text in the
+        markdown — no fingerprint extraction, no CJK/alpha tokenization.
+        Blocks appear in content_list in the same order as the markdown,
+        so we track the search position forward, falling back to the
+        accumulated position for blocks that don't match exactly.
         """
         cl_data = json.loads(cl_path.read_text(encoding="utf-8"))
         if not isinstance(cl_data, list):
             return None
 
-        # Load printed page number mapping from layout.json
-        page_num_map: dict = {}  # page_idx → printed page number
+        # Load printed page number mapping from mineru_result.json
+        page_num_map: dict = {}  # page_idx → physical_page (printed number)
         if layout_path.exists():
             try:
                 layout = json.loads(layout_path.read_text(encoding="utf-8"))
@@ -119,8 +125,16 @@ class PageMapper:
             except Exception:
                 pass
 
-        # Build ordered list of (page_idx, block_text) for all blocks
-        blocks: list = []  # [(page_idx, text), ...]
+        # Walk blocks in MinerU order.  For each text-carrying block, find
+        # its position in the markdown via simple forward substring search.
+        # Non-text blocks (images, tables, equations) don't contribute text
+        # to the markdown so they're tracked by their page_idx only.
+        hits: dict[int, list[int]] = {}  # page_idx → [char_positions]
+        search_pos = 0
+        total_blocks = 0
+        matched_blocks = 0
+        prev_page_idx: int | None = None
+
         for item in cl_data:
             if not isinstance(item, dict):
                 continue
@@ -129,104 +143,67 @@ class PageMapper:
                 continue
             if item.get("type") == "page_number":
                 continue
+
             text = _extract_content_list_text(item)
-            if text:
-                blocks.append((pi, text))
-
-        if not blocks:
-            return None
-
-        # Count unique pages
-        total_pages = len({b[0] for b in blocks})
-
-        # Choose mode
-        cjk_count = sum(1 for ch in markdown_text if _is_cjk(ch))
-        cjk_density = cjk_count / max(1, len(markdown_text))
-        mode = "cjk" if cjk_density > 0.05 else "alpha"
-
-        # Build token index for markdown
-        if mode == "cjk":
-            md_tokens, md_tok_pos = _cjks_with_pos(markdown_text)
-            md_tok_str = "".join(md_tokens)
-            get_fp = lambda text: "".join(ch for ch in text if _is_cjk(ch))
-            min_fp_len = 5
-        else:
-            md_tokens, md_tok_pos = _words_with_pos(markdown_text)
-            md_tok_str = " ".join(md_tokens)
-            get_fp = lambda text: " ".join(_extract_words(text))
-            min_fp_len = 3
-
-        # Block-level matching: walk through blocks in order, match each
-        # individually. Since blocks appear in markdown in the same order as
-        # content_list, we search forward from the last found position.
-        prev_tok = 0
-        hits: dict = {}  # page_idx → [md_char_positions]
-        matched_count = 0
-        total_text_blocks = 0
-
-        for page_idx, block_text in blocks:
-            fp = get_fp(block_text)
-            if mode == "cjk":
-                if len(fp) < min_fp_len:
-                    continue
-                total_text_blocks += 1
-                pos = md_tok_str.find(fp, prev_tok)
-                if pos < 0:
-                    # Try shorter prefix — block may have minor text differences
-                    pos = md_tok_str.find(fp[:max(8, len(fp) // 2)], prev_tok)
-            else:
-                words = fp.split()
-                if len(words) < min_fp_len:
-                    continue
-                total_text_blocks += 1
-                anchor = " ".join(words[:8])
-                pos = md_tok_str.find(anchor, prev_tok)
-                if pos < 0:
-                    pos = md_tok_str.find(" ".join(words[:max(3, len(words) // 2)]), prev_tok)
-
-            if pos < 0:
+            if not text:
+                # Non-text block — still track its page_idx so the page
+                # appears in the page bar even if it has no text content
+                if prev_page_idx is not None and pi != prev_page_idx:
+                    hits.setdefault(pi, []).append(search_pos)
+                prev_page_idx = pi
                 continue
 
-            matched_count += 1
-            md_pos = md_tok_pos[pos] if pos < len(md_tok_pos) else 0
-            hits.setdefault(page_idx, []).append(md_pos)
-            prev_tok = pos + 1  # advance past this match
+            total_blocks += 1
 
-        block_match_rate = matched_count / max(1, total_text_blocks)
+            # Forward search: the block should appear at or after search_pos
+            idx = markdown_text.find(text, search_pos)
+            if idx < 0:
+                # Try shorter prefix — MinerU may have slightly different text
+                idx = markdown_text.find(text[:max(15, len(text) // 3)], search_pos)
+            if idx < 0:
+                # Last resort: search from beginning (for TOC / reordered blocks)
+                idx = markdown_text.find(text, 0)
 
-        if block_match_rate < 0.5 and total_text_blocks > 20:
-            print(
-                f"[PageMapper] Block match rate {block_match_rate:.0%} too low, "
-                f"falling back to layout.json",
-                file=sys.stderr,
-            )
+            if idx >= 0:
+                hits.setdefault(pi, []).append(idx)
+                search_pos = idx + len(text)
+                matched_blocks += 1
+            else:
+                # Block text not found — use accumulated position as estimate
+                hits.setdefault(pi, []).append(search_pos)
+
+            prev_page_idx = pi
+
+        if not hits:
             return None
 
-        # Build page boundaries from block hits.
-        # Each page's start_char = min position of its blocks;
-        # end_char is set later by _fixup_boundaries.
+        block_match_rate = matched_blocks / max(1, total_blocks)
+
+        # Build one boundary per page: start = earliest block, end = latest block
         boundaries = []
-        for page_idx, positions in sorted(hits.items()):
-            physical = page_num_map.get(page_idx, page_idx + 1)
+        for page_idx in sorted(hits.keys()):
+            positions = hits[page_idx]
+            physical = page_num_map.get(page_idx, page_idx)
             boundaries.append(PageBoundary(
                 start_char=min(positions),
-                end_char=max(positions),  # temporary, fixed by _fixup_boundaries
+                end_char=max(positions),
                 page_idx=page_idx,
                 physical_page=physical,
             ))
         boundaries.sort(key=lambda p: p.start_char)
 
-        # Build PageMapper instance
         pm = cls.__new__(cls)
         pm._pages = boundaries
         pm._match_rate = block_match_rate
 
-        # Fill missing pages via interpolation
+        # Interpolate missing pages and fix up boundary chain
+        total_pages = len({pi for item in cl_data if isinstance(item, dict)
+                           and isinstance(item.get("page_idx"), int)})
         pm._interpolate_remaining(total_pages, len(markdown_text))
         pm._fixup_boundaries(len(markdown_text))
 
         print(
-            f"[PageMapper] block-level: {matched_count}/{total_text_blocks} blocks matched "
+            f"[PageMapper] content_list: {matched_blocks}/{total_blocks} blocks matched "
             f"({block_match_rate:.0%}), {len(boundaries)}/{total_pages} pages",
             file=sys.stderr,
         )
@@ -244,43 +221,12 @@ class PageMapper:
         return start
 
     def _build(self, pdf_info: list, markdown_text: str):
-        """Detect language mode, fingerprint pages, fill gaps, verify quality."""
-        total_pages = len(pdf_info)
-        # Auto-detect mode: if >20% of chars are CJK, use CJK mode
-        cjk_count = sum(1 for ch in markdown_text if _is_cjk(ch))
-        cjk_density = cjk_count / max(1, len(markdown_text))
-        use_cjk = cjk_density > 0.05  # 5% threshold is enough for reliable CJK matching
-
-        mode = "cjk" if use_cjk else "alpha"
-        matched, unmatched = self._match_pages(pdf_info, markdown_text, mode)
-
-        self._match_rate = len(matched) / total_pages if total_pages > 0 else 0
-
-        # Quality check: if <80% matched, fall back to paragraph-count
-        if self._match_rate < 0.8 and total_pages > 10:
-            print(f"[PageMapper] Low match rate ({self._match_rate:.0%}) with {mode} mode, "
-                  f"falling back to paragraph-count alignment", file=sys.stderr)
-            self._pages = self._fallback_paragraph_count(pdf_info, markdown_text)
-            return
-
-        self._pages = matched
-
-        # Fill gaps: iterative search within adjacent page boundaries
-        self._fill_gaps(pdf_info, markdown_text, mode)
-
-        # Final interpolation for remaining gaps
-        self._interpolate_remaining(total_pages, len(markdown_text))
-
-        # Fix up end_char chain
+        """Fallback when content_list.json is not available: distribute pages
+        evenly across the markdown text via paragraph-count alignment."""
+        self._pages = self._fallback_paragraph_count(pdf_info, markdown_text)
         self._fixup_boundaries(len(markdown_text))
-
-        # Log summary
-        final_count = len({p.physical_page for p in self._pages})
-        interpolated = final_count - len({p.physical_page for p in matched})
-        if interpolated > 0 or unmatched:
-            print(f"[PageMapper] {mode} mode: {len(matched)}/{total_pages} matched, "
-                  f"{interpolated} interpolated, {len(unmatched)} gaps",
-                  file=sys.stderr)
+        total_pages = len(pdf_info)
+        self._match_rate = 1.0 if total_pages == 0 else len(self._pages) / total_pages
 
     def _match_pages(self, pdf_info: list, markdown_text: str, mode: str
                      ) -> Tuple[List[PageBoundary], List[int]]:
@@ -449,18 +395,21 @@ class PageMapper:
             return
         self._pages.sort(key=lambda p: p.start_char)
 
-        # Handle leading pages (before first matched page)
+        # Handle leading pages (before first matched page).
+        # physical_page is 0-based (matches MinerU page_idx when no
+        # printed page number is available), so the first real page
+        # can be 0 (cover) or higher.
         first_phys = self._pages[0].physical_page
-        if first_phys > 1:
-            leading_gap = first_phys - 1
+        if first_phys > 0:
+            leading_gap = first_phys
             first_start = self._pages[0].start_char
             cpp = max(1, first_start // leading_gap) if leading_gap > 0 else 1
             for off in range(1, leading_gap + 1):
-                pg = first_phys - leading_gap + off - 1
+                pg = off - 1  # 0, 1, 2, ... up to first_phys - 1
                 self._pages.append(PageBoundary(
                     start_char=cpp * (off - 1),
                     end_char=cpp * off,
-                    page_idx=pg - 1, physical_page=pg,
+                    page_idx=pg, physical_page=pg,
                 ))
 
         # Temp end_chars
@@ -482,7 +431,7 @@ class PageMapper:
                         filled.append(PageBoundary(
                             start_char=p.end_char + cpp * (off - 1),
                             end_char=p.end_char + cpp * off,
-                            page_idx=pg - 1, physical_page=pg,
+                            page_idx=pg, physical_page=pg,
                         ))
 
         seen3 = {}
@@ -504,14 +453,17 @@ class PageMapper:
                 self._pages.append(PageBoundary(
                     start_char=last_start + cpp * (off - 1),
                     end_char=last_start + cpp * off,
-                    page_idx=pg - 1, physical_page=pg,
+                    page_idx=pg, physical_page=pg,
                 ))
 
     def _fixup_boundaries(self, md_len: int):
+        """Sort pages, fix overlaps, and chain end_chars to next start_char."""
         self._pages.sort(key=lambda p: p.start_char)
-        # First page must start at position 0
-        if self._pages and self._pages[0].start_char > 0:
-            self._pages[0].start_char = 0
+        if not self._pages:
+            return
+
+        self._pages[0].start_char = 0
+
         for i in range(1, len(self._pages)):
             if self._pages[i].start_char <= self._pages[i - 1].start_char:
                 self._pages[i].start_char = self._pages[i - 1].start_char + 1
@@ -590,14 +542,15 @@ def _extract_words(text: str) -> List[str]:
 
 
 def _extract_physical_page(page_info: dict, page_idx: int) -> int:
-    for block in page_info.get("discarded_blocks") or []:
-        if block.get("type") == "page_number":
-            for line in block.get("lines") or []:
-                for span in line.get("spans") or []:
-                    content = span.get("content", "").strip()
-                    if content:
-                        try: return int(content)
-                        except ValueError: pass
+    """Return 1-based page number from MinerU page index.
+
+    We intentionally do NOT attempt to recover printed page numbers from
+    ``discarded_blocks``.  MinerU's detection of header/footer page numbers
+    is unreliable — it misses pages, finds chapter/section numbers instead,
+    and produces gaps when mixed with fallback values.  Consistent 1-based
+    numbering (page_idx + 1) matches RAGFlow's approach and is always at
+    most 1 page off from the physical book (the cover being page 1).
+    """
     return page_idx + 1
 
 
@@ -617,9 +570,18 @@ def _extract_content_list_text(item: dict) -> str:
 
     Different item types store text in different fields.  Returns the
     concatenated text suitable for fingerprint matching.
+
+    Skips page headers, footers, and page numbers — these are noise
+    that repeats across pages and pollutes chunk content.
     """
-    parts = []
     item_type = str(item.get("type") or "").lower()
+
+    # Skip page furniture — headers, footers, and page numbers are
+    # repeated on many pages and are not real document content.
+    if item_type in ("header", "footer", "page_number"):
+        return ""
+
+    parts = []
 
     # Primary text field
     for key in ("text", "content", "body"):

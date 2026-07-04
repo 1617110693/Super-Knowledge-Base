@@ -10,6 +10,7 @@ Configuration is read from the same settings.json via the backend's config modul
 
 import json
 import os
+import re
 import uuid
 
 from datetime import datetime, timezone
@@ -37,6 +38,65 @@ _config = get_config()
 DATA_DIR = _config.knowledge_base_data_dir
 
 mcp = FastMCP(name="SKB")
+
+
+def _compute_page_offset(doc_dir: Path, doc_name: str) -> int:
+    """If this is a split-part document (e.g., _part2.pdf), compute the
+    cumulative page count from all previous parts so page numbers continue
+    seamlessly across parts."""
+    m = re.search(r"_part(\d+)\.", doc_name)
+    if not m:
+        return 0
+    part_num = int(m.group(1))
+    if part_num <= 1:
+        return 0
+
+    parent_dir = doc_dir.parent
+    base_name = doc_name[:m.start()]
+
+    offset = 0
+    for prev_part in range(1, part_num):
+        for sibling in parent_dir.iterdir():
+            if not sibling.is_dir():
+                continue
+            meta_path = sibling / "metadata.json"
+            if not meta_path.exists():
+                continue
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                name = meta.get("name", "")
+                if name.startswith(base_name) and f"_part{prev_part}." in name:
+                    page_cache = sibling / "page_map.cache"
+                    if page_cache.exists():
+                        cache = json.loads(page_cache.read_text(encoding="utf-8"))
+                        pages = cache.get("pages", [])
+                        if pages:
+                            max_idx = max(p.get("page_idx", 0) for p in pages)
+                            offset += max_idx + 1
+                            break
+                    mr_path = sibling / "mineru_result.json"
+                    if mr_path.exists():
+                        mr = json.loads(mr_path.read_text(encoding="utf-8"))
+                        pdf_info = mr.get("pdf_info", [])
+                        if pdf_info:
+                            offset += len(pdf_info)
+                            break
+            except Exception:
+                continue
+        else:
+            for sibling in parent_dir.iterdir():
+                if not sibling.is_dir():
+                    continue
+                for f in sibling.iterdir():
+                    if f.name.startswith(base_name) and f"_part{prev_part}" in f.name and f.suffix == ".pdf":
+                        try:
+                            from PyPDF2 import PdfReader
+                            reader = PdfReader(str(f))
+                            offset += len(reader.pages)
+                        except Exception:
+                            pass
+                        break
+    return offset
 
 
 def _get_db():
@@ -705,40 +765,157 @@ def add_document(
                     pending.append((fname, data))
 
             if pending:
+                MAX_VLM_RETRIES = 3
+
                 def _describe_one(fname: str, data: bytes) -> tuple[str, str, dict]:
                     fmt = Path(fname).suffix.lstrip(".") or "png"
-                    with httpx.Client(timeout=60.0) as client:
-                        return fname, *describe_image(
-                            data, fmt,
-                            vlm_api_base=_config.vlm_api_base,
-                            vlm_api_key=_config.vlm_api_key,
-                            vlm_model=_config.vlm_model,
-                            http=client,
-                        )
+                    last_error = ""
+                    for attempt in range(MAX_VLM_RETRIES):
+                        try:
+                            with httpx.Client(timeout=60.0) as client:
+                                desc, entity = describe_image(
+                                    data, fmt,
+                                    vlm_api_base=_config.vlm_api_base,
+                                    vlm_api_key=_config.vlm_api_key,
+                                    vlm_model=_config.vlm_model,
+                                    http=client,
+                                )
+                            if _is_valid_description(desc):
+                                return fname, desc, entity, ""
+                            last_error = f"empty/invalid description (attempt {attempt+1})"
+                        except Exception as e:
+                            last_error = str(e)
+                        if attempt < MAX_VLM_RETRIES - 1:
+                            import time as _t; _t.sleep(1.0 * (attempt + 1))
+                    return fname, "[Image - no description available]", {"entity_name": fname, "entity_type": "image", "summary": ""}, last_error
 
                 workers = min(max(1, _config.vlm_concurrency), len(pending))
                 with ThreadPoolExecutor(max_workers=workers) as executor:
                     futures = {executor.submit(_describe_one, fname, data): fname for fname, data in pending}
                     for future in as_completed(futures):
-                        try:
-                            fname, desc, entity = future.result()
-                        except Exception:
-                            fname = futures[future]
-                            desc = "[Image - no description available]"
-                            entity = {"entity_name": fname, "entity_type": "image", "summary": ""}
+                        fname, desc, entity, err = future.result()
+                        if err:
+                            print(f"[mcp] VLM failed for {fname}: {err}", file=sys.stderr)
                         image_descriptions[fname] = (desc, entity)
                         new_meta_entries[fname] = (desc, entity)
 
             if new_meta_entries:
                 _save_image_meta_batch(doc_dir, new_meta_entries)
 
-    # Index: chunk + embed with page mapping
-    from .page_mapper import PageMapper
-    page_mapper = PageMapper.from_doc_dir(doc_dir, markdown_content)
+            # Second pass: retry any images that still have no valid description
+            missed = []
+            for fname, (desc, _) in image_descriptions.items():
+                if not _is_valid_description(desc):
+                    missed.append(fname)
+            if missed:
+                from concurrent.futures import ThreadPoolExecutor as RetryExecutor, as_completed as retry_ac
+                print(f"[mcp] Retrying {len(missed)} images that have no valid description...", file=sys.stderr)
+                retry_items = [(fname, parse_result.extracted_images[fname])
+                               for fname in missed if fname in parse_result.extracted_images]
+                if retry_items:
+                    retry_workers = min(max(1, _config.vlm_concurrency), len(retry_items))
+                    retry_meta: dict[str, tuple[str, dict]] = {}
+                    with RetryExecutor(max_workers=retry_workers) as retry_ex:
+                        retry_futures = {retry_ex.submit(_describe_one, fname, data): fname
+                                         for fname, data in retry_items}
+                        for future in retry_ac(retry_futures):
+                            fname = retry_futures[future]
+                            _, desc, entity, err = future.result()
+                            if err:
+                                print(f"[mcp] Retry VLM failed for {fname}: {err}", file=sys.stderr)
+                            if _is_valid_description(desc):
+                                image_descriptions[fname] = (desc, entity)
+                                retry_meta[fname] = (desc, entity)
+                    if retry_meta:
+                        _save_image_meta_batch(doc_dir, retry_meta)
+                still = sum(1 for d in image_descriptions.values() if not _is_valid_description(d[0]))
+                print(f"[mcp] After retry: {still} images still without valid description", file=sys.stderr)
+
+    # Compute page offset for split documents BEFORE injecting markers
+    page_offset = _compute_page_offset(doc_dir, doc_name)
+
+    # Inject [PAGE:N] markers into markdown so chunks carry page info
+    from .api.documents import _inject_page_markers as _inject_pm, _extract_page_range as _extract_pr
+    tagged_md = _inject_pm(markdown_content, doc_dir)
+    if page_offset > 0:
+        import re as _re2
+        tagged_md = _re2.sub(
+            r"\[PAGE:(\d+)(?:\|(-?\d+))?\]",
+            lambda m: f"[PAGE:{int(m.group(1)) + page_offset}]",
+            tagged_md,
+        )
 
     chunker = RecursiveChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    chunks = chunker.chunk(markdown_content, metadata={"doc_id": doc_id, "doc_name": doc_name},
-                           page_mapper=page_mapper)
+    chunks = chunker.chunk(tagged_md, metadata={"doc_id": doc_id, "doc_name": doc_name},
+                           page_mapper=None)
+
+    # Split chunks that span multiple pages at PAGE marker boundaries.
+    import copy as _copy_mod
+    _split_chunks = []
+    for c in chunks:
+        markers = list(re.finditer(r"\[PAGE:(\d+)(?:\|(-?\d+))?\]", c.content))
+        pages_seen = {int(m.group(1)) for m in markers}
+        if len(pages_seen) <= 1:
+            _split_chunks.append(c)
+        else:
+            leading = c.content[:markers[0].start()].strip()
+            for i, m in enumerate(markers):
+                start = m.end()
+                end = markers[i + 1].start() if i + 1 < len(markers) else len(c.content)
+                sub = c.content[start:end].strip()
+                if i == 0 and leading:
+                    sub = leading + "\n" + sub if sub else leading
+                if sub:
+                    nc = _copy_mod.deepcopy(c)
+                    nc.content = sub
+                    page = int(m.group(1))
+                    nc.metadata["page"] = page
+                    nc.metadata["page_start"] = page
+                    nc.metadata["page_end"] = page
+                    if m.group(2) is not None:
+                        nc.metadata["start_char"] = int(m.group(2))
+                    _split_chunks.append(nc)
+    chunks = _split_chunks if _split_chunks else chunks
+
+    # Extract page ranges from markers (for non-split chunks)
+    last_page = 0
+    for c in chunks:
+        if "page_start" not in c.metadata:
+            ps, pe, sc, clean = _extract_pr(c.content)
+            c.content = clean
+            if ps == 0 and pe == 0:
+                ps = pe = last_page if last_page > 0 else 1
+            c.metadata["page"] = ps
+            c.metadata["page_start"] = ps
+            c.metadata["page_end"] = pe
+            if sc is not None:
+                c.metadata["start_char"] = sc
+        else:
+            c.content = re.sub(r"\[PAGE:\d+(?:\|-?\d+)?\]", "", c.content)
+            ps = c.metadata["page_start"]
+        if ps > 0:
+            last_page = ps
+
+    # Map chunk start_char (fallback for chunks without embedded position).
+    # Most chunks already have start_char from PAGE markers.
+    _search_from = 0
+    for c in chunks:
+        if "start_char" in c.metadata and isinstance(c.metadata.get("start_char"), int) and c.metadata["start_char"] >= 0:
+            _search_from = max(_search_from, c.metadata["start_char"] + len(c.content))
+        else:
+            if c.content.strip():
+                lookback = max(0, _search_from - 256)
+                idx = markdown_content.find(c.content, lookback)
+                if idx < 0:
+                    prefix = c.content[:80]
+                    idx = markdown_content.find(prefix, lookback)
+                if idx < 0 and _search_from > 0:
+                    idx = markdown_content.find(c.content, 0)
+                    if idx < 0:
+                        idx = markdown_content.find(c.content[:80], 0)
+                if idx >= 0:
+                    c.metadata["start_char"] = idx
+                    _search_from = idx + len(c.content)
 
     # Generate multimodal chunks from content_list.json
     mm_chunks = []
@@ -757,6 +934,21 @@ def add_document(
             print(f"[mcp] multimodal chunk generation failed: {e}", file=sys.stderr)
 
     all_chunks = chunks + mm_chunks
+
+    # Multimodal chunks use raw page_idx (0-based); convert to 1-based
+    # and apply page_offset for split documents
+    mm_offset = (page_offset if page_offset > 0 else 0) + 1
+    for c in mm_chunks:
+        for key in ("page", "page_start", "page_end"):
+            val = c.metadata.get(key, 0)
+            if isinstance(val, int):
+                c.metadata[key] = val + mm_offset
+        if page_offset > 0:
+            c.content = re.sub(
+                r"Page:\s*(\d+)",
+                lambda m: f"Page: {int(m.group(1)) + page_offset}",
+                c.content,
+            )
 
     embedder = OpenAICompatibleEmbedder(
         _config.embedding_api_base, _config.embedding_api_key, _config.embedding_model,

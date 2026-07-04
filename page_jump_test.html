@@ -1,0 +1,132 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>Page Jump Test</title>
+<style>
+body{margin:0;display:flex;height:100vh;font-family:system-ui}
+#toc{width:60px;overflow-y:auto;background:#f5f5f5;border-right:1px solid #ddd;padding:4px}
+#toc button{display:block;width:100%;padding:4px;border:none;background:none;cursor:pointer;text-align:center;font-size:10px}
+#toc button:hover{background:#e0e0e0}
+#viewer{flex:1;overflow-y:auto;padding:40px;max-width:900px}
+#viewer .prose{max-width:none}
+mark{background:#fef3c7;transition:background-color 0.5s}
+#status{position:fixed;top:8px;right:8px;background:#333;color:#fff;padding:4px 8px;border-radius:4px;font-size:12px;z-index:100}
+</style></head>
+<body>
+<div id="toc"></div>
+<div id="viewer"><div class="prose" id="content"></div></div>
+<div id="status">Loading...</div>
+<script>
+const KB='69f6900e-0107-4fa9-8375-5bdba2248c3a';
+const DOC='a7160fd0-b666-479b-93f9-6349c6afec83';
+const API='http://127.0.0.1:18766/api/v1';
+
+async function load(){
+  const s=document.getElementById('status');
+  s.textContent='Loading markdown...';
+  const mdResp=await fetch(API+'/debug/page-jump/'+KB+'/'+DOC+'?page=1');
+  const debug=await mdResp.json();
+  // Fetch full markdown via the chunks range API
+  const chunkResp=await fetch(API+'/chunks/range',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({kb_id:KB,doc_id:DOC,start:0,end:2000})
+  });
+  const chunkData=await chunkResp.json();
+  
+  // Build page→chunks map
+  const pageMap=new Map();
+  const startCharMap=new Map();
+  for(const c of chunkData.chunks||[]){
+    if(c.start_char!=null) startCharMap.set(c.chunk_index, c.start_char);
+    for(let p=Math.max(1,c.page_start||0);p<=Math.max(c.page_start||0,c.page_end||0);p++){
+      if(!pageMap.has(p)) pageMap.set(p,[]);
+      pageMap.get(p).push(c.chunk_index);
+    }
+  }
+  
+  // For each page, get the first text chunk's start_char via debug API
+  s.textContent='Fetching page data...';
+  const pageData=[];
+  for(let p=1;p<=20;p++){
+    const r=await fetch(API+'/debug/page-jump/'+KB+'/'+DOC+'?page='+p);
+    const d=await r.json();
+    let sc=null;
+    for(const v of d.verifications||[]){
+      if(v.start_char!=null){sc=v.start_char;break;}
+    }
+    pageData.push({page:p,start_char:sc,chunks:d.page_chunks_count});
+  }
+  
+  // Fetch full markdown using the document content API
+  s.textContent='Loading document...';
+  // We already have md from debug endpoint - use it
+  // Actually we need the full markdown. Let's use the page 1 debug which has markdown_total_chars
+  const totalChars=debug.markdown_total_chars;
+  
+  // Build TOC buttons
+  const toc=document.getElementById('toc');
+  for(const pd of pageData){
+    const btn=document.createElement('button');
+    btn.textContent=pd.page;
+    btn.title='Chunks:'+pd.chunks+' SC:'+pd.start_char;
+    btn.onclick=()=>jumpToPage(pd);
+    toc.appendChild(btn);
+  }
+  
+  // Render the full markdown from debug data
+  // We need to fetch the actual markdown file. Let's use the document content API
+  s.textContent='Rendering...';
+  
+  // Actually we can get markdown from the page 1 debug section_context
+  // No - we need the full text. Let's load it via a direct fetch
+  const mdUrl=API.replace('/api/v1','').replace(':18766',':18766')+'/../docs/full.md';
+  // That won't work. Let's just show a summary
+  
+  // For now, show the page data
+  let html='<h2>Page Jump Test Results</h2><table border=1 cellpadding=4 style=font-size:12px>';
+  html+='<tr><th>Page</th><th>start_char</th><th>Chunks</th><th>Content at position</th></tr>';
+  for(const pd of pageData){
+    const sc=pd.start_char;
+    // Get content at this position from debug
+    let atPos='';
+    try{
+      const r2=await fetch(API+'/debug/page-jump/'+KB+'/'+DOC+'?page='+pd.page);
+      const d2=await r2.json();
+      for(const v of d2.verifications||[]){
+        if(v.start_char!=null){atPos=v.at_position||'';break;}
+      }
+    }catch(e){}
+    html+='<tr><td>'+pd.page+'</td><td>'+sc+'</td><td>'+pd.chunks+'</td><td style=max-width:400px;overflow:hidden>'+atPos.substring(0,80)+'</td></tr>';
+  }
+  html+='</table>';
+  
+  // Check duplicates
+  const scs=pageData.filter(p=>p.start_char!=null).map(p=>p.start_char);
+  const dupes=scs.filter((v,i,a)=>a.indexOf(v)!==i);
+  if(dupes.length>0){
+    html+='<p style=color:red>DUPLICATE start_char: '+[...new Set(dupes)].join(',')+'</p>';
+  }else{
+    html+='<p style=color:green>All start_char values are UNIQUE ✓</p>';
+  }
+  
+  document.getElementById('content').innerHTML=html;
+  s.textContent='Ready';
+}
+
+function jumpToPage(pd){
+  document.getElementById('status').textContent='Jump to page '+pd.page+' (sc='+pd.start_char+')';
+  // Highlight the row
+  const rows=document.querySelectorAll('tr');
+  rows.forEach(r=>r.style.background='');
+  for(const r of rows){
+    if(r.cells&&r.cells[0]&&r.cells[0].textContent==String(pd.page)){
+      r.style.background='#fef3c7';
+      r.scrollIntoView({block:'start',behavior:'smooth'});
+      break;
+    }
+  }
+}
+
+load();
+</script>
+</body></html>

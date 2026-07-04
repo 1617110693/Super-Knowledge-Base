@@ -5,7 +5,7 @@ import { getDocumentContent, saveDocumentContent, saveDocumentChunks } from "../
 import { indexDocument, waitForIndex, getChunkRange, searchDocument } from "../../services/pythonClient";
 import { listDocumentImages, readDocumentImage } from "../../services/tauriBridge";
 import { useI18n } from "../../i18n";
-import { FileText, Loader2, ArrowLeft, Pencil, Check, X, Search, XCircle, ChevronRight, List, ChevronDown, PanelLeftClose, PanelLeft, Image as ImageIcon, LayoutGrid, Rows3, AlertTriangle } from "lucide-react";
+import { FileText, Loader2, ArrowLeft, Pencil, Check, X, Search, XCircle, ChevronRight, List, ChevronDown, PanelLeftClose, PanelLeft, Image as ImageIcon, LayoutGrid, Rows3, AlertTriangle, RefreshCw, Settings } from "lucide-react";
 import { ImageDialog } from "./ImageDialog";
 import type { SearchResult } from "../../types";
 
@@ -59,13 +59,47 @@ export function DocumentPreview() {
     const v = new URLSearchParams(window.location.search).get("ci");
     return v ? parseInt(v) : null;
   });
-  const [scrollTarget, setScrollTarget] = useState<{ text: string; pos: number } | null>(null);
+  const [scrollTarget, setScrollTarget] = useState<{ text: string; pos: number; n: number } | null>(null);
+  const jumpCounter = useRef(0);
   const [imageNames, setImageNames] = useState<string[]>([]);
   const [imageSrcs, setImageSrcs] = useState<Map<string, string>>(new Map());
   const [imagesOpen, setImagesOpen] = useState(false);
   const [galleryMode, setGalleryMode] = useState<"grid" | "list">("grid");
   const [dialogIdx, setDialogIdx] = useState<number | null>(null);
+  const [fillTaskId, setFillTaskId] = useState<string | null>(null);
+  const [fillProgress, setFillProgress] = useState<{ current: number; total: number; currentName: string; message: string; done: boolean; filled?: number; failed?: number; failed_details?: { name: string; error: string }[] } | null>(null);
   const docScrollRef = useRef<HTMLDivElement>(null);
+
+  // Page offset (virtual → real page mapping) — default Real mode
+  const [pageSettingsOpen, setPageSettingsOpen] = useState(false);
+  const [savedPageOffset, setSavedPageOffset] = useState(0);
+  const [pageMode, setPageMode] = useState<"virtual" | "real">("real");
+
+  // Load page_offset from metadata
+  useEffect(() => {
+    if (!kbId || !docId) return;
+    (async () => {
+      try {
+        const { getDocumentContent } = await import("../../services/tauriBridge");
+        const doc = await getDocumentContent(kbId, docId);
+        const offset = (doc as any).page_offset || 0;
+        setSavedPageOffset(offset);
+        setPageMode(offset > 0 ? "real" : "real"); // always default to real
+      } catch {}
+    })();
+  }, [kbId, docId]);
+
+  const savePageOffset = async (offset: number) => {
+    if (!kbId || !docId) return;
+    try {
+      const { pythonFetch } = await import("../../services/pythonClient");
+      await pythonFetch("/utils/set-page-offset", {
+        method: "POST",
+        body: JSON.stringify({ kb_id: kbId, doc_id: docId, page_offset: offset }),
+      });
+      setSavedPageOffset(offset);
+    } catch (e) { console.error("Failed to save page_offset:", e); }
+  };
 
   // Load document images
   useEffect(() => {
@@ -143,13 +177,14 @@ export function DocumentPreview() {
   const jumpToChunk = useCallback((ci: number, heading?: { text: string; pos: number }) => {
     setSearchResults(null);
     window.history.replaceState({}, "", `?ci=${ci}`);
-    setScrollTarget(heading || null);
+    jumpCounter.current += 1;
+    setScrollTarget(heading ? { ...heading, n: jumpCounter.current } : null);
     setChunkIdx(ci);
   }, []);
 
   const handlePageJump = useCallback(() => {
     const page = Number(pageInput);
-    if (!page || page < 1 || !Number.isFinite(page)) return;
+    if (!Number.isFinite(page)) return;
     const chunks = pageChunksMap.get(page);
     if (chunks && chunks.length > 0) {
       setPageJumpError("");
@@ -170,6 +205,10 @@ export function DocumentPreview() {
   );
   const maxPage = useMemo(
     () => pageChunksMap.size > 0 ? Math.max(...pageChunksMap.keys()) : 0,
+    [pageChunksMap],
+  );
+  const minPage = useMemo(
+    () => pageChunksMap.size > 0 ? Math.min(...pageChunksMap.keys()) : 0,
     [pageChunksMap],
   );
 
@@ -341,6 +380,7 @@ export function DocumentPreview() {
               <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/50 shrink-0">
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Images ({imageNames.length})</span>
                 <div className="flex items-center gap-1">
+                  <FillMissingBtn kbId={kbId!} docId={docId!} taskId={fillTaskId} setTaskId={setFillTaskId} progress={fillProgress} setProgress={setFillProgress} />
                   <button onClick={() => setGalleryMode(galleryMode === "grid" ? "list" : "grid")}
                     className="p-1 hover:bg-muted rounded text-muted-foreground" title="Toggle view">
                     {galleryMode === "grid" ? <Rows3 className="w-3 h-3" /> : <LayoutGrid className="w-3 h-3" />}
@@ -403,12 +443,16 @@ export function DocumentPreview() {
             setTocOpen={wrappedSetTocOpen}
             jumpToChunk={jumpToChunk}
             hasPageData={hasPageData}
+            minPage={minPage}
             maxPage={maxPage}
             pageChunksMap={pageChunksMap}
             pageInput={pageInput}
             setPageInput={setPageInput}
             handlePageJump={handlePageJump}
             pageJumpError={pageJumpError}
+            pageMode={pageMode}
+            savedPageOffset={savedPageOffset}
+            onOpenSettings={() => setPageSettingsOpen(true)}
             t={t}
           />
           )}
@@ -417,6 +461,16 @@ export function DocumentPreview() {
             <DocView content={content} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollTarget={scrollTarget} scrollRef={docScrollRef} kbId={kbId} docId={docId} />
           </div>
         </div>
+      )}
+      {pageSettingsOpen && (
+        <PageSettingsDialog
+          kbId={kbId!} docId={docId!}
+          pageMode={pageMode} setPageMode={setPageMode}
+          savedPageOffset={savedPageOffset}
+          savePageOffset={savePageOffset}
+          minPage={minPage} maxPage={maxPage}
+          onClose={() => setPageSettingsOpen(false)}
+        />
       )}
       {dialogIdx != null && kbId && docId && (
         <ImageDialog
@@ -529,23 +583,241 @@ function extractHeadings(
   return headings;
 }
 
+function PageSettingsDialog({
+  kbId, docId, pageMode, setPageMode, savedPageOffset, savePageOffset, minPage, maxPage, onClose,
+}: {
+  kbId: string; docId: string;
+  pageMode: "virtual" | "real"; setPageMode: (m: "virtual" | "real") => void;
+  savedPageOffset: number; savePageOffset: (n: number) => void;
+  minPage: number; maxPage: number;
+  onClose: () => void;
+}) {
+  const [offsetInput, setOffsetInput] = useState(String(savedPageOffset));
+
+  const handleSave = () => {
+    const v = parseInt(offsetInput);
+    if (!isNaN(v) && v >= 0) {
+      savePageOffset(v);
+      setPageMode(v > 0 ? "real" : "real");
+    }
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-card rounded-xl shadow-xl w-80 max-w-[90vw] p-5" onClick={e => e.stopPropagation()}>
+        <h3 className="font-semibold text-sm mb-4">Page Number Settings</h3>
+
+        <div className="space-y-4">
+          {/* Virtual/Real toggle */}
+          <div className="flex items-center justify-between">
+            <span className="text-xs">Page numbering</span>
+            <button onClick={() => setPageMode(pageMode === "real" ? "virtual" : "real")}
+              className={`px-2 py-1 rounded text-xs font-medium ${pageMode === 'real' ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
+              {pageMode === 'real' ? 'Real' : 'Virtual'}
+            </button>
+          </div>
+
+          <p className="text-[10px] text-muted-foreground">
+            {pageMode === 'real'
+              ? 'Real pages match the printed book. Set the virtual page that should be page 1 below.'
+              : 'Virtual pages use MinerU sequential numbering (1, 2, 3...).'}
+          </p>
+
+          {/* Offset input */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs shrink-0">Virtual page</span>
+            <input type="number" min={0} max={maxPage} value={offsetInput}
+              onChange={e => setOffsetInput(e.target.value)}
+              className="w-16 px-2 py-1 text-xs border rounded bg-background text-center" />
+            <span className="text-xs">→ page 1</span>
+          </div>
+
+          <p className="text-[10px] text-muted-foreground">
+            Page bar shows: virtual {Math.max(1, parseInt(offsetInput) || 0)} = real page 1.
+            Re-index after changing.
+          </p>
+        </div>
+
+        <div className="flex gap-2 mt-4">
+          <button onClick={onClose} className="flex-1 px-3 py-1.5 border rounded-lg text-xs hover:bg-muted">Cancel</button>
+          <button onClick={handleSave} className="flex-1 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs">Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FillMissingBtn({ kbId, docId, taskId, setTaskId, progress, setProgress }: {
+  kbId: string; docId: string;
+  taskId: string | null; setTaskId: (v: string | null) => void;
+  progress: { current: number; total: number; currentName: string; message: string; done: boolean; filled?: number; failed?: number; failed_details?: { name: string; error: string }[] } | null;
+  setProgress: (p: { current: number; total: number; currentName: string; message: string; done: boolean; filled?: number; failed?: number; failed_details?: { name: string; error: string }[] } | null) => void;
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  };
+
+  const startPolling = (tid: string) => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const { pollFillProgress } = await import("../../services/pythonClient");
+        const p = await pollFillProgress(tid);
+        setProgress({
+          current: p.current,
+          total: p.total,
+          currentName: p.current_name || "",
+          message: p.message || "",
+          done: p.done,
+          filled: p.filled,
+          failed: p.failed,
+          failed_details: p.failed_details,
+        });
+        if (p.done) stopPolling();
+      } catch { /* ignore polling errors */ }
+    }, 800);
+  };
+
+  const handleFill = async () => {
+    setDialogOpen(true);
+    // If there's already an active task, just reopen and resume polling
+    if (taskId && progress && !progress.done) {
+      if (!pollRef.current) startPolling(taskId);
+      return;
+    }
+    // Start a new task
+    setError(null);
+    try {
+      const { fillMissingImages } = await import("../../services/pythonClient");
+      const r = await fillMissingImages(kbId, docId);
+      if (r.done) {
+        setProgress({ current: 0, total: 0, currentName: "", message: r.message || "All images have valid descriptions", done: true });
+        setTaskId(null);
+      } else {
+        setTaskId(r.task_id);
+        startPolling(r.task_id);
+      }
+    } catch (e) { setError(String(e)); }
+  };
+
+  // Cleanup polling on unmount
+  useEffect(() => () => stopPolling(), []);
+
+  const handleClose = () => {
+    setDialogOpen(false);
+    // Don't stop polling — task continues in background
+  };
+
+  // Re-attach polling if dialog reopens with active task
+  useEffect(() => {
+    if (dialogOpen && taskId && progress && !progress.done && !pollRef.current) {
+      startPolling(taskId);
+    }
+  }, [dialogOpen, taskId]);
+
+  const pct = progress && progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+
+  return (
+    <>
+      <button onClick={handleFill}
+        className="p-1 hover:bg-muted rounded text-muted-foreground disabled:opacity-40"
+        title={taskId && progress && !progress.done ? `Filling... ${progress.current}/${progress.total}` : "Fill missing image descriptions with VLM"}>
+        {taskId && progress && !progress.done ? <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500" /> : <RefreshCw className="w-3.5 h-3.5" />}
+      </button>
+
+      {dialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={handleClose}>
+          <div className="bg-card rounded-xl shadow-xl w-96 max-w-[90vw] p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="font-semibold text-sm mb-4">Fill Missing Image Descriptions</h3>
+
+            {error ? (
+              <div className="space-y-3">
+                <p className="text-sm text-red-500">Error: {error}</p>
+                <button onClick={() => { setDialogOpen(false); setError(null); }} className="w-full px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm">Close</button>
+              </div>
+            ) : progress?.done ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-sm text-green-600">
+                  <Check className="w-4 h-4" />
+                  <span>{progress.message}</span>
+                </div>
+                {progress.filled != null && (
+                  <p className="text-xs text-muted-foreground">
+                    {progress.filled} filled{progress.failed ? `, ${progress.failed} failed` : ""}
+                  </p>
+                )}
+                {progress.failed_details && progress.failed_details.length > 0 && (
+                  <div className="max-h-40 overflow-y-auto border rounded-md divide-y">
+                    {progress.failed_details.map((fd, i) => (
+                      <div key={i} className="p-2 text-xs">
+                        <p className="font-mono text-red-600 truncate">{fd.name}</p>
+                        <p className="text-muted-foreground truncate">{fd.error}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button onClick={() => { setDialogOpen(false); setTaskId(null); setProgress(null); }} className="w-full px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm">Done</button>
+              </div>
+            ) : progress ? (
+              <div className="space-y-3">
+                <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                  <div className="bg-primary h-full rounded-full transition-all duration-300" style={{ width: `${pct}%` }} />
+                </div>
+                <p className="text-xs text-muted-foreground text-center">
+                  {progress.current}/{progress.total} — {progress.currentName || "..."}
+                </p>
+                {progress.message && <p className="text-xs text-muted-foreground text-center">{progress.message}</p>}
+                <p className="text-xs text-muted-foreground text-center italic">You can close this dialog — the task continues in background.</p>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center gap-2 py-4">
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Starting...</span>
+              </div>
+            )}
+
+            {!progress?.done && progress && (
+              <button onClick={handleClose} className="w-full mt-3 px-3 py-2 border rounded-lg text-sm hover:bg-muted">
+                Close (continue in background)
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function DocToc({
-  headings, tocOpen, setTocOpen, jumpToChunk, hasPageData, maxPage,
-  pageChunksMap, pageInput, setPageInput, handlePageJump, pageJumpError, t,
+  headings, tocOpen, setTocOpen, jumpToChunk, hasPageData, minPage, maxPage,
+  pageChunksMap, pageInput, setPageInput, handlePageJump, pageJumpError,
+  pageMode, savedPageOffset, onOpenSettings,
+  t,
 }: {
   headings: Heading[];
   tocOpen: boolean;
   setTocOpen: (v: boolean) => void;
   jumpToChunk: (ci: number, heading?: { text: string; pos: number }) => void;
   hasPageData: boolean;
+  minPage: number;
   maxPage: number;
   pageChunksMap: Map<number, number[]>;
   pageInput: string; setPageInput: (v: string) => void;
   handlePageJump: () => void;
   pageJumpError: string;
+  pageMode: "virtual" | "real"; savedPageOffset: number;
+  onOpenSettings: () => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   t: (key: any, vars?: Record<string, string | number>) => string;
 }) {
+  // Display offset for page bar numbers (allows negative for front matter)
+  const displayOffset = savedPageOffset;
+
   if (!tocOpen) {
     return (
       <button onClick={() => setTocOpen(true)}
@@ -555,19 +827,25 @@ function DocToc({
       </button>
     );
   }
-  // Build linear page list: 1..maxPage
+  // Build linear page list from minPage to maxPage
   const pages: number[] = [];
-  for (let p = 1; p <= maxPage; p++) pages.push(p);
+  for (let p = minPage; p <= maxPage; p++) pages.push(p);
 
   return (
     <div className="w-56 shrink-0 border rounded-lg bg-card overflow-hidden flex flex-col max-h-[calc(100vh-200px)]">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/50 shrink-0">
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{t("docs.tocTitle")}</span>
-        <button onClick={() => setTocOpen(false)}
-          className="p-1 hover:bg-muted rounded text-muted-foreground">
-          <PanelLeftClose className="w-3.5 h-3.5" />
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button onClick={onOpenSettings}
+            className="p-1 hover:bg-muted rounded text-muted-foreground" title="Page settings">
+            <Settings className="w-3 h-3" />
+          </button>
+          <button onClick={() => setTocOpen(false)}
+            className="p-1 hover:bg-muted rounded text-muted-foreground">
+            <PanelLeftClose className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Body: headings (left) + linear page bar (right) */}
@@ -588,19 +866,22 @@ function DocToc({
           )}
         </div>
 
-        {/* Page bar — linear 1..maxPage, each clickable */}
+        {/* Page bar — each clickable, shows offset-adjusted page numbers */}
         {hasPageData && maxPage > 0 && (
           <div className="w-9 shrink-0 overflow-y-auto p-0.5">
-            {pages.map((p) => (
-              <button key={p}
-                onClick={() => {
-                  const chunks = pageChunksMap.get(p);
-                  if (chunks && chunks.length > 0) jumpToChunk(chunks[0]);
-                }}
-                className="block w-full text-center py-0.5 text-[10px] tabular-nums text-muted-foreground hover:bg-muted hover:text-foreground rounded transition-colors">
-                {p}
-              </button>
-            ))}
+            {pages.map((p) => {
+              const displayP = p - displayOffset;
+              return (
+                <button key={p}
+                  onClick={() => {
+                    const chunks = pageChunksMap.get(p);
+                    if (chunks && chunks.length > 0) jumpToChunk(chunks[0]);
+                  }}
+                  className="block w-full text-center py-0.5 text-[10px] tabular-nums text-muted-foreground hover:bg-muted hover:text-foreground rounded transition-colors">
+                  {displayP}
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -608,7 +889,7 @@ function DocToc({
       {/* Page jump at bottom */}
       <div className="border-t p-2 shrink-0">
         <div className="flex gap-1">
-          <input type="number" min={1} max={maxPage || 1} value={pageInput}
+          <input type="number" min={minPage} max={maxPage} value={pageInput}
             onChange={(e) => setPageInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") handlePageJump(); }}
             disabled={!hasPageData}
@@ -726,19 +1007,15 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbI
     if (chunkIdx == null) return;
 
     let secIdx: number | null = null;
+    let targetSc: number | null = null;
     if (scrollTarget) {
       secIdx = charToSection(scrollTarget.pos);
+      targetSc = scrollTarget.pos;
     } else {
-      // Use start_char from the API to find the section.
-      // If char position falls right on a section boundary newline,
-      // advance past it so we land in the correct (next) section.
       const sc = startCharMap.get(chunkIdx);
       if (sc != null) {
+        targetSc = sc;
         secIdx = charToSection(sc);
-        // If sc points to a newline that separates sections, the
-        // previous section's content may include that newline,
-        // causing charToSection to return the wrong section.
-        // Check and correct.
         if (sc > 0 && secIdx < sections.length - 1 &&
             (content[sc] === '\n' || content[sc - 1] === '\n')) {
           secIdx = charToSection(sc + 1);
@@ -747,7 +1024,6 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbI
       secIdx = secIdx ?? chunkSection.get(chunkIdx) ?? null;
     }
 
-    // Ensure the target section will be rendered
     if (secIdx != null) {
       setRendered(prev => {
         if (prev.has(secIdx)) return prev;
@@ -757,7 +1033,10 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbI
       });
     }
 
-    const timer = setTimeout(() => {
+    // Retry loop: wait for the section to actually render in the DOM
+    let attempts = 0;
+    const maxAttempts = 15;
+    const doScroll = () => {
       const container = containerRef.current;
       if (!container) return;
 
@@ -766,45 +1045,96 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbI
         highlightRef.current = null;
       }
 
-      if (secIdx != null) {
-        const sectionEl = container.querySelector(
-          `[data-section-idx="${secIdx}"]`
-        ) as HTMLElement | null;
-        if (sectionEl) {
-          // Try to find the heading element within the section
-          let targetEl: HTMLElement = sectionEl;
-          if (scrollTarget) {
-            const stripMd = (s: string) => s.replace(/\s+/g, " ").replace(/[$*_`~]/g, "").trim();
-            const want = stripMd(scrollTarget.text);
-            const domHeadings = sectionEl.querySelectorAll("h1, h2, h3");
-            for (const h of domHeadings) {
-              if (stripMd(h.textContent || "") === want) { targetEl = h as HTMLElement; break; }
-            }
-            if (targetEl === sectionEl) {
-              for (const h of domHeadings) {
-                const t = stripMd(h.textContent || "");
-                if (t && want && (t.includes(want) || want.includes(t))) { targetEl = h as HTMLElement; break; }
-              }
+      if (secIdx == null) {
+        container.scrollTo({ top: 0, behavior: "instant" });
+        return;
+      }
+
+      const sectionEl = container.querySelector(
+        `[data-section-idx="${secIdx}"]`
+      ) as HTMLElement | null;
+
+      // Wait for section to be rendered (height > placeholder)
+      if (!sectionEl || sectionEl.offsetHeight < 50) {
+        if (++attempts < maxAttempts) {
+          requestAnimationFrame(doScroll);
+        }
+        return;
+      }
+
+      // ── Compute scroll position using character-offset ratio ──
+      // This is RELIABLE because it only depends on:
+      //   (a) sectionOffsets  — exact character positions (math, not DOM)
+      //   (b) getBoundingClientRect — exact pixel positions (browser API)
+      // The ratio assumes roughly uniform text density within a section,
+      // which is reasonable for technical documents split at headings.
+      const secStart = sectionOffsets[secIdx];
+      const secEnd = secIdx + 1 < sectionOffsets.length
+        ? sectionOffsets[secIdx + 1] : content.length;
+      const secLen = secEnd - secStart;
+      const sc = targetSc ?? secStart;
+      const offsetInSection = Math.max(0, sc - secStart);
+      const ratio = secLen > 0 ? Math.min(1, offsetInSection / secLen) : 0;
+
+      const containerRect = container.getBoundingClientRect();
+      const sectionRect = sectionEl.getBoundingClientRect();
+      // Pixel position of the target char within the section
+      const targetPixelInSection = ratio * sectionRect.height;
+      // Convert to container scrollTop
+      const targetScrollTop =
+        container.scrollTop
+        + (sectionRect.top - containerRect.top)
+        + targetPixelInSection
+        - 60; // leave a small top margin
+
+      container.scrollTo({
+        top: Math.max(0, targetScrollTop),
+        behavior: "instant",
+      });
+
+      // ── Highlight: try to find the nearest heading or paragraph ──
+      // (best-effort, for visual feedback — not critical for scroll accuracy)
+      if (scrollTarget) {
+        const stripMd = (s: string) => s.replace(/\s+/g, " ").replace(/[$*_`~]/g, "").trim();
+        const want = stripMd(scrollTarget.text);
+        const domHeadings = sectionEl.querySelectorAll("h1, h2, h3");
+        for (const h of domHeadings) {
+          if (stripMd(h.textContent || "") === want) {
+            highlightRef.current = h as HTMLElement;
+            break;
+          }
+        }
+        if (!highlightRef.current) {
+          for (const h of domHeadings) {
+            const t = stripMd(h.textContent || "");
+            if (t && want && (t.includes(want) || want.includes(t))) {
+              highlightRef.current = h as HTMLElement;
+              break;
             }
           }
-          targetEl.scrollIntoView({ block: "start", behavior: "instant" });
-          sectionEl.style.backgroundColor = "#fef3c7";
-          sectionEl.style.transition = "background-color 0.5s";
-          highlightRef.current = sectionEl;
-          setTimeout(() => {
-            if (highlightRef.current === sectionEl) {
-              sectionEl.style.backgroundColor = "";
-              highlightRef.current = null;
-            }
-          }, 2500);
         }
-      } else {
-        container.scrollTo({ top: 0, behavior: "instant" });
       }
-    }, 150);
 
+      // Fallback: highlight the section itself (covers the full page content)
+      if (!highlightRef.current) {
+        highlightRef.current = sectionEl;
+      }
+
+      highlightRef.current.style.backgroundColor = "#fef3c7";
+      highlightRef.current.style.transition = "background-color 0.5s";
+      const el = highlightRef.current;
+      setTimeout(() => {
+        if (highlightRef.current === el) {
+          el.style.backgroundColor = "";
+          highlightRef.current = null;
+        }
+      }, 2500);
+    };
+
+    const timer = setTimeout(() => doScroll(), 80);
     return () => clearTimeout(timer);
-  }, [chunkIdx, scrollTarget, sections.length, charToSection, chunkSection, startCharMap]);
+  }, [chunkIdx, scrollTarget, sections.length, charToSection, chunkSection, startCharMap, sectionOffsets, content]);
+
 
   // Single section: render with data-section-idx for consistency
   if (sections.length <= 1) {
@@ -823,7 +1153,7 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbI
         {sections.map((sec, i) => {
           if (i < EAGER || rendered.has(i)) {
             return (
-              <div key={i} data-section-idx={i} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 200px" }}>
+              <div key={i} data-section-idx={i}>
                 <MarkdownRenderer imgKbId={kbId} imgDocId={docId}>{sec}</MarkdownRenderer>
               </div>
             );

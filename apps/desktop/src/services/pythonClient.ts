@@ -256,6 +256,31 @@ export async function cleanOrphans(): Promise<{ cleaned: number; details: string
   return pythonFetch("/utils/clean-orphans", { method: "POST" });
 }
 
+export interface FillProgress {
+  stage: string;
+  current: number;
+  total: number;
+  done: boolean;
+  current_name?: string;
+  filled?: number;
+  failed?: number;
+  failed_details?: { name: string; error: string }[];
+  message?: string;
+}
+
+export async function fillMissingImages(kbId: string, docId: string): Promise<{
+  task_id: string; total: number; done: boolean; message?: string;
+}> {
+  return pythonFetch("/images/fill-missing", {
+    method: "POST",
+    body: JSON.stringify({ kb_id: kbId, doc_id: docId, filename: "_" }),
+  });
+}
+
+export async function pollFillProgress(taskId: string): Promise<FillProgress> {
+  return pythonFetch(`/images/fill-missing/progress/${taskId}`);
+}
+
 // ── Get Chunk by Index ──
 
 export interface ChunkByIndex {

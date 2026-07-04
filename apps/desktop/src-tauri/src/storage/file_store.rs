@@ -730,12 +730,24 @@ impl FileStore {
             doc_id.to_string()
         };
 
+        // Read page_offset from metadata
+        let page_offset = if doc_meta_path.exists() {
+            let data = std::fs::read_to_string(&doc_meta_path).unwrap_or_default();
+            serde_json::from_str::<serde_json::Value>(&data)
+                .ok()
+                .and_then(|v| v.get("page_offset").and_then(|o| o.as_i64()))
+                .unwrap_or(0) as i32
+        } else {
+            0
+        };
+
         Ok(crate::models::DocumentContent {
             id: doc_id.to_string(),
             name,
             markdown,
             md_available,
             metadata,
+            page_offset,
         })
     }
 
@@ -820,30 +832,26 @@ impl FileStore {
     }
 
     /// List image filenames, filtered to actual images (not equation renders).
-    /// Only returns images that have an entry in images_meta.json or
-    /// are referenced by image/chart/picture types in content_list.json.
+    /// Filters by images_meta.json (preferred) or content_list.json types
+    /// (image/picture/chart), so formula renders like inline_math_*.png
+    /// are never shown.
     pub fn list_document_images(&self, kb_id: &str, doc_id: &str) -> CommandResult<Vec<String>> {
         let img_dir = self.get_doc_dir(kb_id, doc_id).join("images");
         if !img_dir.exists() || !img_dir.is_dir() {
             return Ok(Vec::new());
         }
-        let all_names: Vec<String> = std::fs::read_dir(&img_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-            .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
-            .collect();
-        if all_names.is_empty() { return Ok(Vec::new()); }
 
-        // Filter: only return images that appear in images_meta.json
+        // Priority 1: filter by images_meta.json (only images that were VLM-processed)
         let meta_path = self.get_doc_dir(kb_id, doc_id).join("images_meta.json");
         if meta_path.exists() {
             if let Ok(data) = std::fs::read_to_string(&meta_path) {
                 if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&data) {
                     if let Some(obj) = meta.as_object() {
-                        let filtered: Vec<String> = all_names
-                            .iter()
-                            .filter(|n| obj.contains_key(*n))
-                            .cloned()
+                        let filtered: Vec<String> = std::fs::read_dir(&img_dir)?
+                            .filter_map(|e| e.ok())
+                            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                            .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+                            .filter(|n| obj.contains_key(n))
                             .collect();
                         if !filtered.is_empty() {
                             return Ok(filtered);
@@ -852,8 +860,42 @@ impl FileStore {
                 }
             }
         }
-        // Fallback: if no meta yet, return all (they'll be filtered after indexing)
-        Ok(all_names)
+
+        // Priority 2: filter by content_list.json image/picture/chart types
+        let cl_path = self.get_doc_dir(kb_id, doc_id).join("content_list.json");
+        if cl_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&cl_path) {
+                if let Ok(items) = serde_json::from_str::<Vec<serde_json::Value>>(&data) {
+                    let real_images: std::collections::HashSet<String> = items.iter()
+                        .filter_map(|item| {
+                            let itype = item.get("type")?.as_str()?;
+                            if !matches!(itype, "image" | "picture" | "chart") {
+                                return None;
+                            }
+                            let img_path = item.get("img_path")?.as_str()?;
+                            // Extract just the filename from the path
+                            img_path.rsplit('/').next()
+                                .or_else(|| img_path.rsplit('\\').next())
+                                .map(|s| s.to_string())
+                        })
+                        .collect();
+                    if !real_images.is_empty() {
+                        let filtered: Vec<String> = std::fs::read_dir(&img_dir)?
+                            .filter_map(|e| e.ok())
+                            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                            .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+                            .filter(|n| real_images.contains(n))
+                            .collect();
+                        if !filtered.is_empty() {
+                            return Ok(filtered);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Last resort: return empty (better than showing formula images)
+        Ok(Vec::new())
     }
 
     /// Read an image file from the document's images directory.

@@ -78,6 +78,12 @@ class LanceDBManager:
         # Delete existing chunks for this document to prevent duplicates
         self.delete_document_chunks(kb_id, doc_id)
 
+        # Assign sequential chunk_index if any chunk has index < 0
+        if any(c.chunk_index < 0 for c in chunks):
+            for i, c in enumerate(chunks):
+                c.chunk_index = i
+                c.metadata["chunk_index"] = i
+
         rows = []
         for chunk, vector in zip(chunks, vectors):
             rows.append(

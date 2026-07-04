@@ -406,7 +406,7 @@ def multimodal_chunks_from_content_list(
     chunks = []
     for i, mi in enumerate(multimodal_items):
         mtype = mi["type"]
-        page = mi.get("page_idx", 0) + 1  # 1-based
+        page = mi.get("page_idx", 0)
 
         if mtype == "image":
             desc_text = ""

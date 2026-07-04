@@ -64,13 +64,20 @@ class BackendConfig(BaseSettings):
             search_paths.append(Path(self.knowledge_base_data_dir) / "settings.json")
         search_paths.append(Path.home() / ".super-knowledge-base" / "settings.json")
 
+        # Map settings.json keys → config attribute names
+        _key_map = {
+            "data_dir": "knowledge_base_data_dir",
+            "python_port": "knowledge_backend_port",
+        }
+
         for settings_path in search_paths:
             if settings_path.exists():
                 with open(settings_path) as f:
                     data = json.load(f)
                 for key, value in data.items():
-                    if hasattr(self, key) and value:
-                        setattr(self, key, value)
+                    attr = _key_map.get(key, key)
+                    if hasattr(self, attr) and value:
+                        setattr(self, attr, value)
                 return self
         return self
 

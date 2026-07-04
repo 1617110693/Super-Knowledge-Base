@@ -208,3 +208,24 @@ def clean_orphans():
     # Return cleaned count (orphans removed) + repaired count separately
     actual_cleaned = sum(1 for r in results if "Removed" in r)
     return {"cleaned": actual_cleaned, "details": results}
+
+
+class SetPageOffsetRequest(BaseModel):
+    kb_id: str
+    doc_id: str
+    page_offset: int = 0
+
+
+@router.post("/utils/set-page-offset")
+def set_page_offset(req: SetPageOffsetRequest):
+    """Set the page_offset for a document. Controls virtual→real page mapping."""
+    from ..config import get_config
+    config = get_config()
+    doc_dir = Path(config.knowledge_base_data_dir) / f"kb_{req.kb_id}" / "docs" / req.doc_id
+    meta_path = doc_dir / "metadata.json"
+    if not meta_path.exists():
+        return {"error": "Document not found"}
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["page_offset"] = req.page_offset
+    meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"status": "ok", "page_offset": req.page_offset}

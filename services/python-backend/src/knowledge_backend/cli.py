@@ -471,7 +471,13 @@ def cmd_index(kb_id: str, doc_id: str):
     tagged_md = _inject_page_markers(markdown, doc_dir)
     if split_offset > 0:
         tagged_md = _PAGE_MARKER_RE.sub(
-            lambda m: f"[PAGE:{int(m.group(1)) + split_offset}]", tagged_md)
+            lambda m: (
+                f"[PAGE:{int(m.group(1)) + split_offset}|{m.group(2)}]"
+                if m.group(2) is not None
+                else f"[PAGE:{int(m.group(1)) + split_offset}]"
+            ),
+            tagged_md,
+        )
 
     # ── Chunking ──
     from knowledge_backend.chunker import Chunker

@@ -228,4 +228,30 @@ def set_page_offset(req: SetPageOffsetRequest):
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     meta["page_offset"] = req.page_offset
     meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Propagate to sibling parts so split documents share the same offset
+    doc_name = meta.get("name", "")
+    pm = re.search(r"_part(\d+)\.", doc_name)
+    if pm:
+        base = doc_name[:pm.start()]
+        docs_dir = doc_dir.parent
+        updated = []
+        for sib in docs_dir.iterdir():
+            if not sib.is_dir() or sib.name == req.doc_id:
+                continue
+            sm = sib / "metadata.json"
+            if not sm.exists():
+                continue
+            try:
+                smeta = json.loads(sm.read_text(encoding="utf-8"))
+                sn = smeta.get("name", "")
+                if sn.startswith(base) and "_part" in sn:
+                    smeta["page_offset"] = req.page_offset
+                    sm.write_text(json.dumps(smeta, indent=2, ensure_ascii=False), encoding="utf-8")
+                    updated.append(sn)
+            except Exception:
+                pass
+        if updated:
+            print(f"[page_offset] Propagated offset {req.page_offset} to: {updated}", flush=True)
+
     return {"status": "ok", "page_offset": req.page_offset}

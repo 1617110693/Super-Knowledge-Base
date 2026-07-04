@@ -731,7 +731,7 @@ impl FileStore {
         };
 
         // Read page_offset from metadata
-        let page_offset = if doc_meta_path.exists() {
+        let mut page_offset = if doc_meta_path.exists() {
             let data = std::fs::read_to_string(&doc_meta_path).unwrap_or_default();
             serde_json::from_str::<serde_json::Value>(&data)
                 .ok()
@@ -740,6 +740,34 @@ impl FileStore {
         } else {
             0
         };
+
+        // For split parts with no page_offset, inherit from part 1
+        if page_offset == 0 && name.contains("_part") {
+            let docs_dir = doc_meta_path.parent().unwrap();
+            // Find part 1's metadata and inherit its page_offset
+            if let Ok(entries) = std::fs::read_dir(docs_dir) {
+                for entry in entries.flatten() {
+                    let sib_meta = entry.path().join("metadata.json");
+                    if !sib_meta.exists() { continue; }
+                    if let Ok(data) = std::fs::read_to_string(&sib_meta) {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&data) {
+                            if let Some(sib_name) = val.get("name").and_then(|v| v.as_str()) {
+                                // Check same base name and is part1
+                                if sib_name.contains("_part1.") {
+                                    let base = name.rsplit("_part").next_back().unwrap_or("");
+                                    let sib_base = sib_name.rsplit("_part").next_back().unwrap_or("");
+                                    if base == sib_base {
+                                        page_offset = val.get("page_offset")
+                                            .and_then(|o| o.as_i64()).unwrap_or(0) as i32;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(crate::models::DocumentContent {
             id: doc_id.to_string(),

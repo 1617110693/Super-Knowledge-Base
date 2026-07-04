@@ -212,6 +212,38 @@ export function DocumentPreview() {
     [pageChunksMap],
   );
 
+  // Page → startChar map for HTML anchor injection.
+  // For each page, the anchor marks where that page's first text content
+  // starts in the original markdown. Anchors are sorted high→low so
+  // injection preserves earlier positions.
+  const pageAnchorPositions = useMemo(() => {
+    const positions: { page: number; startChar: number }[] = [];
+    for (const [page, chunkIndices] of pageChunksMap) {
+      const sorted = [...chunkIndices].sort((a, b) => a - b);
+      for (const ci of sorted) {
+        const sc = startCharMap.get(ci);
+        if (sc != null && sc >= 0) {
+          positions.push({ page, startChar: sc });
+          break;
+        }
+      }
+    }
+    return positions.sort((a, b) => b.startChar - a.startChar);
+  }, [pageChunksMap, startCharMap]);
+
+  // Injected markdown: original content + <a id="page-N"> anchors.
+  // rehypeRaw passes the anchors through to the DOM for precise scrolling.
+  const anchoredContent = useMemo(() => {
+    if (!content || pageAnchorPositions.length === 0) return content;
+    let result = content;
+    for (const { page, startChar } of pageAnchorPositions) {
+      if (startChar < 0 || startChar > result.length) continue;
+      const anchor = `<a id="page-${page}" data-page="${page}"></a>`;
+      result = result.slice(0, startChar) + anchor + result.slice(startChar);
+    }
+    return result;
+  }, [content, pageAnchorPositions]);
+
   const handleSave = async () => {
     if (!kbId || !docId) return;
     setSaving(true); setEditError("");
@@ -458,7 +490,7 @@ export function DocumentPreview() {
           )}
           </div>{/* end sidebar column */}
           <div className="flex-1 min-w-0">
-            <DocView content={content} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollTarget={scrollTarget} scrollRef={docScrollRef} kbId={kbId} docId={docId} />
+            <DocView content={content} anchoredContent={anchoredContent} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollTarget={scrollTarget} scrollRef={docScrollRef} kbId={kbId} docId={docId} pageAnchorPositions={pageAnchorPositions} />
           </div>
         </div>
       )}
@@ -909,11 +941,12 @@ function DocToc({
   );
 }
 
-function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbId, docId }: {
-  content: string; startCharMap: Map<number, number>; chunkIdx: number | null;
+function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarget, scrollRef, kbId, docId, pageAnchorPositions }: {
+  content: string; anchoredContent: string; startCharMap: Map<number, number>; chunkIdx: number | null;
   scrollTarget?: { text: string; pos: number } | null;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   kbId?: string; docId?: string;
+  pageAnchorPositions: { page: number; startChar: number }[];
 }) {
   const sections = useMemo(() => splitSections(content), [content]);
   const sectionOffsets = useMemo(() => buildSectionOffsets(content, sections), [content, sections]);
@@ -1002,41 +1035,89 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbI
     else { const old = sentinelsRef.current.get(idx); if (old) obsRef.current?.unobserve(old); sentinelsRef.current.delete(idx); }
   }, []);
 
+  // Map chunk_index → page number (reverse of pageAnchorPositions)
+  const chunkPageMap = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const { page, startChar } of pageAnchorPositions) {
+      // Find which chunk this startChar belongs to
+      for (const [ci, sc] of startCharMap) {
+        if (sc === startChar) { map.set(ci, page); break; }
+      }
+    }
+    return map;
+  }, [pageAnchorPositions, startCharMap]);
+
   // Scroll to target heading/chunk.
   useEffect(() => {
     if (chunkIdx == null) return;
 
-    let secIdx: number | null = null;
-    let targetSc: number | null = null;
-    if (scrollTarget) {
-      secIdx = charToSection(scrollTarget.pos);
-      targetSc = scrollTarget.pos;
-    } else {
-      const sc = startCharMap.get(chunkIdx);
-      if (sc != null) {
-        targetSc = sc;
-        secIdx = charToSection(sc);
-        if (sc > 0 && secIdx < sections.length - 1 &&
-            (content[sc] === '\n' || content[sc - 1] === '\n')) {
-          secIdx = charToSection(sc + 1);
+    // ── Page-bar jump: use HTML anchor ──
+    if (!scrollTarget) {
+      const pageNum = chunkPageMap.get(chunkIdx);
+      if (pageNum != null) {
+        // Ensure the section containing this page is rendered
+        const sc = startCharMap.get(chunkIdx);
+        if (sc != null) {
+          const si = charToSection(sc);
+          setRendered(prev => {
+            if (prev.has(si)) return prev;
+            const s = new Set(prev);
+            for (let i = Math.max(0, si - 3); i <= Math.min(sections.length - 1, si + 3); i++) s.add(i);
+            return s;
+          });
         }
+
+        // Retry loop: wait for the anchor to appear in the DOM
+        let attempts = 0;
+        const tryAnchor = () => {
+          const container = containerRef.current;
+          if (!container) return;
+
+          if (highlightRef.current) {
+            highlightRef.current.style.backgroundColor = "";
+            highlightRef.current = null;
+          }
+
+          const anchor = container.querySelector(`#page-${pageNum}`) as HTMLElement | null;
+          if (!anchor) {
+            if (++attempts < 20) { requestAnimationFrame(tryAnchor); }
+            return;
+          }
+
+          anchor.scrollIntoView({ block: "start", behavior: "instant" });
+
+          // Highlight the containing section or element after the anchor
+          const sectionEl = anchor.closest('[data-section-idx]') as HTMLElement | null;
+          const nextEl = anchor.nextElementSibling as HTMLElement | null;
+          const targetEl = nextEl || sectionEl || anchor.parentElement!;
+          targetEl.style.backgroundColor = "#fef3c7";
+          targetEl.style.transition = "background-color 0.5s";
+          highlightRef.current = targetEl;
+          setTimeout(() => {
+            if (highlightRef.current === targetEl) {
+              targetEl.style.backgroundColor = "";
+              highlightRef.current = null;
+            }
+          }, 2500);
+        };
+        const timer = setTimeout(() => tryAnchor(), 80);
+        return () => clearTimeout(timer);
       }
-      secIdx = secIdx ?? chunkSection.get(chunkIdx) ?? null;
     }
 
-    if (secIdx != null) {
-      setRendered(prev => {
-        if (prev.has(secIdx)) return prev;
-        const s = new Set(prev);
-        for (let i = Math.max(0, secIdx - 3); i <= Math.min(sections.length - 1, secIdx + 3); i++) s.add(i);
-        return s;
-      });
-    }
+    // ── TOC heading click: use heading text matching ──
+    const secIdx = scrollTarget ? charToSection(scrollTarget.pos) : null;
+    if (secIdx == null) return;
 
-    // Retry loop: wait for the section to actually render in the DOM
+    setRendered(prev => {
+      if (prev.has(secIdx)) return prev;
+      const s = new Set(prev);
+      for (let i = Math.max(0, secIdx - 3); i <= Math.min(sections.length - 1, secIdx + 3); i++) s.add(i);
+      return s;
+    });
+
     let attempts = 0;
-    const maxAttempts = 15;
-    const doScroll = () => {
+    const tryHeading = () => {
       const container = containerRef.current;
       if (!container) return;
 
@@ -1045,95 +1126,40 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbI
         highlightRef.current = null;
       }
 
-      if (secIdx == null) {
-        container.scrollTo({ top: 0, behavior: "instant" });
-        return;
-      }
-
-      const sectionEl = container.querySelector(
-        `[data-section-idx="${secIdx}"]`
-      ) as HTMLElement | null;
-
-      // Wait for section to be rendered (height > placeholder)
+      const sectionEl = container.querySelector(`[data-section-idx="${secIdx}"]`) as HTMLElement | null;
       if (!sectionEl || sectionEl.offsetHeight < 50) {
-        if (++attempts < maxAttempts) {
-          requestAnimationFrame(doScroll);
-        }
+        if (++attempts < 10) { requestAnimationFrame(tryHeading); }
         return;
       }
 
-      // ── Compute scroll position using character-offset ratio ──
-      // This is RELIABLE because it only depends on:
-      //   (a) sectionOffsets  — exact character positions (math, not DOM)
-      //   (b) getBoundingClientRect — exact pixel positions (browser API)
-      // The ratio assumes roughly uniform text density within a section,
-      // which is reasonable for technical documents split at headings.
-      const secStart = sectionOffsets[secIdx];
-      const secEnd = secIdx + 1 < sectionOffsets.length
-        ? sectionOffsets[secIdx + 1] : content.length;
-      const secLen = secEnd - secStart;
-      const sc = targetSc ?? secStart;
-      const offsetInSection = Math.max(0, sc - secStart);
-      const ratio = secLen > 0 ? Math.min(1, offsetInSection / secLen) : 0;
-
-      const containerRect = container.getBoundingClientRect();
-      const sectionRect = sectionEl.getBoundingClientRect();
-      // Pixel position of the target char within the section
-      const targetPixelInSection = ratio * sectionRect.height;
-      // Convert to container scrollTop
-      const targetScrollTop =
-        container.scrollTop
-        + (sectionRect.top - containerRect.top)
-        + targetPixelInSection
-        - 60; // leave a small top margin
-
-      container.scrollTo({
-        top: Math.max(0, targetScrollTop),
-        behavior: "instant",
-      });
-
-      // ── Highlight: try to find the nearest heading or paragraph ──
-      // (best-effort, for visual feedback — not critical for scroll accuracy)
-      if (scrollTarget) {
-        const stripMd = (s: string) => s.replace(/\s+/g, " ").replace(/[$*_`~]/g, "").trim();
-        const want = stripMd(scrollTarget.text);
-        const domHeadings = sectionEl.querySelectorAll("h1, h2, h3");
+      const stripMd = (s: string) => s.replace(/\s+/g, " ").replace(/[$*_`~]/g, "").trim();
+      const want = stripMd(scrollTarget!.text);
+      const domHeadings = sectionEl.querySelectorAll("h1, h2, h3");
+      let targetEl: HTMLElement = sectionEl;
+      for (const h of domHeadings) {
+        if (stripMd(h.textContent || "") === want) { targetEl = h as HTMLElement; break; }
+      }
+      if (targetEl === sectionEl) {
         for (const h of domHeadings) {
-          if (stripMd(h.textContent || "") === want) {
-            highlightRef.current = h as HTMLElement;
-            break;
-          }
-        }
-        if (!highlightRef.current) {
-          for (const h of domHeadings) {
-            const t = stripMd(h.textContent || "");
-            if (t && want && (t.includes(want) || want.includes(t))) {
-              highlightRef.current = h as HTMLElement;
-              break;
-            }
-          }
+          const t = stripMd(h.textContent || "");
+          if (t && want && (t.includes(want) || want.includes(t))) { targetEl = h as HTMLElement; break; }
         }
       }
 
-      // Fallback: highlight the section itself (covers the full page content)
-      if (!highlightRef.current) {
-        highlightRef.current = sectionEl;
-      }
-
-      highlightRef.current.style.backgroundColor = "#fef3c7";
-      highlightRef.current.style.transition = "background-color 0.5s";
-      const el = highlightRef.current;
+      targetEl.scrollIntoView({ block: "start", behavior: "instant" });
+      targetEl.style.backgroundColor = "#fef3c7";
+      targetEl.style.transition = "background-color 0.5s";
+      highlightRef.current = targetEl;
       setTimeout(() => {
-        if (highlightRef.current === el) {
-          el.style.backgroundColor = "";
+        if (highlightRef.current === targetEl) {
+          targetEl.style.backgroundColor = "";
           highlightRef.current = null;
         }
       }, 2500);
     };
-
-    const timer = setTimeout(() => doScroll(), 80);
+    const timer = setTimeout(() => tryHeading(), 80);
     return () => clearTimeout(timer);
-  }, [chunkIdx, scrollTarget, sections.length, charToSection, chunkSection, startCharMap, sectionOffsets, content]);
+  }, [chunkIdx, scrollTarget, sections.length, charToSection, startCharMap, chunkPageMap]);
 
 
   // Single section: render with data-section-idx for consistency
@@ -1141,7 +1167,7 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbI
     return (
       <div ref={containerRef as React.RefObject<HTMLDivElement>} id="doc-preview-scroll" className="max-h-[calc(100vh-200px)] overflow-y-auto rounded-lg border bg-card prose prose-sm max-w-none dark:prose-invert p-6">
         <div data-section-idx={0}>
-          <MarkdownRenderer imgKbId={kbId} imgDocId={docId}>{content}</MarkdownRenderer>
+          <MarkdownRenderer imgKbId={kbId} imgDocId={docId}>{anchoredContent}</MarkdownRenderer>
         </div>
       </div>
     );
@@ -1152,9 +1178,21 @@ function DocView({ content, startCharMap, chunkIdx, scrollTarget, scrollRef, kbI
       <div className="prose prose-sm max-w-none dark:prose-invert p-6">
         {sections.map((sec, i) => {
           if (i < EAGER || rendered.has(i)) {
+            // Inject page anchors that fall within this section
+            const secStart = sectionOffsets[i];
+            const secEnd = secStart + sec.length;
+            let secWithAnchors = sec;
+            for (const { page, startChar } of pageAnchorPositions) {
+              if (startChar >= secStart && startChar < secEnd) {
+                const relPos = startChar - secStart;
+                secWithAnchors = secWithAnchors.slice(0, relPos) +
+                  `<a id="page-${page}" data-page="${page}"></a>` +
+                  secWithAnchors.slice(relPos);
+              }
+            }
             return (
               <div key={i} data-section-idx={i}>
-                <MarkdownRenderer imgKbId={kbId} imgDocId={docId}>{sec}</MarkdownRenderer>
+                <MarkdownRenderer imgKbId={kbId} imgDocId={docId}>{secWithAnchors}</MarkdownRenderer>
               </div>
             );
           }

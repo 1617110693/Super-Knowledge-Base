@@ -9,6 +9,18 @@ import { FileText, Loader2, ArrowLeft, Pencil, Check, X, Search, XCircle, Chevro
 import { ImageDialog } from "./ImageDialog";
 import type { SearchResult } from "../../types";
 
+/** Convert a positive integer to lowercase Roman numerals. */
+function toRoman(n: number): string {
+  if (n <= 0) return String(n);
+  const vals = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
+  const syms = ["m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"];
+  let r = "";
+  for (let i = 0; i < vals.length; i++) {
+    while (n >= vals[i]) { r += syms[i]; n -= vals[i]; }
+  }
+  return r;
+}
+
 /** Split into ~3000-char sections */
 function splitSections(content: string): string[] {
   const byHeading = content.split(/\n(?=#{1,3}\s)/);
@@ -60,6 +72,7 @@ export function DocumentPreview() {
     return v ? parseInt(v) : null;
   });
   const [scrollTarget, setScrollTarget] = useState<{ text: string; pos: number; n: number } | null>(null);
+  const [jumpTrigger, setJumpTrigger] = useState(0);
   const jumpCounter = useRef(0);
   const [imageNames, setImageNames] = useState<string[]>([]);
   const [imageSrcs, setImageSrcs] = useState<Map<string, string>>(new Map());
@@ -149,7 +162,7 @@ export function DocumentPreview() {
         setMdAvailable(doc.md_available !== false);
       } catch { setDocName(docId); }
       try {
-        const res = await getChunkRange({ kb_id: kbId, doc_id: docId, start: 0, end: 2000 });
+        const res = await getChunkRange({ kb_id: kbId, doc_id: docId, start: 0, end: 50000 });
         const map = new Map<number, number>();
         const pageMap = new Map<number, number[]>();
         let anyPage = false;
@@ -180,19 +193,8 @@ export function DocumentPreview() {
     jumpCounter.current += 1;
     setScrollTarget(heading ? { ...heading, n: jumpCounter.current } : null);
     setChunkIdx(ci);
+    setJumpTrigger(n => n + 1);
   }, []);
-
-  const handlePageJump = useCallback(() => {
-    const page = Number(pageInput);
-    if (!Number.isFinite(page)) return;
-    const chunks = pageChunksMap.get(page);
-    if (chunks && chunks.length > 0) {
-      setPageJumpError("");
-      jumpToChunk(chunks[0]);
-    } else if (hasPageData) {
-      setPageJumpError(t("docs.noChunksOnPage", { page }));
-    }
-  }, [pageInput, pageChunksMap, hasPageData, t, jumpToChunk]);
 
   // Build char→chunk/page lookup and extract headings
   const charMaps = useMemo(
@@ -211,6 +213,38 @@ export function DocumentPreview() {
     () => pageChunksMap.size > 0 ? Math.min(...pageChunksMap.keys()) : 0,
     [pageChunksMap],
   );
+
+  // page → chunk_index for the first chunk with valid start_char
+  const pageToAnchorChunk = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const [page, chunkIndices] of pageChunksMap) {
+      const sorted = [...chunkIndices].sort((a, b) => a - b);
+      for (const ci of sorted) {
+        const sc = startCharMap.get(ci);
+        if (sc != null && sc >= 0) { map.set(page, ci); break; }
+      }
+    }
+    return map;
+  }, [pageChunksMap, startCharMap]);
+
+  const handlePageJump = useCallback(() => {
+    const realPage = Number(pageInput);
+    if (!Number.isFinite(realPage)) return;
+    const virtualPage = realPage + savedPageOffset;
+    let targetCi = pageToAnchorChunk.get(virtualPage);
+    if (targetCi == null) {
+      for (let np = virtualPage + 1; np <= maxPage; np++) {
+        const nc = pageToAnchorChunk.get(np);
+        if (nc != null) { targetCi = nc; break; }
+      }
+    }
+    if (targetCi != null) {
+      setPageJumpError("");
+      jumpToChunk(targetCi);
+    } else if (hasPageData) {
+      setPageJumpError(t("docs.noChunksOnPage", { page: realPage }));
+    }
+  }, [pageInput, pageToAnchorChunk, hasPageData, t, jumpToChunk, maxPage, savedPageOffset]);
 
   // Page → startChar map for HTML anchor injection.
   // For each page, the anchor marks where that page's first text content
@@ -478,6 +512,7 @@ export function DocumentPreview() {
             minPage={minPage}
             maxPage={maxPage}
             pageChunksMap={pageChunksMap}
+            pageToAnchorChunk={pageToAnchorChunk}
             pageInput={pageInput}
             setPageInput={setPageInput}
             handlePageJump={handlePageJump}
@@ -490,7 +525,7 @@ export function DocumentPreview() {
           )}
           </div>{/* end sidebar column */}
           <div className="flex-1 min-w-0">
-            <DocView content={content} anchoredContent={anchoredContent} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollTarget={scrollTarget} scrollRef={docScrollRef} kbId={kbId} docId={docId} pageAnchorPositions={pageAnchorPositions} />
+            <DocView content={content} anchoredContent={anchoredContent} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollTarget={scrollTarget} scrollRef={docScrollRef} kbId={kbId} docId={docId} pageAnchorPositions={pageAnchorPositions} jumpTrigger={jumpTrigger} />
           </div>
         </div>
       )}
@@ -827,7 +862,7 @@ function FillMissingBtn({ kbId, docId, taskId, setTaskId, progress, setProgress 
 
 function DocToc({
   headings, tocOpen, setTocOpen, jumpToChunk, hasPageData, minPage, maxPage,
-  pageChunksMap, pageInput, setPageInput, handlePageJump, pageJumpError,
+  pageChunksMap, pageToAnchorChunk, pageInput, setPageInput, handlePageJump, pageJumpError,
   pageMode, savedPageOffset, onOpenSettings,
   t,
 }: {
@@ -839,6 +874,7 @@ function DocToc({
   minPage: number;
   maxPage: number;
   pageChunksMap: Map<number, number[]>;
+  pageToAnchorChunk: Map<number, number>;
   pageInput: string; setPageInput: (v: string) => void;
   handlePageJump: () => void;
   pageJumpError: string;
@@ -903,14 +939,21 @@ function DocToc({
           <div className="w-9 shrink-0 overflow-y-auto p-0.5">
             {pages.map((p) => {
               const displayP = p - displayOffset;
+              const label = displayP <= 0 ? toRoman(p) : String(displayP);
               return (
                 <button key={p}
                   onClick={() => {
-                    const chunks = pageChunksMap.get(p);
-                    if (chunks && chunks.length > 0) jumpToChunk(chunks[0]);
+                    let targetCi = pageToAnchorChunk.get(p);
+                    if (targetCi == null) {
+                      for (let np = p + 1; np <= maxPage; np++) {
+                        const nc = pageToAnchorChunk.get(np);
+                        if (nc != null) { targetCi = nc; break; }
+                      }
+                    }
+                    if (targetCi != null) jumpToChunk(targetCi);
                   }}
                   className="block w-full text-center py-0.5 text-[10px] tabular-nums text-muted-foreground hover:bg-muted hover:text-foreground rounded transition-colors">
-                  {displayP}
+                  {label}
                 </button>
               );
             })}
@@ -941,12 +984,13 @@ function DocToc({
   );
 }
 
-function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarget, scrollRef, kbId, docId, pageAnchorPositions }: {
+function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarget, scrollRef, kbId, docId, pageAnchorPositions, jumpTrigger }: {
   content: string; anchoredContent: string; startCharMap: Map<number, number>; chunkIdx: number | null;
   scrollTarget?: { text: string; pos: number } | null;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   kbId?: string; docId?: string;
   pageAnchorPositions: { page: number; startChar: number }[];
+  jumpTrigger: number;
 }) {
   const sections = useMemo(() => splitSections(content), [content]);
   const sectionOffsets = useMemo(() => buildSectionOffsets(content, sections), [content, sections]);
@@ -1080,24 +1124,46 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
 
           const anchor = container.querySelector(`#page-${pageNum}`) as HTMLElement | null;
           if (!anchor) {
-            if (++attempts < 20) { requestAnimationFrame(tryAnchor); }
+            if (++attempts < 50) { requestAnimationFrame(tryAnchor); }
             return;
           }
 
           anchor.scrollIntoView({ block: "start", behavior: "instant" });
 
-          // Highlight the containing section or element after the anchor
-          const sectionEl = anchor.closest('[data-section-idx]') as HTMLElement | null;
-          const nextEl = anchor.nextElementSibling as HTMLElement | null;
-          const targetEl = nextEl || sectionEl || anchor.parentElement!;
-          targetEl.style.backgroundColor = "#fef3c7";
-          targetEl.style.transition = "background-color 0.5s";
-          highlightRef.current = targetEl;
+          // Highlight from this page's anchor to the next page's anchor
+          const nextAnchor = container.querySelector(`#page-${pageNum + 1}`) as HTMLElement | null;
+          const range = document.createRange();
+          range.setStartAfter(anchor);
+          if (nextAnchor) {
+            range.setEndBefore(nextAnchor);
+          } else {
+            const lastChild = container.lastElementChild;
+            if (lastChild) range.setEndAfter(lastChild);
+          }
+          const highlightEls: HTMLElement[] = [];
+          const walker = document.createTreeWalker(
+            range.commonAncestorContainer, NodeFilter.SHOW_ELEMENT,
+            { acceptNode: (node) => {
+              if (!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
+              const el = node as HTMLElement;
+              if (el.id && el.id.startsWith('page-')) return NodeFilter.FILTER_SKIP;
+              const tag = el.tagName;
+              if (tag === 'H1' || tag === 'H2' || tag === 'H3' || tag === 'H4' || tag === 'H5' || tag === 'H6' ||
+                  tag === 'P' || tag === 'LI' || tag === 'TD' || tag === 'TH' || tag === 'PRE' || tag === 'BLOCKQUOTE') {
+                return NodeFilter.FILTER_ACCEPT;
+              }
+              return NodeFilter.FILTER_SKIP;
+            }}
+          );
+          let node: Node | null;
+          while ((node = walker.nextNode())) { highlightEls.push(node as HTMLElement); }
+          for (const el of highlightEls) {
+            el.style.backgroundColor = "#fef3c7";
+            el.style.transition = "background-color 0.5s";
+          }
+          highlightRef.current = null;
           setTimeout(() => {
-            if (highlightRef.current === targetEl) {
-              targetEl.style.backgroundColor = "";
-              highlightRef.current = null;
-            }
+            for (const el of highlightEls) { el.style.backgroundColor = ""; }
           }, 2500);
         };
         const timer = setTimeout(() => tryAnchor(), 80);
@@ -1159,7 +1225,7 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
     };
     const timer = setTimeout(() => tryHeading(), 80);
     return () => clearTimeout(timer);
-  }, [chunkIdx, scrollTarget, sections.length, charToSection, startCharMap, chunkPageMap]);
+  }, [chunkIdx, scrollTarget, jumpTrigger, sections.length, charToSection, startCharMap, chunkPageMap]);
 
 
   // Single section: render with data-section-idx for consistency

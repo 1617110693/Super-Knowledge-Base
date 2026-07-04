@@ -119,13 +119,15 @@ class LanceDBManager:
             return []
 
         if search_type == "fts":
-            return self._fts_search(table, query_text, top_k, doc_id_filter)
+            results = self._fts_search(table, query_text, top_k, doc_id_filter)
         elif search_type == "vector":
-            return self._vector_search(table, query_vector, top_k, doc_id_filter)
+            results = self._vector_search(table, query_vector, top_k, doc_id_filter)
         else:
-            return self._hybrid_search(
+            results = self._hybrid_search(
                 table, query_vector, query_text, top_k, doc_id_filter
             )
+        self._apply_page_offsets(results, kb_id)
+        return results
 
     # CJK Unicode ranges
     _CJK_RANGES = [
@@ -316,6 +318,35 @@ class LanceDBManager:
             if r["content_type"] != "text" or len(r["content"].strip()) >= 20
         ]
 
+    def _apply_page_offsets(self, results: list[dict], kb_id: str):
+        """Apply per-document page_offset to page numbers in-place.
+
+        Reads metadata.json for each unique doc_id and adjusts
+        page_number, page_start, page_end so all consumers (frontend,
+        MCP, chat, search) see real page numbers automatically.
+        """
+        if not results:
+            return
+        doc_ids = {r.get("doc_id", "") for r in results if r.get("doc_id")}
+        offsets: dict[str, int] = {}
+        for did in doc_ids:
+            try:
+                meta_path = self.data_dir.parent / f"kb_{kb_id}" / "docs" / did / "metadata.json"
+                if meta_path.exists():
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    offsets[did] = meta.get("page_offset", 0)
+            except Exception:
+                pass
+        if not offsets:
+            return
+        for r in results:
+            did = r.get("doc_id", "")
+            offset = offsets.get(did, 0)
+            if offset:
+                for key in ("page_number", "page_start", "page_end"):
+                    if key in r and isinstance(r[key], (int, float)):
+                        r[key] = max(1, int(r[key]) - offset)
+
     def enrich_with_context(
         self,
         results: List[dict],
@@ -330,6 +361,7 @@ class LanceDBManager:
         surrounding context around each hit.
         """
         if context_window <= 0 or not results:
+            self._apply_page_offsets(results, kb_id)
             return results
 
         table = self.get_table(kb_id)
@@ -351,6 +383,7 @@ class LanceDBManager:
                 needs_neighbors[doc_id].add(chunk_idx + offset)
 
         if not needs_neighbors:
+            self._apply_page_offsets(results, kb_id)
             return results
 
         # Batch-fetch all needed neighbor chunks per document
@@ -406,6 +439,7 @@ class LanceDBManager:
 
             r["context"] = {"prev": prev_chunks, "next": next_chunks}
 
+        self._apply_page_offsets(results, kb_id)
         return results
 
     def get_chunk_by_index(
@@ -470,7 +504,7 @@ class LanceDBManager:
             pass
 
         ctype = metadata.get("content_type", "text")
-        return {
+        result = {
             "chunk_id": r.get("chunk_id", ""),
             "doc_id": r.get("doc_id", ""),
             "kb_id": r.get("kb_id", ""),
@@ -485,6 +519,8 @@ class LanceDBManager:
             "prev_exists": prev_exists,
             "next_exists": next_exists,
         }
+        self._apply_page_offsets([result], kb_id)
+        return result
 
     def get_chunk_range(
         self, kb_id: str, doc_id: str, start: int, end: int
@@ -576,6 +612,7 @@ class LanceDBManager:
                     "metadata": metadata,
                 })
         results.sort(key=lambda x: x.get("chunk_index", 0))
+        self._apply_page_offsets(results, kb_id)
         return results
 
     def get_kb_stats(self, kb_id: str) -> dict:

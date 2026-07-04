@@ -497,3 +497,13 @@ pub async fn copy_document_to_kb(
 
     Ok(saved)
 }
+
+#[tauri::command]
+pub fn set_page_offset(
+    state: State<'_, AppState>,
+    kb_id: String,
+    doc_id: String,
+    page_offset: i32,
+) -> CommandResult<()> {
+    state.file_store.set_page_offset(&kb_id, &doc_id, page_offset)
+}

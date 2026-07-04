@@ -754,8 +754,8 @@ impl FileStore {
                             if let Some(sib_name) = val.get("name").and_then(|v| v.as_str()) {
                                 // Check same base name and is part1
                                 if sib_name.contains("_part1.") {
-                                    let base = name.rsplit("_part").next_back().unwrap_or("");
-                                    let sib_base = sib_name.rsplit("_part").next_back().unwrap_or("");
+                                    let base = name.split("_part").next().unwrap_or("");
+                                    let sib_base = sib_name.split("_part").next().unwrap_or("");
                                     if base == sib_base {
                                         page_offset = val.get("page_offset")
                                             .and_then(|o| o.as_i64()).unwrap_or(0) as i32;
@@ -833,6 +833,45 @@ impl FileStore {
         doc.file_size = file_size;
         doc.updated_at = Utc::now();
         self.save_document_meta(&doc)?;
+        Ok(())
+    }
+
+    pub fn set_page_offset(
+        &self, kb_id: &str, doc_id: &str, offset: i32,
+    ) -> CommandResult<()> {
+        let doc_dir = self.get_doc_dir(kb_id, doc_id);
+        let meta_path = doc_dir.join("metadata.json");
+        if !meta_path.exists() {
+            return Err(crate::error::AppError::InvalidInput(
+                "Document not found".into()
+            ));
+        }
+        let data = std::fs::read_to_string(&meta_path)?;
+        let mut meta: serde_json::Value = serde_json::from_str(&data)?;
+        meta["page_offset"] = serde_json::json!(offset);
+        std::fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
+
+        // Propagate to sibling parts
+        if let Some(name) = meta.get("name").and_then(|v| v.as_str()) {
+            if let Some(pos) = name.find("_part") {
+                let base = &name[..pos];
+                if let Ok(entries) = std::fs::read_dir(&doc_dir.parent().unwrap()) {
+                    for entry in entries.flatten() {
+                        let sib_meta = entry.path().join("metadata.json");
+                        if entry.path() == doc_dir || !sib_meta.exists() { continue; }
+                        if let Ok(sib_data) = std::fs::read_to_string(&sib_meta) {
+                            if let Ok(mut sib_val) = serde_json::from_str::<serde_json::Value>(&sib_data) {
+                                let sib_name = sib_val.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                                if sib_name.starts_with(base) && sib_name.contains("_part") {
+                                    sib_val["page_offset"] = serde_json::json!(offset);
+                                    let _ = std::fs::write(&sib_meta, serde_json::to_string_pretty(&sib_val)?);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 

@@ -104,14 +104,21 @@ export function DocumentPreview() {
 
   const savePageOffset = async (offset: number) => {
     if (!kbId || !docId) return;
+    setSavedPageOffset(offset);
     try {
-      const { pythonFetch } = await import("../../services/pythonClient");
-      await pythonFetch("/utils/set-page-offset", {
-        method: "POST",
-        body: JSON.stringify({ kb_id: kbId, doc_id: docId, page_offset: offset }),
-      });
-      setSavedPageOffset(offset);
-    } catch (e) { console.error("Failed to save page_offset:", e); }
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("set_page_offset", { kbId, docId, pageOffset: offset });
+      // Also notify Python backend to apply offsets in search results
+      try {
+        const { pythonFetch } = await import("../../services/pythonClient");
+        await pythonFetch("/utils/set-page-offset", {
+          method: "POST",
+          body: JSON.stringify({ kb_id: kbId, doc_id: docId, page_offset: offset }),
+        });
+      } catch {}
+    } catch (e) {
+      console.error("Failed to save page_offset:", e);
+    }
   };
 
   // Load document images
@@ -537,6 +544,7 @@ export function DocumentPreview() {
           savePageOffset={savePageOffset}
           minPage={minPage} maxPage={maxPage}
           onClose={() => setPageSettingsOpen(false)}
+          t={t}
         />
       )}
       {dialogIdx != null && kbId && docId && (
@@ -652,63 +660,68 @@ function extractHeadings(
 
 function PageSettingsDialog({
   kbId, docId, pageMode, setPageMode, savedPageOffset, savePageOffset, minPage, maxPage, onClose,
+  t,
 }: {
   kbId: string; docId: string;
   pageMode: "virtual" | "real"; setPageMode: (m: "virtual" | "real") => void;
   savedPageOffset: number; savePageOffset: (n: number) => void;
   minPage: number; maxPage: number;
   onClose: () => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  t: (key: any, vars?: Record<string, string | number>) => string;
 }) {
-  const [offsetInput, setOffsetInput] = useState(String(savedPageOffset));
+  // savedPageOffset = virtual - real. To show "virtual page N → real page 1",
+  // the user enters N; we store offset = N - 1.
+  const [offsetInput, setOffsetInput] = useState(
+    String(savedPageOffset > 0 ? savedPageOffset + 1 : 0)
+  );
 
   const handleSave = () => {
     const v = parseInt(offsetInput);
     if (!isNaN(v) && v >= 0) {
-      savePageOffset(v);
-      setPageMode(v > 0 ? "real" : "real");
+      const actualOffset = v > 0 ? v - 1 : 0;
+      savePageOffset(actualOffset);
+      setPageMode(actualOffset > 0 ? "real" : "real");
     }
     onClose();
   };
 
+  const displayVirtualPage = (parseInt(offsetInput) || 0);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="bg-card rounded-xl shadow-xl w-80 max-w-[90vw] p-5" onClick={e => e.stopPropagation()}>
-        <h3 className="font-semibold text-sm mb-4">Page Number Settings</h3>
+        <h3 className="font-semibold text-sm mb-4">{t("docs.pageSettings")}</h3>
 
         <div className="space-y-4">
-          {/* Virtual/Real toggle */}
           <div className="flex items-center justify-between">
-            <span className="text-xs">Page numbering</span>
+            <span className="text-xs">{t("docs.pageNumbering")}</span>
             <button onClick={() => setPageMode(pageMode === "real" ? "virtual" : "real")}
               className={`px-2 py-1 rounded text-xs font-medium ${pageMode === 'real' ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
-              {pageMode === 'real' ? 'Real' : 'Virtual'}
+              {pageMode === 'real' ? t("docs.pageReal") : t("docs.pageVirtual")}
             </button>
           </div>
 
           <p className="text-[10px] text-muted-foreground">
-            {pageMode === 'real'
-              ? 'Real pages match the printed book. Set the virtual page that should be page 1 below.'
-              : 'Virtual pages use MinerU sequential numbering (1, 2, 3...).'}
+            {pageMode === 'real' ? t("docs.pageRealHint") : t("docs.pageVirtualHint")}
           </p>
 
-          {/* Offset input */}
           <div className="flex items-center gap-2">
-            <span className="text-xs shrink-0">Virtual page</span>
+            <span className="text-xs shrink-0">{t("docs.pageVirtualPage")}</span>
             <input type="number" min={0} max={maxPage} value={offsetInput}
               onChange={e => setOffsetInput(e.target.value)}
               className="w-16 px-2 py-1 text-xs border rounded bg-background text-center" />
-            <span className="text-xs">→ page 1</span>
+            <span className="text-xs">{t("docs.pageToReal1")}</span>
           </div>
 
           <p className="text-[10px] text-muted-foreground">
-            Page bar shows: virtual {Math.max(1, parseInt(offsetInput) || 0)} = real page 1.
-            Re-index after changing.
+            {t("docs.pageBarHint", { v: String(Math.max(1, displayVirtualPage)) })}
           </p>
         </div>
 
         <div className="flex gap-2 mt-4">
-          <button onClick={onClose} className="flex-1 px-3 py-1.5 border rounded-lg text-xs hover:bg-muted">Cancel</button>
-          <button onClick={handleSave} className="flex-1 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs">Save</button>
+          <button onClick={onClose} className="flex-1 px-3 py-1.5 border rounded-lg text-xs hover:bg-muted">{t("kb.cancel")}</button>
+          <button onClick={handleSave} className="flex-1 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs">{t("docs.save")}</button>
         </div>
       </div>
     </div>

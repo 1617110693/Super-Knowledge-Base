@@ -172,6 +172,7 @@ pub fn run() {
             documents::save_image_desc,
             documents::save_document_chunks,
             documents::save_document_content,
+            documents::set_page_offset,
             documents::reveal_document_in_explorer,
             documents::open_document_file,
             parsing::start_parsing,

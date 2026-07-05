@@ -15,5 +15,8 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "@tauri-apps/plugin-http": "^2.5.9"
   }
 }

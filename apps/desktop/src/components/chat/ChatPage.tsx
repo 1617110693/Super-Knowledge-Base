@@ -7,7 +7,7 @@ import { useSettingsStore } from "../../stores/useSettingsStore";
 import { useI18n } from "../../i18n";
 import { CHAT_TOOLS, toolLabel } from "../../services/toolDefinitions";
 import { executeToolCall } from "../../services/toolExecutor";
-import { Loader2, Trash2, MessageSquare, User, RefreshCw, ArrowDown, ArrowDownToLine } from "lucide-react";
+import { Loader2, Trash2, MessageSquare, User, RefreshCw, ArrowDown, ArrowDownToLine, Plus } from "lucide-react";
 import { ChatMessageList } from "./ChatMessageList";
 import { ChatInput } from "./ChatInput";
 import { KBSelector, KBSelectedTags } from "./KBSelector";
@@ -71,6 +71,14 @@ export function ChatPage() {
       navigate(`/chat/${id}`, { replace: true });
     }
   }, [convId]);
+
+  // Browser tab title — mirrors the sidebar conversation label.
+  // New conversations show "新对话" until the first user message gives them a
+  // title; the title stays in sync as the sidebar renames the conversation.
+  useEffect(() => {
+    const title = conv?.title || conv?.messages?.[0]?.content?.slice(0, 30) || t("chat.new");
+    document.title = `${title} — SKB`;
+  }, [convId, conv?.title, conv?.messages?.[0]?.content]);
 
   const scrollToBottom = (smooth = true) => {
     const el = scrollRef.current;
@@ -205,10 +213,11 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
       const kbList = knowledgeBases; // snapshot at send time
 
       for (let round = 0; round < (settings.max_tool_rounds || 10); round++) {
-        // Filter tools: only include web search tools when enabled
-        const activeTools = webSearchEnabled
-          ? CHAT_TOOLS
-          : CHAT_TOOLS.filter((t) => t.function.name !== "web_search" && t.function.name !== "web_fetch");
+        // Filter tools: exclude web search when disabled, exclude KB tools when no KB selected
+        const noKb = selectedKbIds.length === 0;
+        let activeTools = CHAT_TOOLS;
+        if (!webSearchEnabled) activeTools = activeTools.filter((t) => t.function.name !== "web_search" && t.function.name !== "web_fetch");
+        if (noKb) activeTools = activeTools.filter((t) => !["search_knowledge_base", "get_document", "get_document_chunks", "list_documents", "get_chunk_by_index", "get_chunks_by_page", "list_knowledge_bases"].includes(t.function.name));
         const resp = await fetch(`${apiBase}/chat/completions`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
@@ -508,13 +517,18 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
           </select>
         </label>
 
-        {/* Web search toggle — always available (DuckDuckGo is free, no config needed) */}
+        {/* Web search toggle — pill toggle with globe icon and clear state */}
         <button
           onClick={() => { if (conv) updateChatSettings(conv.id, { webSearchEnabled: !conv.chatSettings.webSearchEnabled }); }}
-          className={`p-1 rounded-md text-[11px] flex items-center gap-1 ${conv?.chatSettings?.webSearchEnabled ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"}`}
+          className={`group flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-200 select-none ${
+            conv?.chatSettings?.webSearchEnabled
+              ? "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800"
+              : "bg-muted/60 text-muted-foreground border border-transparent hover:bg-muted hover:text-foreground/70"
+          }`}
           title={t("chat.webSearch")}
         >
-          🌐 <span className="hidden sm:inline">{conv?.chatSettings?.webSearchEnabled ? t("chat.webSearchOn") : t("chat.webSearchOff")}</span>
+          <span className={`text-sm transition-transform ${conv?.chatSettings?.webSearchEnabled ? "" : "opacity-50"}`}>🌐</span>
+          <span>{conv?.chatSettings?.webSearchEnabled ? t("chat.webSearchOn") : t("chat.webSearchOff")}</span>
         </button>
 
         {/* Multi-select KB dropdown */}
@@ -529,7 +543,7 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
           kbCountLabel={(count) => t("chat.kbCount", { count })}
         />
 
-        <button onClick={handleNew} className="px-3 py-1 border rounded-md text-xs hover:bg-muted">{t("chat.new")}</button>
+        <button onClick={handleNew} className="p-1.5 hover:bg-muted rounded-md text-muted-foreground" title={t("chat.new")}><Plus className="w-4 h-4" /></button>
         <button onClick={() => setAutoScroll(!autoScroll)}
           className={`p-1.5 hover:bg-muted rounded-md ${autoScroll ? "text-primary" : "text-muted-foreground"}`} title={t("chat.autoScroll")}><ArrowDownToLine className="w-4 h-4" /></button>
         {conv.messages.length > 0 && (

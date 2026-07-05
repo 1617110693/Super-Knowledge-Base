@@ -113,12 +113,27 @@ export function Sidebar() {
                       <p className="text-xs text-muted-foreground px-3 py-4 text-center">{t("chat.empty")}</p>
                     ) : (
                       recentConversations.map((conv) => (
-                        <Link key={conv.id} to={`/chat/${conv.id}`}
-                          onClick={() => { setActiveConversation(conv.id); setChatPopover(false); }}
-                          className={`flex items-center gap-2 px-3 py-2 text-sm transition-colors truncate ${activeConversationId === conv.id && location.pathname.startsWith("/chat") ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-muted-foreground"}`}>
-                          <MessageSquare className="w-3 h-3 shrink-0" />
-                          <span className="truncate text-xs">{conv.title || conv.messages[0]?.content?.slice(0, 40) || t("chat.new")}</span>
-                        </Link>
+                        <div key={conv.id} className="group relative">
+                          <Link to={`/chat/${conv.id}`}
+                            onClick={() => { setActiveConversation(conv.id); setChatPopover(false); }}
+                            className={`flex items-center gap-2 px-3 py-2 pr-8 text-sm transition-colors truncate ${activeConversationId === conv.id && location.pathname.startsWith("/chat") ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-muted-foreground"}`}>
+                            <MessageSquare className="w-3 h-3 shrink-0" />
+                            <span className="truncate text-xs">{conv.title || conv.messages[0]?.content?.slice(0, 40) || t("chat.new")}</span>
+                          </Link>
+                          <div className="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex">
+                            <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteConversation(conv.id);
+                              if (conv.id === activeConversationId || location.pathname === `/chat/${conv.id}`) {
+                                const remaining = recentConversations.filter((c) => c.id !== conv.id);
+                                setChatPopover(false);
+                                if (remaining.length > 0) { navigate(`/chat/${remaining[0].id}`, { replace: true }); }
+                                else { const id = newConversation(); navigate(`/chat/${id}`, { replace: true }); }
+                              }
+                            }}
+                              className="p-0.5 hover:bg-red-50 rounded text-muted-foreground/60 hover:text-red-500" title={t("docs.delete")}>
+                              <Trash2 className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
+                        </div>
                       ))
                     )}
                   </div>
@@ -263,7 +278,18 @@ export function Sidebar() {
                           className="p-0.5 hover:bg-muted rounded text-muted-foreground/60" title={t("kb.rename")}>
                           <Pencil className="w-2.5 h-2.5" />
                         </button>
-                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteConversation(conv.id); }}
+                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteConversation(conv.id);
+                          // Navigate away if the deleted conversation is currently active
+                          if (conv.id === activeConversationId || location.pathname === `/chat/${conv.id}`) {
+                            const remaining = recentConversations.filter((c) => c.id !== conv.id);
+                            if (remaining.length > 0) {
+                              navigate(`/chat/${remaining[0].id}`, { replace: true });
+                            } else {
+                              const id = newConversation();
+                              navigate(`/chat/${id}`, { replace: true });
+                            }
+                          }
+                        }}
                           className="p-0.5 hover:bg-red-50 rounded text-muted-foreground/60 hover:text-red-500" title={t("docs.delete")}>
                           <Trash2 className="w-2.5 h-2.5" />
                         </button>

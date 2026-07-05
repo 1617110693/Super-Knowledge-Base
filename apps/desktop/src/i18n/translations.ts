@@ -192,7 +192,7 @@ export const translations = {
   "chat.contextWindow": { en: "Ctx", "zh-CN": "上下文" },
   "chat.contextWindowHelp": { en: "Context window: include neighboring chunks in search results for richer context", "zh-CN": "上下文窗口：搜索结果附带相邻分块，提供更丰富的上下文" },
   "chat.stop": { en: "Stop generating", "zh-CN": "停止生成" },
-  "chat.noKb": { en: "No KB (general chat)", "zh-CN": "无知识库（通用对话）" },
+  "chat.noKb": { en: "No KB", "zh-CN": "无知识库" },
   "chat.selectKbHint": { en: "Select knowledge bases above to enable RAG tools.", "zh-CN": "在上方选择知识库以启用 RAG 工具。" },
   "chat.kbCount": { en: "{count} KBs", "zh-CN": "{count} 个知识库" },
   "chat.noApiKey": { en: "Please configure the LLM API Key in Settings first.", "zh-CN": "请先在设置中配置 LLM API Key。" },

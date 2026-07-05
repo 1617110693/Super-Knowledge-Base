@@ -1,6 +1,6 @@
 import { useMemo, memo } from "react";
 import { Streamdown } from "streamdown";
-import { math } from "@streamdown/math";
+import { createMathPlugin } from "@streamdown/math";
 import { cjk } from "@streamdown/cjk";
 import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
@@ -34,10 +34,16 @@ export interface ChatMarkdownProps {
 
 /** CJK + remark-gfm presets for the cjk plugin (runs after remarkGfm). */
 // `cjk` is a pre-configured plugin object exported by @streamdown/cjk (not a
-// factory). `math` and `cjk` are cast through any because @streamdown/math
+// factory). `createMathPlugin` builds the @streamdown/math plugin with options:
+// we enable `singleDollarTextMath: true` because the default (`false`) only
+// renders `$$...$$` display math and leaves `$...$` inline math unrendered —
+// which broke inline formulas in LLM responses (most visibly inside tables).
+// This matches MarkdownRenderer's remark-math default so chat and documents
+// render inline math consistently. Cast through any because @streamdown/math
 // resolves unified@11.0.5 while streamdown@2.5.0 expects unified@11.0.0 types —
 // a structural-only mismatch that is fine at runtime.
-const PLUGINS_OBJ: any = { math, cjk };
+const mathPlugin = createMathPlugin({ singleDollarTextMath: true });
+const PLUGINS_OBJ: any = { math: mathPlugin, cjk };
 
 const REMARK_PLUGINS = [remarkGfm];
 const REHYPE_PLUGINS = [rehypeRaw];
@@ -149,7 +155,13 @@ export const ChatMarkdown = memo(function ChatMarkdown({
         .dark .skb-badge:hover{background:rgba(129,140,248,0.28)}
       `}</style>
       <Streamdown
-        mode={isStreaming ? "streaming" : "static"}
+        // Keep the default streaming mode for BOTH streaming and final states.
+        // Switching to mode="static" when done rendered via a different pipeline
+        // that didn't apply the math/cjk plugins or rehype-raw the same way —
+        // causing the completed message to flash back to raw text. The
+        // documented chat pattern (vercel/streamdown) keeps streaming mode and
+        // toggles only `isAnimating` for the caret + `parseIncompleteMarkdown`
+        // for the remend preprocessor.
         parseIncompleteMarkdown={isStreaming}
         plugins={PLUGINS_OBJ}
         remarkPlugins={REMARK_PLUGINS}

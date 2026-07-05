@@ -34,6 +34,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_http::init())
         .setup(|app| {
             // Single-instance: bind a singleton port. Intentionally leaked
             // so the port stays bound for the app's entire lifetime.

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback, startTransition } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { MarkdownRenderer } from "../common/MarkdownRenderer";
 import { getDocumentContent, saveDocumentContent, saveDocumentChunks } from "../../services/tauriBridge";
@@ -1027,6 +1027,27 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
     };
   }, [sectionOffsets]);
 
+  // Estimated cumulative scroll position for each section's top.
+  // Used for instant scroll on page jump — scroll first (rough), then
+  // render, then fine-tune with scrollIntoView. Estimation only needs
+  // to be approximately right; final position is always set by
+  // scrollIntoView after layout stabilizes.
+  const sectionEstimatedTops = useMemo(() => {
+    const tops: number[] = [];
+    let cumulative = 0;
+    for (let i = 0; i < sections.length; i++) {
+      tops.push(cumulative);
+      const sec = sections[i];
+      // Rough estimate: ~80 chars per line × ~22px line height,
+      // plus extra height for display math blocks ($$...$$).
+      const displayMathCount = Math.floor(((sec.match(/\$\$/g) || []).length) / 2);
+      const textLines = Math.ceil(sec.length / 80);
+      const estimatedHeight = Math.max(200, textLines * 22 + displayMathCount * 50);
+      cumulative += estimatedHeight;
+    }
+    return tops;
+  }, [sections]);
+
   // Map chunk_idx → section_idx
   const chunkSection = useMemo(() => {
     const map = new Map<number, number>();
@@ -1042,7 +1063,10 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
   const sentinelsRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const highlightRef = useRef<HTMLElement | null>(null);
 
-  const EAGER = 5;
+  const EAGER = 2;
+  // Sliding window: keep only this many sections above/below the target
+  // to prevent DOM bloat from accumulating over multiple jumps.
+  const WINDOW = 8;
 
   // Which section contains the target chunk (null if no target)
   const targetSecIdx: number | null = chunkIdx != null ? (chunkSection.get(chunkIdx) ?? null) : null;
@@ -1051,7 +1075,9 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
     const s = new Set<number>();
     for (let i = 0; i < Math.min(EAGER, sections.length); i++) s.add(i);
     if (targetSecIdx != null) {
-      for (let i = Math.max(0, targetSecIdx - 3); i <= Math.min(sections.length - 1, targetSecIdx + 3); i++) s.add(i);
+      const lo = Math.max(0, targetSecIdx - 3);
+      const hi = Math.min(sections.length - 1, targetSecIdx + 3);
+      for (let i = lo; i <= hi; i++) s.add(i);
     }
     return s;
   });
@@ -1061,13 +1087,20 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
   // Ensure target section window is rendered (fires when targetSecIdx changes)
   useEffect(() => {
     if (targetSecIdx == null) return;
-    setRendered(prev => {
-      const s = new Set(prev);
-      for (let i = 0; i < Math.min(EAGER, sections.length); i++) s.add(i);
-      for (let i = Math.max(0, targetSecIdx - 3); i <= Math.min(sections.length - 1, targetSecIdx + 3); i++) s.add(i);
-      return s;
+    startTransition(() => {
+      setRendered(prev => {
+        if (prev.has(targetSecIdx)) return prev;
+        const s = new Set<number>();
+        const lo = Math.max(0, targetSecIdx - 3);
+        const hi = Math.min(sections.length - 1, targetSecIdx + 3);
+        for (let i = lo; i <= hi; i++) s.add(i);
+        for (let i = Math.max(0, targetSecIdx - WINDOW); i <= Math.min(sections.length - 1, targetSecIdx + WINDOW); i++) {
+          if (prev.has(i)) s.add(i);
+        }
+        return s;
+      });
     });
-  }, [targetSecIdx, sections.length]);
+  }, [targetSecIdx]);
 
   // IntersectionObserver for lazy loading
   useEffect(() => {
@@ -1082,7 +1115,7 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
         }
       }
       if (changed) setRendered(next);
-    }, { root: containerRef.current, rootMargin: "600px" });
+    }, { root: containerRef.current, rootMargin: "2500px" });
     sentinelsRef.current.forEach(el => obsRef.current?.observe(el));
     return () => obsRef.current?.disconnect();
   }, [sections]);
@@ -1116,29 +1149,75 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
         const sc = startCharMap.get(chunkIdx);
         if (sc != null) {
           const si = charToSection(sc);
+          // Instant scroll to estimated position BEFORE triggering render.
+          // This gives immediate visual feedback — the viewport moves
+          // right away while KaTeX renders in the background. The final
+          // precise position is set later by scrollIntoView.
+          const container = containerRef.current;
+          if (container && sectionEstimatedTops[si] != null) {
+            container.scrollTop = sectionEstimatedTops[si];
+          }
+          // Render target section + neighbors, trim everything outside the
+          // sliding window to prevent DOM bloat from accumulating over
+          // multiple jumps (every jump adds sections, never removes them).
           setRendered(prev => {
-            if (prev.has(si)) return prev;
-            const s = new Set(prev);
-            for (let i = Math.max(0, si - 3); i <= Math.min(sections.length - 1, si + 3); i++) s.add(i);
+            const s = new Set<number>();
+            s.add(si);
+            for (let i = Math.max(0, si - WINDOW); i <= Math.min(sections.length - 1, si + WINDOW); i++) {
+              if (prev.has(i)) s.add(i);
+            }
             return s;
+          });
+          startTransition(() => {
+            setRendered(prev => {
+              const s = new Set<number>();
+              const lo = Math.max(0, si - 3);
+              const hi = Math.min(sections.length - 1, si + 3);
+              for (let i = lo; i <= hi; i++) s.add(i);
+              // Preserve any already-rendered sections within the window
+              for (let i = Math.max(0, si - WINDOW); i <= Math.min(sections.length - 1, si + WINDOW); i++) {
+                if (prev.has(i)) s.add(i);
+              }
+              return s;
+            });
           });
         }
 
-        // Retry loop: wait for the anchor to appear in the DOM
-        let attempts = 0;
+        // Wait for the anchor and layout to stabilize before scrolling.
+        // Phase 1: poll for anchor presence (up to 50 frames).
+        // Phase 2: after anchor is found, wait 2 more frames for KaTeX
+        //   layout to finish before scrollIntoView — this prevents
+        //   scrolling to intermediate positions during layout shifts.
+        let waitFrames = 0;
+        let anchorFound = false;
         const tryAnchor = () => {
           const container = containerRef.current;
           if (!container) return;
 
+          const anchor = container.querySelector(`#page-${pageNum}`) as HTMLElement | null;
+          if (!anchor) {
+            if (++waitFrames < 50) { requestAnimationFrame(tryAnchor); }
+            return;
+          }
+
+          if (!anchorFound) {
+            // Anchor just appeared — wait 2 more frames for KaTeX layout
+            anchorFound = true;
+            waitFrames = 0;
+            requestAnimationFrame(tryAnchor);
+            return;
+          }
+
+          if (++waitFrames < 3) {
+            // Still waiting for layout to stabilize
+            requestAnimationFrame(tryAnchor);
+            return;
+          }
+
+          // Clear previous highlight
           if (highlightRef.current) {
             highlightRef.current.style.backgroundColor = "";
             highlightRef.current = null;
-          }
-
-          const anchor = container.querySelector(`#page-${pageNum}`) as HTMLElement | null;
-          if (!anchor) {
-            if (++attempts < 50) { requestAnimationFrame(tryAnchor); }
-            return;
           }
 
           anchor.scrollIntoView({ block: "start", behavior: "instant" });
@@ -1179,8 +1258,9 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
             for (const el of highlightEls) { el.style.backgroundColor = ""; }
           }, 2500);
         };
-        const timer = setTimeout(() => tryAnchor(), 80);
-        return () => clearTimeout(timer);
+        // Start immediately via rAF — no 80ms setTimeout penalty
+        const raf = requestAnimationFrame(tryAnchor);
+        return () => cancelAnimationFrame(raf);
       }
     }
 
@@ -1188,11 +1268,31 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
     const secIdx = scrollTarget ? charToSection(scrollTarget.pos) : null;
     if (secIdx == null) return;
 
+    // Instant scroll to estimated position before triggering render
+    {
+      const container = containerRef.current;
+      if (container && sectionEstimatedTops[secIdx] != null) {
+        container.scrollTop = sectionEstimatedTops[secIdx];
+      }
+    }
+
     setRendered(prev => {
-      if (prev.has(secIdx)) return prev;
-      const s = new Set(prev);
-      for (let i = Math.max(0, secIdx - 3); i <= Math.min(sections.length - 1, secIdx + 3); i++) s.add(i);
+      const s = new Set<number>();
+      s.add(secIdx);
+      for (let i = Math.max(0, secIdx - WINDOW); i <= Math.min(sections.length - 1, secIdx + WINDOW); i++) {
+        if (prev.has(i)) s.add(i);
+      }
       return s;
+    });
+    startTransition(() => {
+      setRendered(prev => {
+        const s = new Set<number>();
+        for (let i = Math.max(0, secIdx - 3); i <= Math.min(sections.length - 1, secIdx + 3); i++) s.add(i);
+        for (let i = Math.max(0, secIdx - WINDOW); i <= Math.min(sections.length - 1, secIdx + WINDOW); i++) {
+          if (prev.has(i)) s.add(i);
+        }
+        return s;
+      });
     });
 
     let attempts = 0;
@@ -1236,9 +1336,9 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
         }
       }, 2500);
     };
-    const timer = setTimeout(() => tryHeading(), 80);
-    return () => clearTimeout(timer);
-  }, [chunkIdx, scrollTarget, jumpTrigger, sections.length, charToSection, startCharMap, chunkPageMap]);
+    const raf2 = requestAnimationFrame(tryHeading);
+    return () => cancelAnimationFrame(raf2);
+  }, [chunkIdx, scrollTarget, jumpTrigger, sections.length, charToSection, startCharMap, chunkPageMap, sectionEstimatedTops]);
 
 
   // Single section: render with data-section-idx for consistency
@@ -1278,7 +1378,7 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
           return (
             <div key={i}>
               <div ref={sentinelRef(i)} data-section-idx={i} style={{ height: 1 }} />
-              <div style={{ height: 200 }} />
+              <div style={{ height: Math.max(200, sectionEstimatedTops[i + 1] - sectionEstimatedTops[i] || 200) }} />
             </div>
           );
         })}

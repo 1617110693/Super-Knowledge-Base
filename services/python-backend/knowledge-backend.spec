@@ -1,12 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import copy_metadata
+
+datas = []
+datas += copy_metadata('fastmcp')
+datas += copy_metadata('fastmcp-slim')
+datas += copy_metadata('mcp')
 
 
 a = Analysis(
     ['build_backend.py'],
     pathex=['src'],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=datas,
+    hiddenimports=['knowledge_backend.llama_service'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

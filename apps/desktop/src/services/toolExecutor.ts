@@ -372,8 +372,12 @@ export async function executeToolCall(
       const { useSettingsStore } = await import("../stores/useSettingsStore");
       const appSettings = useSettingsStore.getState().settings;
       const { searchWeb } = await import("./webSearch");
+      // Default to DuckDuckGo (free, no API key) when no provider is configured.
+      // Previously defaulted to "tavily" which silently failed without an API key,
+      // so the AI never got web results and the feature appeared broken.
+      const provider = ((appSettings as any).web_search_provider as "duckduckgo" | "tavily" | "searxng" | undefined) || "duckduckgo";
       const results = await searchWeb(query, {
-        provider: (appSettings as any).web_search_provider || "tavily",
+        provider,
         tavilyApiKey: (appSettings as any).tavily_api_key || "",
         searxngBaseUrl: (appSettings as any).searxng_base_url || "",
         maxResults: (appSettings as any).web_search_max_results || maxResults,

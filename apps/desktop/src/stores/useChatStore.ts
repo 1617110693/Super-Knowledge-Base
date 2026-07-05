@@ -15,6 +15,8 @@ interface ChatState {
   conversations: Conversation[];
   activeConversationId: string | null;
   streaming: boolean;
+  /** Conv id currently streaming — persistence is deferred for this conv. */
+  streamingConvId: string | null;
   loaded: boolean;
 
   load: () => Promise<void>;
@@ -27,6 +29,10 @@ interface ChatState {
   clearAll: () => void;
   renameConversation: (id: string, title: string) => void;
   updateChatSettings: (convId: string, settings: Partial<ChatSettings>) => void;
+  /** Mark a conversation as actively streaming — skip disk persistence until cleared. */
+  setStreamingConv: (id: string | null) => void;
+  /** Force-persist a single conversation to disk (call after streaming ends). */
+  persistConversation: (convId: string) => void;
 }
 
 function persistConversations(convs: Conversation[]) {
@@ -34,10 +40,18 @@ function persistConversations(convs: Conversation[]) {
   saveChatConversations(convs as any).catch(console.error);
 }
 
+/** Find a single conversation by id and persist only it (snapshot of current state). */
+function persistOne(convs: Conversation[], convId: string) {
+  const conv = convs.find((c) => c.id === convId);
+  if (!conv) return;
+  persistConversations(convs);
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
   activeConversationId: null,
   streaming: false,
+  streamingConvId: null,
   loaded: false,
 
   load: async () => {
@@ -80,7 +94,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
       return updated;
     });
-    persistConversations(conversations);
+    // Skip disk writes while this conversation is streaming
+    if (get().streamingConvId !== convId) persistConversations(conversations);
     set({ conversations });
   },
 
@@ -93,7 +108,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       return { ...c, messages, updatedAt: new Date().toISOString() };
     });
-    persistConversations(conversations);
+    // Skip disk writes while this conversation is streaming — the tight 80ms
+    // flush loop would otherwise trigger dozens of disk writes per response.
+    if (get().streamingConvId !== convId) persistConversations(conversations);
     set({ conversations });
   },
 
@@ -108,8 +125,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       return { ...c, messages, updatedAt: new Date().toISOString() };
     });
-    persistConversations(conversations);
+    if (get().streamingConvId !== convId) persistConversations(conversations);
     set({ conversations });
+  },
+
+  setStreamingConv: (id) => set({ streamingConvId: id }),
+
+  persistConversation: (convId) => {
+    persistOne(get().conversations, convId);
   },
 
   deleteConversation: (id) => {

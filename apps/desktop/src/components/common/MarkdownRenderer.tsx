@@ -41,7 +41,7 @@ function rehypeMathInHtml() {
 }
 
 // ── [N] → clickable source badge ──
-function embedBadges(content: string, sourceCount: number): string {
+export function embedBadges(content: string, sourceCount: number): string {
   if (!sourceCount) return content;
   const segments = content.split(/(```[\s\S]*?```|`[^`\n]+`|\$\$[\s\S]*?\$\$|\$[^$\n]+\$)/g);
   return segments.map((seg, i) => {
@@ -98,7 +98,7 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
 /* Shared cache: filename → data URL (survives component re-renders) */
 const _imgCache = new Map<string, string>();
 
-function InlineImg({ src, alt, imgKbId, imgDocId, imgSources }: {
+export function InlineImg({ src, alt, imgKbId, imgDocId, imgSources }: {
   src?: string; alt?: string; imgKbId?: string; imgDocId?: string;
   imgSources?: { kb_id: string; doc_id: string; content?: string }[];
 }) {

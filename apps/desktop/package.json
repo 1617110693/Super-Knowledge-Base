@@ -10,6 +10,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@streamdown/cjk": "^1.0.3",
+    "@streamdown/math": "^1.0.2",
     "@tanstack/react-query": "^5.51.0",
     "@tanstack/react-virtual": "^3.14.5",
     "@tauri-apps/api": "^2.0.0",
@@ -29,6 +31,7 @@
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.0",
     "remark-math": "^6.0.0",
+    "streamdown": "^2.5.0",
     "tailwind-merge": "^2.4.0",
     "zustand": "^4.5.4"
   },

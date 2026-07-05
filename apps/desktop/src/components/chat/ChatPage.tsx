@@ -7,7 +7,7 @@ import { useSettingsStore } from "../../stores/useSettingsStore";
 import { useI18n } from "../../i18n";
 import { CHAT_TOOLS, toolLabel } from "../../services/toolDefinitions";
 import { executeToolCall } from "../../services/toolExecutor";
-import { Loader2, Trash2, MessageSquare, User, Bot, RefreshCw, ArrowDown, ArrowDownToLine } from "lucide-react";
+import { Loader2, Trash2, MessageSquare, User, RefreshCw, ArrowDown, ArrowDownToLine } from "lucide-react";
 import { ChatMessageList } from "./ChatMessageList";
 import { ChatInput } from "./ChatInput";
 import { KBSelector, KBSelectedTags } from "./KBSelector";
@@ -36,6 +36,7 @@ export function ChatPage() {
     conversations, activeConversationId,
     newConversation, addMessage, updateLastAssistant, updateLastAssistantWithToolCalls,
     deleteConversation, setActiveConversation, updateChatSettings,
+    setStreamingConv, persistConversation,
   } = useChatStore();
 
   const [input, setInput] = useState("");
@@ -137,6 +138,9 @@ export function ChatPage() {
     setError("");
     setAutoScroll(true);
     setStreaming(true);
+    // Mark this conv as streaming — store writes skip disk I/O until cleared,
+    // so the 80ms token-flush loop doesn't trigger dozens of disk writes.
+    setStreamingConv(currentConv.id);
 
     // Add placeholder assistant message
     addMessage(currentConv.id, { role: "assistant" as const, content: "" });
@@ -156,7 +160,7 @@ export function ChatPage() {
       const citeInstr = "IMPORTANT: Each search result has an 'index' field (1,2,3...) AND a 'chunk_index' field (document position). Use the INDEX number for citation: write [N] where N is the result index, NOT the chunk_index. Example: if result index=1 has chunk_index=8, cite it as [1], not [8].";
       const imageInstr = "IMPORTANT — IMAGE REFERENCES: When your search results include content_type='image' chunks, ALWAYS include the image in your response using markdown: ![description](images/filename.jpg). Extract the exact filename from the chunk content (look for 'Image: hash.jpg' or 'images/hash.jpg'). The image will render inline as a clickable thumbnail for the user. Never skip images — they are key visual information that supplements your text answer.";
       const webSearchEnabled = conv?.chatSettings?.webSearchEnabled ?? false;
-      const webInstr = "WEB SEARCH: You also have web_search (to search the internet) and web_fetch (to read specific URLs). Use these for recent information, news, or topics not covered by local knowledge bases. When citing web results, reference the URL or title so the user knows the source.";
+      const webInstr = `WEB SEARCH (ENABLED): You MUST call web_search before answering whenever the question involves (a) recent events, news, or dates after your training cutoff, (b) real-time or live information, (c) specific facts you are not confident about, or (d) anything beyond the selected knowledge bases. Do NOT answer from memory alone if web_search could give a fresher or more accurate answer. After web_search, use web_fetch to read a specific result page if you need full detail. Cite web results by URL or title so the user knows the source.`;
       const kbNames = selectedKbIds.length > 0
         ? selectedKbIds.map((id) => knowledgeBases.find((kb) => kb.id === id)?.name || id).join(", ")
         : "";
@@ -247,12 +251,15 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
 
               if (delta?.reasoning_content) {
                 fullReasoning += delta.reasoning_content;
-                // Update reasoning immediately for smooth streaming display
-                updateLastAssistant(currentConv.id, fullContent, allSources, fullReasoning);
               }
               if (delta?.content) {
                 fullContent += delta.content;
-                // Throttle: push to store every 80ms to avoid stuttery re-renders
+              }
+              // Throttle store updates for BOTH content and reasoning — pushes
+              // every 80ms. Previously reasoning updated immediately per-token,
+                // causing ~50 store updates/sec + matching disk writes for
+                // reasoning models.
+              if (delta?.content || delta?.reasoning_content) {
                 const now = Date.now();
                 if (now - lastFlush >= 80 && !flushTimer) {
                   flushContent();
@@ -364,6 +371,14 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
     }
     setStreaming(false);
     setToolStatus("");
+    // Stream done — persist the conversation once. Only clear the streaming
+    // flag if it still points at us; if the user has since started a new stream
+    // in another conversation, that one owns the flag now and we must not
+    // prematurely re-enable persistence for it.
+    if (useChatStore.getState().streamingConvId === currentConv.id) {
+      setStreamingConv(null);
+    }
+    persistConversation(currentConv.id);
   };
 
   const handleNew = () => { const id = newConversation(); navigate(`/chat/${id}`); };
@@ -559,20 +574,9 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
         )}
       </div>
 
-      {/* Tool execution interstitial */}
-      {toolStatus && streaming && (
-        <div className="flex gap-3 px-6">
-          <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5"><Bot className="w-4 h-4 text-primary" /></div>
-          <div className="max-w-[80%] min-w-[200px] rounded-xl border bg-muted/50 overflow-hidden">
-            <div className="flex items-center gap-2 px-3 py-2 text-xs">
-              <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" />
-              <span className="text-muted-foreground truncate">{toolStatus}</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Sources + Error — rendered below the message list */}
+      {/* Sources + Error — rendered below the message list.
+          Tool execution state is shown inline via ToolCallCards inside the
+          last assistant message, so no separate interstitial is needed here. */}
       <div className="px-6 shrink-0">
         <SourcesPanel
           sources={lastAssistantSources}

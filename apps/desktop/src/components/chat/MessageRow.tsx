@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, memo } from "react";
 import { Check, Copy, Loader2, ChevronDown, User, Bot } from "lucide-react";
 import type { ChatMessage, SearchResult, ToolCall } from "../../types";
-import { MarkdownRenderer } from "../common/MarkdownRenderer";
+import { ChatMarkdown } from "./ChatMarkdown";
 import { ToolCallCards } from "./ToolCallCards";
 
 function ThinkingBlock({ reasoning, isStreaming }: { reasoning: string; isStreaming: boolean }) {
@@ -45,7 +45,7 @@ interface MessageRowProps {
   handleCopy: (c: string, i: number) => void;
 }
 
-export function MessageRow({
+export const MessageRow = memo(function MessageRow({
   msg, i, isStreaming, isLast, streaming,
   toolResults, activeToolId, setPreviewChunk,
   copiedMsgIdx, handleCopy,
@@ -62,18 +62,17 @@ export function MessageRow({
             <ThinkingBlock reasoning={msg.reasoning} isStreaming={isStreaming} />
           ) : null}
           {msg.role === "assistant" && msg.content ? (
-            isStreaming ? (
-              <div className="whitespace-pre-wrap break-words">{msg.content}</div>
-            ) : (
-              <MarkdownRenderer
-                className="prose prose-sm max-w-none dark:prose-invert text-sm"
-                sources={msg.sources}
-                imgSources={msg.sources}
-                onSourceClick={(s) => setPreviewChunk(s as SearchResult)}
-              >
-                {msg.content}
-              </MarkdownRenderer>
-            )
+            // Unified renderer: ChatMarkdown handles BOTH streaming (incremental
+            // parse of incomplete markdown — real-time formatted output) and final
+            // state. Replaces the old plain-text-during-streaming branch.
+            <ChatMarkdown
+              className="prose prose-sm max-w-none dark:prose-invert text-sm"
+              isStreaming={isStreaming}
+              sources={msg.sources}
+              onSourceClick={(s) => setPreviewChunk(s as SearchResult)}
+            >
+              {msg.content}
+            </ChatMarkdown>
           ) : msg.role === "assistant" && msg.tool_calls && !msg.content ? (
             <ToolCallCards toolCalls={msg.tool_calls} toolResults={toolResults} activeToolId={activeToolId} />
           ) : msg.role === "assistant" && streaming && isLast ? (
@@ -97,4 +96,19 @@ export function MessageRow({
       )}
     </div>
   );
-}
+}, (prev, next) => {
+  // Skip re-render unless something the row actually depends on changed.
+  // During streaming only the last row's `msg.content` grows; all other rows
+  // keep the same `msg` reference (store maps messages immutably except the
+  // last), so they skip re-rendering entirely.
+  return (
+    prev.msg === next.msg &&
+    prev.isStreaming === next.isStreaming &&
+    prev.streaming === next.streaming &&
+    prev.toolResults === next.toolResults &&
+    prev.activeToolId === next.activeToolId &&
+    prev.copiedMsgIdx === next.copiedMsgIdx &&
+    prev.handleCopy === next.handleCopy &&
+    prev.setPreviewChunk === next.setPreviewChunk
+  );
+});

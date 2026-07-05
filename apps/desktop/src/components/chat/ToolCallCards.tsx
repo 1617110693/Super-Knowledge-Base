@@ -71,27 +71,37 @@ export function ToolCallCards({ toolCalls, toolResults, activeToolId }: {
   return (
     <div className="space-y-1.5 w-full max-w-full">
       {items.map(({ tc, args, label, name, idx, result }) => {
-        const isExpanded = expandedIds.has(tc.id || String(idx));
+        const id = tc.id || String(idx);
+        const isExpanded = expandedIds.has(id);
         const isExecuting = activeToolId === tc.id && !result;
         const argEntries = Object.entries(args).filter(([, v]) => v != null && v !== "" && (!Array.isArray(v) || v.length > 0));
-        const hasBody = argEntries.length > 0 || result;
+        // hasBody now includes isExecuting so the chevron shows (and the card
+        // is toggleable) even before any args/result arrive — no blank reserved
+        // space is rendered when there's nothing to show.
+        const hasBody = argEntries.length > 0 || !!result || isExecuting;
         return (
-          <div key={tc.id || idx} className="rounded-lg border bg-card/60 overflow-hidden min-w-0">
+          <div key={id} className="rounded-lg border bg-card/60 overflow-hidden min-w-0">
             <button
-              onClick={() => hasBody && toggle(tc.id || String(idx))}
+              onClick={() => hasBody && toggle(id)}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/50 transition-colors"
             >
               {isExecuting ? <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" /> : <Search className="w-3 h-3 text-primary shrink-0" />}
               <span className="font-medium capitalize truncate flex-1 text-left">{name}</span>
-              <span className="text-muted-foreground truncate max-w-[300px] hidden sm:inline">{label}</span>
+              {isExecuting ? (
+                // Show the running label inline in the header while executing,
+                // instead of a separate placeholder block below.
+                <span className="text-muted-foreground truncate max-w-[300px] hidden sm:inline">{label}</span>
+              ) : (
+                <span className="text-muted-foreground truncate max-w-[300px] hidden sm:inline">{label}</span>
+              )}
               {hasBody && (
                 isExpanded
                   ? <ChevronUp className="w-3 h-3 text-muted-foreground shrink-0" />
                   : <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" />
               )}
             </button>
-            {isExpanded && (
-              <div className="border-t max-h-56 overflow-y-auto" ref={el => { resultsRef.current[tc.id || String(idx)] = el; }}>
+            {isExpanded && hasBody && (
+              <div className="border-t max-h-56 overflow-y-auto" ref={el => { resultsRef.current[id] = el; }}>
                 {argEntries.length > 0 && (
                   <table className="w-full text-[11px] border-collapse">
                     <tbody>
@@ -104,17 +114,19 @@ export function ToolCallCards({ toolCalls, toolResults, activeToolId }: {
                     </tbody>
                   </table>
                 )}
-                {result && (
+                {/* Result OR executing row — never an empty <pre> placeholder.
+                    Before the result arrives we show a compact "Executing..."
+                    line; once it arrives we show the result block. */}
+                {result ? (
                   <div className="px-3 py-2 border-t border-dashed">
                     <div className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">Result</div>
                     <pre className="text-[11px] whitespace-pre-wrap break-all font-mono leading-relaxed max-h-64 overflow-y-auto">{result}</pre>
                   </div>
-                )}
-                {isExecuting && (
+                ) : isExecuting ? (
                   <div className="px-3 py-2 text-xs text-muted-foreground flex items-center gap-2">
                     <Loader2 className="w-3 h-3 animate-spin" /> Executing...
                   </div>
-                )}
+                ) : null}
               </div>
             )}
           </div>

@@ -27,8 +27,18 @@ export function ChatMessageList({
   const virtualizer = useVirtualizer({
     count: visibleMessages.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 120,
-    overscan: 5,
+    // Better initial estimate per message type reduces layout shift before
+    // measureElement runs. User msgs are short; assistant msgs tend taller.
+    estimateSize: (i) => {
+      const m = visibleMessages[i];
+      if (!m) return 120;
+      if (m.role === "user") return 60;
+      if (m.tool_calls) return 140;
+      return 160;
+    },
+    // Fewer off-screen rows rendered — most rows are now memoized so the win
+    // is modest, but this still cuts work during streaming re-layouts.
+    overscan: 3,
   });
 
   // Auto-scroll to bottom during streaming or when autoScroll is true

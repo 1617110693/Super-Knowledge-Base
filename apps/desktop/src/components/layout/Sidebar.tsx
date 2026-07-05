@@ -62,7 +62,7 @@ export function Sidebar() {
   if (collapsed) {
     return (
       <>
-        <aside className="w-14 bg-card border-r flex flex-col shrink-0 items-center py-3 gap-1 rounded-r-xl">
+        <aside className="sidebar w-14 bg-card border-r flex flex-col shrink-0 items-center py-3 gap-1 rounded-r-xl">
           {/* App icon → home */}
           <button onClick={() => navigate("/")} title={t("app.title")}
             className="p-2 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground transition-colors">
@@ -164,7 +164,7 @@ export function Sidebar() {
   // ── expanded full mode ──
   return (
     <>
-      <aside className="w-56 bg-card border-r flex flex-col shrink-0 rounded-r-xl">
+      <aside className="sidebar w-56 bg-card border-r flex flex-col shrink-0 rounded-r-xl">
         {/* App title + status */}
         <div className="p-4 border-b shrink-0">
           <div className="flex items-center justify-between">

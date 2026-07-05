@@ -96,3 +96,30 @@ html, body {
   scrollbar-width: thin;
   scrollbar-color: hsl(var(--border)) transparent;
 }
+
+
+/* ── Focus Mode (Ctrl+Shift+F) ────────────────────────────────── */
+.focus-mode .sidebar { opacity: 0.3; pointer-events: none; transition: opacity 300ms ease; }
+.focus-mode .tab-bar { opacity: 0.3; pointer-events: none; transition: opacity 300ms ease; }
+.focus-mode .title-bar { opacity: 0.5; transition: opacity 300ms ease; }
+.focus-mode .sidebar:hover,
+.focus-mode .tab-bar:hover { opacity: 1; pointer-events: auto; }
+
+/* Escape focus mode hint in document area */
+.focus-mode .doc-view:after {
+  content: "Esc to exit focus mode";
+  position: fixed;
+  top: 44px;
+  right: 16px;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground) / 0.5);
+  pointer-events: none;
+  z-index: 100;
+}
+
+/* ── Tab close animation ──────────────────────────────────────── */
+.tab-closing {
+  opacity: 0;
+  transform: scaleX(0);
+  transition: opacity 150ms ease, transform 150ms ease;
+}

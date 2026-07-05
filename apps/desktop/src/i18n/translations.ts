@@ -352,6 +352,21 @@ export const translations = {
   "guide.setModels": { en: "Models — embedding, rerank, LLM and VLM (Vision) API configurations with test-connection buttons. VLM provides AI-powered image descriptions during indexing.", "zh-CN": "模型 — 嵌入、重排序、LLM 大模型、VLM（视觉）API 配置，含测试连接按钮。VLM 在索引时为文档图片生成 AI 描述。" },
   "guide.setChat": { en: "Chat & Tools — tool call limits, chunking strategy and size configuration.", "zh-CN": "对话与工具 — 工具调用轮数/长度限制、分块策略和大小配置。" },
   "guide.setData": { en: "Data — export/import KBs as ZIP, export/import settings.json, clean orphan data, or clear all KBs.", "zh-CN": "数据 — 导出/导入知识库 ZIP、导出/导入 settings.json、清理孤儿数据、清除所有知识库。" },
+  // ── Tab bar ──
+  "tabs.close": { en: "Close", "zh-CN": "关闭" },
+  "tabs.closeOthers": { en: "Close Others", "zh-CN": "关闭其他" },
+  "tabs.closeRight": { en: "Close to the Right", "zh-CN": "关闭右侧" },
+  "tabs.closeAll": { en: "Close All", "zh-CN": "关闭全部" },
+  "tabs.reopenClosed": { en: "Reopen Closed Tab", "zh-CN": "重新打开已关闭标签" },
+  "tabs.copyPath": { en: "Copy Document Path", "zh-CN": "复制文档路径" },
+  "tabs.revealInExplorer": { en: "Reveal in Explorer", "zh-CN": "在文件管理器中显示" },
+  "tabs.hideBar": { en: "Hide tab bar", "zh-CN": "隐藏标签栏" },
+  "tabs.showBar": { en: "Show tab bar", "zh-CN": "显示标签栏" },
+  "tabs.unsavedChanges": { en: "Unsaved changes", "zh-CN": "未保存的更改" },
+
+  // ── Focus mode ──
+  "focus.enter": { en: "Focus Mode", "zh-CN": "专注模式" },
+  "focus.exit": { en: "Exit Focus Mode (Esc)", "zh-CN": "退出专注模式 (Esc)" },
 } as const;
 
 export type TranslationKey = keyof typeof translations;

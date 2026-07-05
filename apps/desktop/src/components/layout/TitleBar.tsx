@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, Globe, Sun, Moon, Monitor, BookOpen } from "lucide-react";
+import { Minus, Square, X, Globe, Sun, Moon, Monitor, BookOpen, PanelTop } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useSettingsStore } from "../../stores/useSettingsStore";
+import { useTabStore } from "../../stores/useTabStore";
 import { UserGuideDialog } from "../common/UserGuideDialog";
 
 type Theme = "light" | "dark" | "system";
@@ -56,6 +57,9 @@ export function TitleBar() {
   const win = getCurrentWindow();
   const { t, lang, setLang } = useI18n();
   const { theme, cycle } = useTheme();
+  const tabBarVisible = useTabStore((s) => s.tabBarVisible);
+  const tabsCount = useTabStore((s) => s.tabs.length);
+  const toggleTabBar = useTabStore((s) => s.toggleTabBar);
 
   const [showGuide, setShowGuide] = useState(false);
   const [checkedFirstLaunch, setCheckedFirstLaunch] = useState(false);
@@ -79,7 +83,7 @@ export function TitleBar() {
   return (
     <div
       data-tauri-drag-region
-      className="flex items-center justify-between h-9 bg-card border-b shrink-0 select-none"
+      className="title-bar flex items-center justify-between h-9 bg-card border-b shrink-0 select-none"
     >
       <div className="flex items-center gap-2 pl-3">
         <span className="text-xs font-medium text-muted-foreground">
@@ -95,6 +99,15 @@ export function TitleBar() {
         >
           <BookOpen className="w-3.5 h-3.5 text-muted-foreground" />
         </button>
+        {tabsCount > 0 && (
+          <button
+            onClick={toggleTabBar}
+            className={`w-10 h-full flex items-center justify-center hover:bg-muted transition-colors ${!tabBarVisible ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}
+            title={tabBarVisible ? "Hide tab bar" : "Show tab bar"}
+          >
+            <PanelTop className="w-3.5 h-3.5" />
+          </button>
+        )}
         <button
           onClick={() => cycle()}
           className="w-10 h-full flex items-center justify-center hover:bg-muted transition-colors"

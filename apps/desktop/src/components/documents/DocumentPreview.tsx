@@ -5,6 +5,7 @@ import { getDocumentContent, saveDocumentContent, saveDocumentChunks } from "../
 import { indexDocument, waitForIndex, getChunkRange, searchDocument } from "../../services/pythonClient";
 import { listDocumentImages, readDocumentImage } from "../../services/tauriBridge";
 import { useI18n } from "../../i18n";
+import { useTabStore, entriesToMap, mapToEntries, isCacheStale } from "../../stores/useTabStore";
 import { FileText, Loader2, ArrowLeft, Pencil, Check, X, Search, XCircle, ChevronRight, List, ChevronDown, PanelLeftClose, PanelLeft, Image as ImageIcon, LayoutGrid, Rows3, AlertTriangle, RefreshCw, Settings } from "lucide-react";
 import { ImageDialog } from "./ImageDialog";
 import type { SearchResult } from "../../types";
@@ -56,6 +57,8 @@ export function DocumentPreview() {
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [activeHeadingText, setActiveHeadingText] = useState<string | null>(null);
 
   // TOC open state persisted per document
   const [tocOpen, setTocOpen] = useState(() => {
@@ -160,12 +163,85 @@ export function DocumentPreview() {
 
   useEffect(() => {
     if (!kbId || !docId) return;
+
+    // ── Tab cache: check if content already loaded ────────────
+    const tab = useTabStore.getState().tabs.find((t) => t.kbId === kbId && t.docId === docId);
+    if (tab?.content) {
+      // Zero-latency tab switch — use cached data synchronously
+      setContent(tab.content);
+      setDocName(tab.docName);
+      setMdAvailable(true);
+      setStartCharMap(entriesToMap<number, number>(tab.startCharEntries));
+      setPageChunksMap(entriesToMap<number, number[]>(tab.pageChunksEntries));
+      setHasPageData((tab.pageAnchorPositions?.length ?? 0) > 0);
+      setLoading(false);
+
+      // Restore scroll position after a paint
+      if (tab.scrollTop > 0) {
+        requestAnimationFrame(() => {
+          if (docScrollRef.current) {
+            docScrollRef.current.scrollTop = tab.scrollTop;
+          }
+        });
+      }
+
+      // Background refresh if cache is stale
+      if (isCacheStale(tab)) {
+        (async () => {
+          try {
+            const doc = await getDocumentContent(kbId, docId);
+            if (doc.markdown !== tab.content) {
+              setContent(doc.markdown);
+              setDocName(doc.name || doc.id);
+              setMdAvailable(doc.md_available !== false);
+            }
+            // Update tab name if it was just the docId placeholder
+            if (tab.docName === docId && doc.name) {
+              useTabStore.getState().saveTabState(tab.id, { docName: doc.name });
+            }
+          } catch {}
+          try {
+            const res = await getChunkRange({ kb_id: kbId, doc_id: docId, start: 0, end: 50000 });
+            const map = new Map<number, number>();
+            const pageMap = new Map<number, number[]>();
+            let anyPage = false;
+            for (const c of (res.chunks || [])) {
+              if (c.start_char != null) map.set(c.chunk_index, c.start_char);
+              const ps = c.page_start ?? 0;
+              const pe = c.page_end ?? 0;
+              if (ps > 0 || pe > 0) anyPage = true;
+              for (let p = Math.max(1, ps); p <= Math.max(ps, pe); p++) {
+                if (!pageMap.has(p)) pageMap.set(p, []);
+                pageMap.get(p)!.push(c.chunk_index);
+              }
+            }
+            setStartCharMap(map);
+            setPageChunksMap(pageMap);
+            setHasPageData(anyPage);
+            // Update tab cache with fresh data
+            useTabStore.getState().saveTabState(tab.id, {
+              content: tab.content, // keep existing unless updated above
+              cachedAt: Date.now(),
+              startCharEntries: mapToEntries(map),
+              pageChunksEntries: mapToEntries(pageMap),
+            });
+          } catch {}
+        })();
+      }
+      return;
+    }
+
+    // ── Fresh fetch (no cache) ───────────────────────────────
     setLoading(true); setContent(""); setStartCharMap(new Map());
     (async () => {
+      let curDocName = docId;
+      let curContent = "";
       try {
         const doc = await getDocumentContent(kbId, docId);
-        setDocName(doc.name || doc.id);
-        setContent(doc.markdown);
+        curDocName = doc.name || doc.id;
+        curContent = doc.markdown;
+        setDocName(curDocName);
+        setContent(curContent);
         setMdAvailable(doc.md_available !== false);
       } catch { setDocName(docId); }
       try {
@@ -186,6 +262,28 @@ export function DocumentPreview() {
         setStartCharMap(map);
         setPageChunksMap(pageMap);
         setHasPageData(anyPage);
+        // Save to tab cache
+        const curTab = useTabStore.getState().tabs.find((t) => t.kbId === kbId && t.docId === docId);
+        if (curTab) {
+          // Build page anchor positions for caching
+          const positions: { page: number; startChar: number }[] = [];
+          for (const [page, chunkIndices] of pageMap) {
+            const sorted = [...chunkIndices].sort((a, b) => a - b);
+            for (const ci of sorted) {
+              const sc = map.get(ci);
+              if (sc != null && sc >= 0) { positions.push({ page, startChar: sc }); break; }
+            }
+          }
+          positions.sort((a, b) => b.startChar - a.startChar);
+          useTabStore.getState().saveTabState(curTab.id, {
+            docName: curDocName,
+            content: curContent,
+            cachedAt: Date.now(),
+            startCharEntries: mapToEntries(map),
+            pageChunksEntries: mapToEntries(pageMap),
+            pageAnchorPositions: positions,
+          });
+        }
       } catch {}
       setLoading(false);
     })();
@@ -212,6 +310,12 @@ export function DocumentPreview() {
     () => (content ? extractHeadings(content, charMaps.findChunk, charMaps.findPage) : []),
     [content, charMaps],
   );
+  // Match active heading text to headings array index for TOC highlight
+  const activeHeadingIndex = useMemo(() => {
+    if (!activeHeadingText) return null;
+    const idx = headings.findIndex((h) => h.text.trim() === activeHeadingText);
+    return idx >= 0 ? idx : null;
+  }, [activeHeadingText, headings]);
   const maxPage = useMemo(
     () => pageChunksMap.size > 0 ? Math.max(...pageChunksMap.keys()) : 0,
     [pageChunksMap],
@@ -294,9 +398,56 @@ export function DocumentPreview() {
       const r = await waitForIndex(task_id);
       await saveDocumentChunks(kbId, docId, r.chunk_count!, r.embedding_model!, r.embedding_dim!);
       setContent(editContent); setEditing(false);
+      // Invalidate tab cache for this doc (other tabs viewing it need refresh)
+      const curTab = useTabStore.getState().tabs.find((t) => t.kbId === kbId && t.docId === docId);
+      if (curTab) {
+        useTabStore.getState().saveTabState(curTab.id, {
+          content: editContent,
+          cachedAt: Date.now(),
+          isDirty: false,
+        });
+      }
     } catch (e) { setEditError(String(e)); }
     setSaving(false);
   };
+
+  // ── Scroll position save/restore per tab ──────────────────────
+  // Save scrollTop on unmount and on scroll (throttled)
+  useEffect(() => {
+    const container = docScrollRef.current;
+    if (!container || !kbId || !docId) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const handleScroll = () => {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        const tab = useTabStore.getState().tabs.find((t) => t.kbId === kbId && t.docId === docId);
+        if (tab) {
+          useTabStore.getState().saveTabState(tab.id, { scrollTop: container.scrollTop });
+        }
+      }, 200); // throttle to 200ms
+    };
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      // Final save on unmount or kbId/docId change
+      const tab = useTabStore.getState().tabs.find((t) => t.kbId === kbId && t.docId === docId);
+      if (tab) {
+        useTabStore.getState().saveTabState(tab.id, { scrollTop: container.scrollTop });
+      }
+      container.removeEventListener("scroll", handleScroll);
+      if (timer) clearTimeout(timer);
+    };
+  }, [kbId, docId]);
+
+  // Mark document as dirty when editing starts
+  useEffect(() => {
+    if (editing && kbId && docId) {
+      const tab = useTabStore.getState().tabs.find((t) => t.kbId === kbId && t.docId === docId);
+      if (tab) {
+        useTabStore.getState().saveTabState(tab.id, { isDirty: true });
+      }
+    }
+  }, [editing, kbId, docId]);
 
   if (loading) {
     return (
@@ -327,43 +478,75 @@ export function DocumentPreview() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <button onClick={() => navigate(-1)} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-4">
-        <ArrowLeft className="w-4 h-4" /> Back
-      </button>
-      <div className="flex items-center gap-3 mb-6">
-        <FileText className="w-6 h-6 text-primary shrink-0" />
-        <h2 className="text-xl font-bold truncate">{docName}</h2>
-        <div className="flex items-center gap-1 ml-auto">
+    <div className="flex flex-col px-6 py-2 max-w-5xl mx-auto overflow-hidden" style={{ height: "100%" }}>
+      {/* Header row: search/edit left, title center, TOC/images right */}
+      <div className="flex items-center gap-2 mb-1 shrink-0">
+        {/* Left: search + edit */}
+        <div className="flex items-center gap-0.5 w-[56px] shrink-0">
           {editing ? (
             <>
-              <button onClick={handleSave} disabled={saving} className="p-1.5 hover:bg-green-50 rounded-md text-green-600" title={t("docs.save")}>
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+              <button onClick={handleSave} disabled={saving} className="p-1 hover:bg-green-50 rounded text-green-600" title={t("docs.save")}>
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
               </button>
-              <button onClick={handleCancelEdit} disabled={saving} className="p-1.5 hover:bg-red-50 rounded-md text-red-500" title={t("kb.cancel")}>
-                <X className="w-4 h-4" />
+              <button onClick={handleCancelEdit} disabled={saving} className="p-1 hover:bg-red-50 rounded text-red-500" title={t("kb.cancel")}>
+                <X className="w-3.5 h-3.5" />
               </button>
             </>
           ) : (
-            <button onClick={handleStartEdit} className="p-1.5 hover:bg-muted rounded-md text-muted-foreground" title={t("docs.editMarkdown")}>
-              <Pencil className="w-4 h-4" />
-            </button>
+            <>
+              <button onClick={() => setSearchOpen(!searchOpen)}
+                className={`p-1 rounded transition-colors ${searchOpen ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}
+                title={t("search.searchBtn")}>
+                <Search className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={handleStartEdit} className="p-1 hover:bg-muted rounded text-muted-foreground" title={t("docs.editMarkdown")}>
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* Center: doc name */}
+        <div className="flex-1 flex items-center justify-center min-w-0">
+          <FileText className="w-3.5 h-3.5 text-primary shrink-0 mr-1.5" />
+          <h2 className="text-sm font-semibold truncate">{docName}</h2>
+        </div>
+
+        {/* Right: TOC + image toggles */}
+        <div className="flex items-center gap-0.5 w-[56px] shrink-0 justify-end">
+          {!editing && (
+            <>
+              <button onClick={() => wrappedSetTocOpen(!tocOpen)}
+                className={`p-1 rounded transition-colors ${tocOpen ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}
+                title={t("docs.tocTitle")}>
+                <List className="w-3.5 h-3.5" />
+              </button>
+              {imageNames.length > 0 && (
+                <button onClick={() => setImagesOpen(!imagesOpen)}
+                  className={`p-1 rounded transition-colors ${imagesOpen ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}
+                  title="Images">
+                  <ImageIcon className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
-      {editError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 mb-4">{editError}</div>}
-      {editing && <p className="text-xs text-muted-foreground mb-3">{t("docs.editHint")}</p>}
+      {editError && <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700 mb-1">{editError}</div>}
+      {editing && <p className="text-[11px] text-muted-foreground mb-1">{t("docs.editHint")}</p>}
 
-      {/* Document Search + Page Jump Bar */}
-      {!editing && (
-        <div className="mb-4">
-          <div className="flex gap-2">
-            {/* Search field */}
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <input type="text" value={searchQuery}
+      {/* Collapsible search bar */}
+      {/* ── Search Dialog ── */}
+      {searchOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]" onClick={() => setSearchOpen(false)}>
+          <div className="absolute inset-0 bg-black/30" />
+          <div className="relative w-full max-w-xl bg-card border rounded-xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2 px-4 py-3 border-b">
+              <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+              <input type="text" value={searchQuery} autoFocus
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={async (e) => {
+                  if (e.key === "Escape") { setSearchOpen(false); return; }
                   if (e.key !== "Enter" || !kbId || !docId || !searchQuery.trim()) return;
                   setSearching(true); setSearchError(""); setSearchResults(null);
                   try {
@@ -373,59 +556,56 @@ export function DocumentPreview() {
                   setSearching(false);
                 }}
                 placeholder={t("docs.searchPlaceholder")}
-                className="w-full pl-8 pr-8 py-2 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary" />
+                className="flex-1 text-sm bg-transparent border-none outline-none" />
               {searchQuery && (
-                <button type="button" onClick={() => { setSearchQuery(""); setSearchResults(null); }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                <button onClick={() => { setSearchQuery(""); setSearchResults(null); }}
+                  className="p-1 rounded hover:bg-muted text-muted-foreground">
                   <XCircle className="w-4 h-4" />
                 </button>
               )}
+              <button onClick={() => setSearchOpen(false)}
+                className="p-1 rounded hover:bg-muted text-muted-foreground">
+                <X className="w-4 h-4" />
+              </button>
             </div>
-            {/* Search button */}
-            <button onClick={async () => {
-              if (!kbId || !docId || !searchQuery.trim()) return;
-              setSearching(true); setSearchError(""); setSearchResults(null);
-              try {
-                const r = await searchDocument({ kb_id: kbId, doc_id: docId, query: searchQuery.trim() });
-                setSearchResults(r.results);
-              } catch (err) { setSearchError(String(err)); }
-              setSearching(false);
-            }} disabled={searching || !searchQuery.trim()}
-              className="px-3 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50">
-              {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : t("search.searchBtn")}
-            </button>
+            {searching && (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              </div>
+            )}
+            {searchError && <p className="px-4 py-2 text-sm text-red-500">{searchError}</p>}
+            {pageJumpError && <p className="px-4 py-2 text-sm text-red-500">{pageJumpError}</p>}
+            {searchResults && (
+              <div className="max-h-[60vh] overflow-y-auto divide-y">
+                {searchResults.length === 0 ? (
+                  <p className="p-6 text-sm text-muted-foreground text-center">{t("search.noResults")}</p>
+                ) : (
+                  searchResults.map((r, i) => (
+                    <button key={i} onClick={() => {
+                      const ci = r.metadata?.chunk_index;
+                      if (ci != null) {
+                        setSearchResults(null);
+                        setSearchQuery("");
+                        setSearchOpen(false);
+                        navigate(`/kb/${kbId}/documents/${docId}?ci=${ci}`);
+                      }
+                    }}
+                    className="block w-full text-left p-3 hover:bg-muted transition-colors">
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span className="text-xs font-mono text-muted-foreground shrink-0">
+                          {t("search.chunkLabel", { n: r.metadata?.chunk_index ?? "?" })}{(r.metadata?.page ?? 0) > 0 ? ` · ${t("search.page")} ${r.metadata.page}` : ""}
+                        </span>
+                        <span className="text-xs font-mono text-primary">{(r.score * 100).toFixed(0)}%</span>
+                      </div>
+                      <div className="text-xs prose prose-sm max-w-none dark:prose-invert line-clamp-3 [&_p]:my-0 [&_pre]:hidden [&_table]:hidden [&_img]:hidden">
+                        <MarkdownRenderer>{r.content.slice(0, 400)}</MarkdownRenderer>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
           </div>
-          {searchError && <p className="text-xs text-red-500 mt-1">{searchError}</p>}
-          {pageJumpError && <p className="text-xs text-red-500 mt-1">{pageJumpError}</p>}
-          {searchResults && (
-            <div className="mt-2 border rounded-lg divide-y max-h-72 overflow-y-auto">
-              {searchResults.length === 0 ? (
-                <p className="p-3 text-sm text-muted-foreground text-center">{t("search.noResults")}</p>
-              ) : (
-                searchResults.map((r, i) => (
-                  <button key={i} onClick={() => {
-                    const ci = r.metadata?.chunk_index;
-                    if (ci != null) {
-                      setSearchResults(null);
-                      setSearchQuery("");
-                      navigate(`/kb/${kbId}/documents/${docId}?ci=${ci}`);
-                    }
-                  }}
-                  className="block w-full text-left p-3 hover:bg-muted transition-colors">
-                    <div className="flex items-center justify-between gap-2 mb-1">
-                      <span className="text-xs font-mono text-muted-foreground shrink-0">
-                        {t("search.chunkLabel", { n: r.metadata?.chunk_index ?? "?" })}{(r.metadata?.page ?? 0) > 0 ? ` · ${t("search.page")} ${r.metadata.page}` : ""}
-                      </span>
-                      <span className="text-xs font-mono text-primary">{(r.score * 100).toFixed(0)}%</span>
-                    </div>
-                    <div className="text-xs prose prose-sm max-w-none dark:prose-invert line-clamp-3 [&_p]:my-0 [&_pre]:hidden [&_table]:hidden [&_img]:hidden">
-                      <MarkdownRenderer>{r.content.slice(0, 400)}</MarkdownRenderer>
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          )}
         </div>
       )}
 
@@ -434,105 +614,160 @@ export function DocumentPreview() {
           className="w-full min-h-[400px] p-4 border rounded-lg bg-background font-mono text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary"
           disabled={saving} />
       ) : (
-        <div className="flex gap-3">
-          {/* Sidebar column: DocToc handles its own toggle button.
-              Image toggle sits below it when both are closed. */}
-          <div className="flex flex-col gap-1 shrink-0">
-            {/* Image gallery toggle button — only when TOC is closed too */}
-            {!imagesOpen && !tocOpen && imageNames.length > 0 && (
-              <button onClick={() => setImagesOpen(true)}
-                className="p-2 hover:bg-muted rounded-lg text-muted-foreground"
-                title={`${imageNames.length} images`}>
-                <ImageIcon className="w-4 h-4" />
+        <DocView content={content} anchoredContent={anchoredContent} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollTarget={scrollTarget} scrollRef={docScrollRef} kbId={kbId} docId={docId} pageAnchorPositions={pageAnchorPositions} jumpTrigger={jumpTrigger} onActiveHeadingChange={setActiveHeadingText} />
+      )}
+
+      {/* ── Fixed sidebar: TOC panel (Typora-style right sidebar) ── */}
+      {!editing && tocOpen && (
+        <div className="fixed z-30 flex flex-col bg-card border border-border rounded-lg shadow-lg overflow-hidden"
+          style={{ top: 68, right: 12, width: 240, maxHeight: 'calc(100vh - 84px)' }}>
+          <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/50 shrink-0">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{t("docs.tocTitle")}</span>
+            <div className="flex items-center gap-0.5">
+              <button onClick={() => setPageSettingsOpen(true)}
+                className="p-1 hover:bg-muted rounded text-muted-foreground" title="Page settings">
+                <Settings className="w-3 h-3" />
               </button>
-            )}
-
-            {/* Image gallery panel */}
-            {imagesOpen && (
-              <div className="w-56 border rounded-lg bg-card overflow-hidden flex flex-col max-h-[calc(100vh-200px)]">
-              <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/50 shrink-0">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Images ({imageNames.length})</span>
-                <div className="flex items-center gap-1">
-                  <FillMissingBtn kbId={kbId!} docId={docId!} taskId={fillTaskId} setTaskId={setFillTaskId} progress={fillProgress} setProgress={setFillProgress} />
-                  <button onClick={() => setGalleryMode(galleryMode === "grid" ? "list" : "grid")}
-                    className="p-1 hover:bg-muted rounded text-muted-foreground" title="Toggle view">
-                    {galleryMode === "grid" ? <Rows3 className="w-3 h-3" /> : <LayoutGrid className="w-3 h-3" />}
-                  </button>
-                  <button onClick={() => setImagesOpen(false)} className="p-1 hover:bg-muted rounded text-muted-foreground">
-                    <PanelLeftClose className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-              <div className={`overflow-y-auto flex-1 p-1.5 ${galleryMode === "grid" ? "grid grid-cols-2 gap-1.5" : "space-y-1"}`}>
-                {imageNames.map((name, i) => (
-                  galleryMode === "grid" ? (
-                    <button key={name} onClick={async () => {
-                      if (!imageSrcs.has(name)) {
-                        try {
-                          const bytes = await readDocumentImage(kbId!, docId!, name);
-                          const blob = new Blob([new Uint8Array(bytes)]);
-                          setImageSrcs(prev => { const m = new Map(prev); m.set(name, URL.createObjectURL(blob)); return m; });
-                        } catch {}
-                      }
-                      setDialogIdx(i);
-                    }}
-                    className="aspect-square rounded-md overflow-hidden border bg-muted/30 hover:ring-2 ring-primary transition-all">
-                      {imageSrcs.has(name)
-                        ? <img src={imageSrcs.get(name)} alt={name} className="w-full h-full object-cover" />
-                        : <div className="w-full h-full flex items-center justify-center text-[10px] text-muted-foreground">Load</div>
-                      }
-                    </button>
-                  ) : (
-                    <button key={name} onClick={async () => {
-                      if (!imageSrcs.has(name)) {
-                        try {
-                          const bytes = await readDocumentImage(kbId!, docId!, name);
-                          const blob = new Blob([new Uint8Array(bytes)]);
-                          setImageSrcs(prev => { const m = new Map(prev); m.set(name, URL.createObjectURL(blob)); return m; });
-                        } catch {}
-                      }
-                      setDialogIdx(i);
-                    }}
-                    className="flex items-center gap-2 w-full px-2 py-1.5 rounded hover:bg-muted text-left transition-colors">
-                      <div className="w-8 h-8 rounded overflow-hidden border bg-muted/30 shrink-0">
-                        {imageSrcs.has(name)
-                          ? <img src={imageSrcs.get(name)} alt={name} className="w-full h-full object-cover" />
-                          : <div className="w-full h-full flex items-center justify-center"><ImageIcon className="w-3 h-3 text-muted-foreground/50" /></div>
-                        }
-                      </div>
-                      <span className="text-xs truncate flex-1">{name}</span>
-                    </button>
-                  )
-                ))}
-              </div>
+              <button onClick={() => wrappedSetTocOpen(false)} className="p-1 hover:bg-muted rounded text-muted-foreground">
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
-          )}
+          </div>
+          <div className="flex flex-1 min-h-0 overflow-hidden">
+            <div ref={(el) => {
+              // heading list ref for auto-scroll
+              if (el) {
+                const container = el;
+                // wait for ref to be attached before scrolling
+              }
+            }} className="flex-1 overflow-y-auto min-w-0 p-1">
+              {headings.length === 0 ? (
+                <p className="text-xs text-muted-foreground p-2">{t("docs.tocEmpty")}</p>
+              ) : (
+                headings.map((h, i) => {
+                  const isActive = activeHeadingIndex === i;
+                  return (
+                    <button key={i}
+                      onClick={() => { if (h.chunkIndex != null) jumpToChunk(h.chunkIndex, { text: h.text, pos: h.charOffset }); }}
+                      className={`block w-full text-left px-2 py-1 rounded text-xs truncate transition-colors ${
+                        isActive ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-muted-foreground"
+                      }`}
+                      style={{ paddingLeft: `${4 + (h.level - 1) * 10}px` }}>
+                      {h.text}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            {/* Page bar strip */}
+            {hasPageData && maxPage > 0 && (
+              <div className="w-9 shrink-0 overflow-y-auto border-l p-0.5">
+                {(() => {
+                  const pages: number[] = [];
+                  for (let p = minPage; p <= maxPage; p++) pages.push(p);
+                  const displayOffset = savedPageOffset;
+                  return pages.map((p) => {
+                    const displayP = p - displayOffset;
+                    const label = displayP <= 0 ? toRoman(p) : String(displayP);
+                    return (
+                      <button key={p}
+                        onClick={() => {
+                          let targetCi = pageToAnchorChunk.get(p);
+                          if (targetCi == null) {
+                            for (let np = p + 1; np <= maxPage; np++) {
+                              const nc = pageToAnchorChunk.get(np);
+                              if (nc != null) { targetCi = nc; break; }
+                            }
+                          }
+                          if (targetCi != null) jumpToChunk(targetCi);
+                        }}
+                        className="block w-full text-center py-0.5 text-[10px] tabular-nums text-muted-foreground hover:bg-muted hover:text-foreground rounded transition-colors">
+                        {label}
+                      </button>
+                    );
+                  });
+                })()}
+              </div>
+            )}
+          </div>
+          {/* Page jump input */}
+          <div className="border-t p-2 shrink-0">
+            <div className="flex gap-1">
+              <input type="number" min={minPage} max={maxPage} value={pageInput}
+                onChange={(e) => setPageInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handlePageJump(); }}
+                disabled={!hasPageData}
+                placeholder={hasPageData ? t("docs.pageJump") : "-"}
+                className="flex-1 px-2 py-1.5 text-xs border rounded bg-background text-center focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-30 disabled:cursor-not-allowed" />
+              <button onClick={handlePageJump}
+                disabled={!hasPageData || !pageInput}
+                className="px-2 py-1.5 text-xs border rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+                <ChevronRight className="w-3 h-3" />
+              </button>
+            </div>
+            {pageJumpError && <p className="text-[10px] text-red-500 mt-1">{pageJumpError}</p>}
+          </div>
+        </div>
+      )}
 
-          {/* TOC panel — hidden when images panel is open */}
-          {!imagesOpen && (
-          <DocToc
-            headings={headings}
-            tocOpen={tocOpen}
-            setTocOpen={wrappedSetTocOpen}
-            jumpToChunk={jumpToChunk}
-            hasPageData={hasPageData}
-            minPage={minPage}
-            maxPage={maxPage}
-            pageChunksMap={pageChunksMap}
-            pageToAnchorChunk={pageToAnchorChunk}
-            pageInput={pageInput}
-            setPageInput={setPageInput}
-            handlePageJump={handlePageJump}
-            pageJumpError={pageJumpError}
-            pageMode={pageMode}
-            savedPageOffset={savedPageOffset}
-            onOpenSettings={() => setPageSettingsOpen(true)}
-            t={t}
-          />
-          )}
-          </div>{/* end sidebar column */}
-          <div className="flex-1 min-w-0">
-            <DocView content={content} anchoredContent={anchoredContent} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollTarget={scrollTarget} scrollRef={docScrollRef} kbId={kbId} docId={docId} pageAnchorPositions={pageAnchorPositions} jumpTrigger={jumpTrigger} />
+      {/* ── Fixed sidebar: Images panel ── */}
+      {!editing && imagesOpen && (
+        <div className="fixed z-30 flex flex-col bg-card border border-border rounded-lg shadow-lg overflow-hidden"
+          style={{ top: 68, right: 12, width: 240, maxHeight: 'calc(100vh - 84px)' }}>
+          <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/50 shrink-0">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Images ({imageNames.length})</span>
+            <div className="flex items-center gap-1">
+              <FillMissingBtn kbId={kbId!} docId={docId!} taskId={fillTaskId} setTaskId={setFillTaskId} progress={fillProgress} setProgress={setFillProgress} />
+              <button onClick={() => setGalleryMode(galleryMode === "grid" ? "list" : "grid")}
+                className="p-1 hover:bg-muted rounded text-muted-foreground" title="Toggle view">
+                {galleryMode === "grid" ? <Rows3 className="w-3 h-3" /> : <LayoutGrid className="w-3 h-3" />}
+              </button>
+              <button onClick={() => setImagesOpen(false)} className="p-1 hover:bg-muted rounded text-muted-foreground">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+          <div className={`overflow-y-auto flex-1 p-1.5 ${galleryMode === "grid" ? "grid grid-cols-2 gap-1.5" : "space-y-1"}`}>
+            {imageNames.map((name, i) => (
+              galleryMode === "grid" ? (
+                <button key={name} onClick={async () => {
+                  if (!imageSrcs.has(name)) {
+                    try {
+                      const bytes = await readDocumentImage(kbId!, docId!, name);
+                      const blob = new Blob([new Uint8Array(bytes)]);
+                      setImageSrcs(prev => { const m = new Map(prev); m.set(name, URL.createObjectURL(blob)); return m; });
+                    } catch {}
+                  }
+                  setDialogIdx(i);
+                }}
+                className="aspect-square rounded-md overflow-hidden border bg-muted/30 hover:ring-2 ring-primary transition-all">
+                  {imageSrcs.has(name)
+                    ? <img src={imageSrcs.get(name)} alt={name} className="w-full h-full object-cover" />
+                    : <div className="w-full h-full flex items-center justify-center text-[10px] text-muted-foreground">Load</div>
+                  }
+                </button>
+              ) : (
+                <button key={name} onClick={async () => {
+                  if (!imageSrcs.has(name)) {
+                    try {
+                      const bytes = await readDocumentImage(kbId!, docId!, name);
+                      const blob = new Blob([new Uint8Array(bytes)]);
+                      setImageSrcs(prev => { const m = new Map(prev); m.set(name, URL.createObjectURL(blob)); return m; });
+                    } catch {}
+                  }
+                  setDialogIdx(i);
+                }}
+                className="flex items-center gap-2 w-full px-2 py-1.5 rounded hover:bg-muted text-left transition-colors">
+                  <div className="w-8 h-8 rounded overflow-hidden border bg-muted/30 shrink-0">
+                    {imageSrcs.has(name)
+                      ? <img src={imageSrcs.get(name)} alt={name} className="w-full h-full object-cover" />
+                      : <div className="w-full h-full flex items-center justify-center"><ImageIcon className="w-3 h-3 text-muted-foreground/50" /></div>
+                    }
+                  </div>
+                  <span className="text-xs truncate flex-1">{name}</span>
+                </button>
+              )
+            ))}
           </div>
         </div>
       )}
@@ -876,7 +1111,7 @@ function FillMissingBtn({ kbId, docId, taskId, setTaskId, progress, setProgress 
 function DocToc({
   headings, tocOpen, setTocOpen, jumpToChunk, hasPageData, minPage, maxPage,
   pageChunksMap, pageToAnchorChunk, pageInput, setPageInput, handlePageJump, pageJumpError,
-  pageMode, savedPageOffset, onOpenSettings,
+  pageMode, savedPageOffset, onOpenSettings, activeHeadingIndex,
   t,
 }: {
   headings: Heading[];
@@ -893,27 +1128,30 @@ function DocToc({
   pageJumpError: string;
   pageMode: "virtual" | "real"; savedPageOffset: number;
   onOpenSettings: () => void;
+  activeHeadingIndex?: number | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   t: (key: any, vars?: Record<string, string | number>) => string;
 }) {
   // Display offset for page bar numbers (allows negative for front matter)
   const displayOffset = savedPageOffset;
+  const headingsListRef = useRef<HTMLDivElement>(null);
 
-  if (!tocOpen) {
-    return (
-      <button onClick={() => setTocOpen(true)}
-        className="self-start mt-1 p-2 hover:bg-muted rounded-lg text-muted-foreground shrink-0"
-        title={t("docs.tocTitle")}>
-        <List className="w-4 h-4" />
-      </button>
-    );
-  }
+  // Auto-scroll TOC headings list to keep active heading visible
+  useEffect(() => {
+    if (activeHeadingIndex == null || !headingsListRef.current) return;
+    const el = headingsListRef.current.children[activeHeadingIndex] as HTMLElement | undefined;
+    if (el) {
+      el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [activeHeadingIndex]);
+
+  if (!tocOpen) return null;
   // Build linear page list from minPage to maxPage
   const pages: number[] = [];
   for (let p = minPage; p <= maxPage; p++) pages.push(p);
 
   return (
-    <div className="w-56 shrink-0 border rounded-lg bg-card overflow-hidden flex flex-col max-h-[calc(100vh-200px)]">
+    <div className="w-56 shrink-0 border rounded-lg bg-card overflow-hidden flex flex-col max-h-[calc(100vh-140px)]">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/50 shrink-0">
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{t("docs.tocTitle")}</span>
@@ -932,18 +1170,25 @@ function DocToc({
       {/* Body: headings (left) + linear page bar (right) */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Headings column */}
-        <div className="flex-1 overflow-y-auto min-w-0 p-1 border-r">
+        <div ref={headingsListRef} className="flex-1 overflow-y-auto min-w-0 p-1 border-r">
           {headings.length === 0 ? (
             <p className="text-xs text-muted-foreground p-2">{t("docs.tocEmpty")}</p>
           ) : (
-            headings.map((h, i) => (
+            headings.map((h, i) => {
+              const isActive = activeHeadingIndex === i;
+              return (
               <button key={i}
                 onClick={() => { if (h.chunkIndex != null) jumpToChunk(h.chunkIndex, { text: h.text, pos: h.charOffset }); }}
-                className="block w-full text-left px-2 py-1 rounded hover:bg-muted text-xs truncate transition-colors"
+                className={`block w-full text-left px-2 py-1 rounded text-xs truncate transition-colors ${
+                  isActive
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "hover:bg-muted text-muted-foreground"
+                }`}
                 style={{ paddingLeft: `${4 + (h.level - 1) * 10}px` }}>
                 {h.text}
               </button>
-            ))
+              );
+            })
           )}
         </div>
 
@@ -997,13 +1242,14 @@ function DocToc({
   );
 }
 
-function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarget, scrollRef, kbId, docId, pageAnchorPositions, jumpTrigger }: {
+function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarget, scrollRef, kbId, docId, pageAnchorPositions, jumpTrigger, onActiveHeadingChange }: {
   content: string; anchoredContent: string; startCharMap: Map<number, number>; chunkIdx: number | null;
   scrollTarget?: { text: string; pos: number } | null;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   kbId?: string; docId?: string;
   pageAnchorPositions: { page: number; startChar: number }[];
   jumpTrigger: number;
+  onActiveHeadingChange?: (headingText: string | null) => void;
 }) {
   const sections = useMemo(() => splitSections(content), [content]);
   const sectionOffsets = useMemo(() => buildSectionOffsets(content, sections), [content, sections]);
@@ -1124,6 +1370,49 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
     if (el) { sentinelsRef.current.set(idx, el); obsRef.current?.observe(el); }
     else { const old = sentinelsRef.current.get(idx); if (old) obsRef.current?.unobserve(old); sentinelsRef.current.delete(idx); }
   }, []);
+
+  // ── Track active heading for TOC highlight ──────────────────────
+  // Finds the heading closest to (but not below) the top of the viewport.
+  // This gives "sticky" behavior: the heading stays highlighted as long
+  // as the user is scrolling within its section.
+  useEffect(() => {
+    if (!onActiveHeadingChange) return;
+    const scrollEl = containerRef.current;
+    if (!scrollEl) return;
+    const contentEl = containerRef.current;
+    if (!contentEl) return;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const TOP_OFFSET = 60;
+
+    const update = () => {
+      timer = null;
+      const allHeadings = contentEl.querySelectorAll('h1[id], h2[id], h3[id], h4[id]') as NodeListOf<HTMLElement>;
+      if (allHeadings.length === 0) { onActiveHeadingChange(null); return; }
+
+      const scrollTop = scrollEl.getBoundingClientRect().top + TOP_OFFSET;
+      let activeText: string | null = null;
+      for (const el of allHeadings) {
+        if (el.getBoundingClientRect().top <= scrollTop) {
+          activeText = (el.textContent ?? '').trim();
+        } else {
+          break;
+        }
+      }
+      onActiveHeadingChange(activeText);
+    };
+
+    const handleScroll = () => {
+      if (!timer) timer = setTimeout(update, 80);
+    };
+    scrollEl.addEventListener('scroll', handleScroll, { passive: true });
+    const raf = requestAnimationFrame(update);
+    return () => {
+      scrollEl.removeEventListener('scroll', handleScroll);
+      if (timer) clearTimeout(timer);
+      cancelAnimationFrame(raf);
+    };
+  }, [sections, rendered, onActiveHeadingChange, scrollRef]);
 
   // Map chunk_index → page number (reverse of pageAnchorPositions)
   const chunkPageMap = useMemo(() => {
@@ -1344,7 +1633,7 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
   // Single section: render with data-section-idx for consistency
   if (sections.length <= 1) {
     return (
-      <div ref={containerRef as React.RefObject<HTMLDivElement>} id="doc-preview-scroll" className="max-h-[calc(100vh-200px)] overflow-y-auto rounded-lg border bg-card prose prose-sm max-w-none dark:prose-invert p-6">
+      <div ref={containerRef as React.RefObject<HTMLDivElement>} id="doc-preview-scroll" className="flex-1 min-h-0 overflow-y-auto rounded-lg border bg-card prose prose-sm max-w-none dark:prose-invert p-6" style={{ overflowAnchor: "none" }}>
         <div data-section-idx={0}>
           <MarkdownRenderer imgKbId={kbId} imgDocId={docId}>{anchoredContent}</MarkdownRenderer>
         </div>
@@ -1353,7 +1642,7 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
   }
 
   return (
-    <div ref={containerRef as React.RefObject<HTMLDivElement>} id="doc-preview-scroll" className="max-h-[calc(100vh-200px)] overflow-y-auto rounded-lg border bg-card">
+    <div ref={containerRef as React.RefObject<HTMLDivElement>} id="doc-preview-scroll" className="flex-1 min-h-0 overflow-y-auto rounded-lg border bg-card" style={{ overflowAnchor: "none" }}>
       <div className="prose prose-sm max-w-none dark:prose-invert p-6">
         {sections.map((sec, i) => {
           if (i < EAGER || rendered.has(i)) {

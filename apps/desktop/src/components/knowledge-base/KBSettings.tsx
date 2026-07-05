@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useKBStore } from "../../stores/useKBStore";
+import { useTabStore } from "../../stores/useTabStore";
 import { useI18n } from "../../i18n";
 import { indexDocument, waitForIndex } from "../../services/pythonClient";
 import {
@@ -688,6 +689,7 @@ export function KBSettings() {
                                 return next;
                               });
                             } else {
+                              useTabStore.getState().openTab(kbId!, doc.id, doc.name);
                               navigate(`/kb/${kbId}/documents/${doc.id}`);
                             }
                           }}
@@ -754,7 +756,10 @@ export function KBSettings() {
                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
                           <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                           <span className="font-medium text-sm truncate cursor-pointer hover:text-primary text-muted-foreground"
-                            onClick={() => navigate(`/kb/${kbId}/documents/${part.id}`)}
+                            onClick={() => {
+                              useTabStore.getState().openTab(kbId!, part.id, part.name);
+                              navigate(`/kb/${kbId}/documents/${part.id}`);
+                            }}
                             title={part.name}
                           >
                             {t("docs.partBadge", { n: pNum ?? "?" })}

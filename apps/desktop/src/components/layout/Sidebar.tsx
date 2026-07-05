@@ -3,6 +3,7 @@ import { Link, useLocation, useParams, useNavigate } from "react-router-dom";
 import { useKBStore } from "../../stores/useKBStore";
 import { useSettingsStore } from "../../stores/useSettingsStore";
 import { useChatStore } from "../../stores/useChatStore";
+import { useTabStore } from "../../stores/useTabStore";
 import { useI18n } from "../../i18n";
 import { BookOpen, Settings, FolderOpen, AlertCircle, X, Layers, Pin, MessageSquare, Plus, ChevronDown, ChevronRight, LayoutDashboard, Pencil, Check, Trash2, PanelLeftClose, PanelLeft } from "lucide-react";
 
@@ -122,6 +123,8 @@ export function Sidebar() {
                           </Link>
                           <div className="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex">
                             <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteConversation(conv.id);
+                              const tab = useTabStore.getState().tabs.find((t) => t.type === "chat" && t.convId === conv.id);
+                              if (tab) useTabStore.getState().closeTab(tab.id);
                               if (conv.id === activeConversationId || location.pathname === `/chat/${conv.id}`) {
                                 const remaining = recentConversations.filter((c) => c.id !== conv.id);
                                 setChatPopover(false);
@@ -279,6 +282,9 @@ export function Sidebar() {
                           <Pencil className="w-2.5 h-2.5" />
                         </button>
                         <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteConversation(conv.id);
+                          // Close the corresponding tab if open
+                          const tab = useTabStore.getState().tabs.find((t) => t.type === "chat" && t.convId === conv.id);
+                          if (tab) useTabStore.getState().closeTab(tab.id);
                           // Navigate away if the deleted conversation is currently active
                           if (conv.id === activeConversationId || location.pathname === `/chat/${conv.id}`) {
                             const remaining = recentConversations.filter((c) => c.id !== conv.id);

@@ -38,14 +38,17 @@ A local-first desktop knowledge base for AI agents. Built with **Tauri v2 + Reac
 ### LLM Chat (RAG)
 - Built-in chat module with multi-conversation support, persisted to data directory
 - **Tool calling**: LLM actively searches KBs, lists documents, reads content, fetches chunks by index
-- **SSE streaming**: Token-by-token display with throttling for smooth rendering
-- **Multi-KB selection**: Search across multiple KBs with access isolation
+- **Web search**: Free DuckDuckGo integration (no API key) with Tavily/SearXNG options; Jina proxy fallback for reliability
+- **SSE streaming with instant rendering**: Streamdown (Vercel) — incremental markdown/LaTeX/math parsing during streaming, no OOM from full re-render
+- **Deferred persistence**: Disk writes skipped during streaming (only on completion) — eliminates I/O jank
+- **Multi-KB selection**: Search across multiple KBs with access isolation; uncheck all → KB tools disabled
 - **Citations**: Inline `[N]` badges and `[M-N]` range badges — click to preview source chunks with prev/next navigation and "View full document" button
 - **Thinking block**: Collapsible reasoning display (DeepSeek-R1 etc.) — auto-scroll during streaming, auto-collapse when done
 - **Image references**: LLM can reference document images — rendered as clickable thumbnails with full-screen preview
-- **Conversation actions**: Rename, delete, regenerate, copy messages
-- Code block copy, math rendering, auto-scroll toggle
-- **Sidebar popover**: When sidebar is collapsed, click Chat icon → floating panel with conversation history + new conversation
+- **Conversation actions**: Rename, delete (from sidebar & popover), regenerate, copy messages
+- **Tab system**: Multi-tab support in the desktop app — chat tabs, document tabs, KB tabs with keyboard shortcuts and "reopen closed tab"
+- Code block copy, math rendering (KaTeX), auto-scroll toggle
+- **Sidebar popover**: When sidebar is collapsed, click Chat icon → floating panel with conversation history, new conversation, and per-item delete
 
 ### MCP Server
 20 tools for AI agents — single executable, requires the app running (or minimized to tray).
@@ -80,6 +83,7 @@ Search results and chunks include `content_type` (`text`, `image`, `table`, `equ
 - **System tray** — close to tray, backend stays alive for MCP
 - **Single instance** — launching the app again brings existing window to front
 - **Collapsible sidebar**: KB list + conversations with floating popover when collapsed
+- **Tab system**: Multi-tab with close-to-right, close-others, reopen-closed, keyboard navigation (Ctrl+Tab / Ctrl+Shift+Tab)
 - **Settings**: Collapsible card sections with sticky Save button, test connection buttons for all API configs, clean orphans with detailed feedback
 - **Data management**: KB ZIP import/export, settings.json import/export, one-click orphan cleanup
 
@@ -135,15 +139,16 @@ Open the app → Settings → click **"Configure Claude Code MCP"** to auto-gene
 | Local Models | llama.cpp (CPU inference) |
 | Vector DB | LanceDB (embedded) |
 | Doc Parsing | MinerU API (Precise mode) |
-| Math Rendering | KaTeX + remark-math |
+| Streaming Markdown | Streamdown (Vercel) + @streamdown/math + @streamdown/cjk |
+| Math Rendering | KaTeX + rehype-katex + remark-math |
 
 ## Project Structure
 
 ```
 super-knowledge-base/
 ├── apps/desktop/                  # Tauri v2 + React app
-│   ├── src-tauri/                 # Rust backend + llama.cpp binaries
-│   └── src/                       # React frontend
+│   ├── src-tauri/                 # Rust backend + llama.cpp binaries + http/fs/shell/dialog/store plugins
+│   └── src/                       # React frontend (Chat, Documents, Search, Settings, Sidebar)
 ├── services/python-backend/       # Python backend (REST API + MCP in one executable)
 ├── models/                        # GGUF models for local inference
 └── scripts/                       # Build & release scripts

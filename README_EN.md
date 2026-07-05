@@ -30,16 +30,21 @@ A local-first desktop knowledge base for AI agents. Built with **Tauri v2 + Reac
 - **Test Connection** buttons in Settings
 
 ### LLM Chat (RAG)
-- Built-in chat module with multi-conversation support
-- **Tool calling**: LLM actively searches KBs, lists documents, reads full content, and fetches chunks by index; configurable default context window
-- **SSE streaming**: Token-by-token display with 50ms throttle for smooth rendering
-- **Multi-KB selection**: Search across multiple KBs with access isolation
+- Built-in chat module with multi-conversation support, persisted to data directory
+- **Tool calling**: LLM actively searches KBs, lists documents, reads full content, and fetches chunks by index
+- **Web search**: Free DuckDuckGo integration (no API key) with Tavily/SearXNG options; Jina proxy fallback
+- **SSE streaming with instant rendering**: Streamdown (Vercel) — incremental markdown/LaTeX/math parsing during streaming, no OOM
+- **Deferred persistence**: Disk writes skipped during streaming (only on completion) — eliminates I/O jank
+- **Multi-KB selection**: Search across multiple KBs with access isolation; uncheck all → KB tools disabled
 - **Citations**: Inline `[N]` badges and `[M-N]` range badges — click to preview source chunks, "View full document" navigates to chunk position
-- **Conversation actions**: Rename, delete, regenerate, copy messages
-- **Code block copy**, math rendering, auto-scroll toggle
+- **Thinking block**: Collapsible reasoning display (DeepSeek-R1 etc.) — auto-scroll during streaming
+- **Image references**: LLM can reference document images — rendered as clickable thumbnails with full-screen preview
+- **Conversation actions**: Rename, delete (from sidebar & popover), regenerate, copy messages
+- **Tab system**: Multi-tab support (chat, document, KB tabs) with keyboard shortcuts and "reopen closed tab"
+- Code block copy, math rendering (KaTeX), auto-scroll toggle
 
 ### MCP Server
-18 tools for AI agents — single executable, requires the app running (or minimized to tray):
+20 tools for AI agents — single executable, requires the app running (or minimized to tray):
 
 | Tool | Description |
 |------|-------------|
@@ -66,7 +71,8 @@ A local-first desktop knowledge base for AI agents. Built with **Tauri v2 + Reac
 - Custom frameless window with dark/light/system theme
 - English/Chinese localization, built-in user guide
 - **System tray** — close to tray, backend stays alive for MCP
-- **Collapsible sidebar**: KB list + conversations with independent scrolling
+- **Collapsible sidebar**: KB list + conversations with floating popover when collapsed
+- **Tab system**: Multi-tab management with close-to-right, close-others, reopen-closed, keyboard navigation (Ctrl+Tab / Ctrl+Shift+Tab)
 - Settings with tabbed navigation (General/Models/Chat/Data), configurable tool limits
 - **Data management**: KB ZIP import/export, settings.json import/export, one-click orphan cleanup
 
@@ -120,15 +126,16 @@ Open the app → Settings → click **"Configure Claude Code MCP"** to auto-gene
 | Backend | FastAPI + FastMCP (Python) |
 | Vector DB | LanceDB (embedded) |
 | Doc Parsing | MinerU API (Precise mode) |
-| Math Rendering | KaTeX + remark-math |
+| Streaming Markdown | Streamdown (Vercel) + @streamdown/math + @streamdown/cjk |
+| Math Rendering | KaTeX + rehype-katex + remark-math |
 
 ## Project Structure
 
 ```
 super-knowledge-base/
 ├── apps/desktop/              # Tauri v2 + React app
-│   ├── src-tauri/             # Rust backend
-│   └── src/                   # React frontend
+│   ├── src-tauri/             # Rust backend + llama.cpp + http/fs/shell/dialog/store plugins
+│   └── src/                   # React frontend (Chat, Documents, Search, Settings, Sidebar)
 ├── services/python-backend/   # Python backend (REST API + MCP in one executable)
 └── scripts/                   # Build & release scripts
 ```

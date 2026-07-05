@@ -392,7 +392,14 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
 
   const handleNew = () => { const id = newConversation(); navigate(`/chat/${id}`); };
   const handleDelete = () => {
-    if (conv) { deleteConversation(conv.id); const id = newConversation(); navigate(`/chat/${id}`, { replace: true }); }
+    if (conv) {
+      deleteConversation(conv.id);
+      // Close the tab for this conversation
+      const tab = useTabStore.getState().tabs.find((t) => t.type === "chat" && t.convId === conv.id);
+      if (tab) useTabStore.getState().closeTab(tab.id);
+      const id = newConversation();
+      navigate(`/chat/${id}`, { replace: true });
+    }
   };
   const handleStop = () => {
     abortCtrl?.abort();

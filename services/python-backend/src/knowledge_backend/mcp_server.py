@@ -41,62 +41,9 @@ mcp = FastMCP(name="SKB")
 
 
 def _compute_page_offset(doc_dir: Path, doc_name: str) -> int:
-    """If this is a split-part document (e.g., _part2.pdf), compute the
-    cumulative page count from all previous parts so page numbers continue
-    seamlessly across parts."""
-    m = re.search(r"_part(\d+)\.", doc_name)
-    if not m:
-        return 0
-    part_num = int(m.group(1))
-    if part_num <= 1:
-        return 0
-
-    parent_dir = doc_dir.parent
-    base_name = doc_name[:m.start()]
-
-    offset = 0
-    for prev_part in range(1, part_num):
-        for sibling in parent_dir.iterdir():
-            if not sibling.is_dir():
-                continue
-            meta_path = sibling / "metadata.json"
-            if not meta_path.exists():
-                continue
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                name = meta.get("name", "")
-                if name.startswith(base_name) and f"_part{prev_part}." in name:
-                    page_cache = sibling / "page_map.cache"
-                    if page_cache.exists():
-                        cache = json.loads(page_cache.read_text(encoding="utf-8"))
-                        pages = cache.get("pages", [])
-                        if pages:
-                            max_idx = max(p.get("page_idx", 0) for p in pages)
-                            offset += max_idx + 1
-                            break
-                    mr_path = sibling / "mineru_result.json"
-                    if mr_path.exists():
-                        mr = json.loads(mr_path.read_text(encoding="utf-8"))
-                        pdf_info = mr.get("pdf_info", [])
-                        if pdf_info:
-                            offset += len(pdf_info)
-                            break
-            except Exception:
-                continue
-        else:
-            for sibling in parent_dir.iterdir():
-                if not sibling.is_dir():
-                    continue
-                for f in sibling.iterdir():
-                    if f.name.startswith(base_name) and f"_part{prev_part}" in f.name and f.suffix == ".pdf":
-                        try:
-                            from PyPDF2 import PdfReader
-                            reader = PdfReader(str(f))
-                            offset += len(reader.pages)
-                        except Exception:
-                            pass
-                        break
-    return offset
+    """Re-exported from api/documents.py — single source of truth."""
+    from knowledge_backend.api.documents import _compute_page_offset as _f
+    return _f(doc_dir, doc_name)
 
 
 def _get_db():

@@ -1649,6 +1649,12 @@ const DocView = memo(function DocView({ content, anchoredContent, startCharMap, 
               const tag = el.tagName;
               if (tag === 'H1' || tag === 'H2' || tag === 'H3' || tag === 'H4' || tag === 'H5' || tag === 'H6' ||
                   tag === 'P' || tag === 'LI' || tag === 'TD' || tag === 'TH' || tag === 'PRE' || tag === 'BLOCKQUOTE') {
+                // Skip elements that span page boundaries: if this
+                // element contains a page marker for a *different* page,
+                // it straddles two pages and shouldn't be highlighted
+                // for either (prevents overlap with adjacent page highlight).
+                const otherPageMarker = el.querySelector('[id^="page-"]:not([id="page-${pageNum}"])');
+                if (otherPageMarker) return NodeFilter.FILTER_SKIP;
                 return NodeFilter.FILTER_ACCEPT;
               }
               return NodeFilter.FILTER_SKIP;

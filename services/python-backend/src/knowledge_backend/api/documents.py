@@ -22,7 +22,12 @@ router = APIRouter()
 def _compute_page_offset(doc_dir: Path, doc_name: str) -> int:
     """If this is a split-part document (e.g., _part2.pdf), compute the
     cumulative page count from all previous parts so page numbers continue
-    seamlessly across parts."""
+    seamlessly across parts.
+
+    Uses PdfReader for accurate PDF page counts (matching the split boundary),
+    and MinerU boundary analysis to detect when a book page was cut in half
+    at the split point.
+    """
     m = re.search(r"_part(\d+)\.", doc_name)
     if not m:
         return 0
@@ -33,57 +38,185 @@ def _compute_page_offset(doc_dir: Path, doc_name: str) -> int:
     parent_dir = doc_dir.parent
     base_name = doc_name[:m.start()]  # e.g. "高等代数讲义"
 
+    # Load boundary overlap analysis (cached to disk — runs MinerU once per split doc)
+    boundaries = _load_boundary_data(parent_dir, base_name)
+
     offset = 0
     for prev_part in range(1, part_num):
-        # Find sibling part directory — look for dirs with matching base name and _partN
-        for sibling in parent_dir.iterdir():
-            if not sibling.is_dir():
-                continue
-            meta_path = sibling / "metadata.json"
-            if not meta_path.exists():
-                continue
-            try:
-                import json
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                name = meta.get("name", "")
-                if name.startswith(base_name) and f"_part{prev_part}." in name:
-                    # Found previous part — read its page count
-                    page_cache = sibling / "page_map.cache"
-                    if page_cache.exists():
-                        cache = json.loads(page_cache.read_text(encoding="utf-8"))
-                        pages = cache.get("pages", [])
-                        if pages:
-                            # Max page_idx + 1 = total pages in this part
-                            max_idx = max(p.get("page_idx", 0) for p in pages)
-                            offset += max_idx + 1
-                            break
-                    # Fallback: check mineru_result.json
-                    mr_path = sibling / "mineru_result.json"
-                    if mr_path.exists():
-                        mr = json.loads(mr_path.read_text(encoding="utf-8"))
-                        pdf_info = mr.get("pdf_info", [])
-                        if pdf_info:
-                            offset += len(pdf_info)
-                            break
-            except Exception:
-                continue
-        else:
-            # Couldn't find previous part — estimate from PDF
-            for sibling in parent_dir.iterdir():
-                if not sibling.is_dir():
-                    continue
-                for f in sibling.iterdir():
-                    if f.name.startswith(base_name) and f"_part{prev_part}" in f.name and f.suffix == ".pdf":
-                        try:
-                            from PyPDF2 import PdfReader
-                            reader = PdfReader(str(f))
-                            offset += len(reader.pages)
-                        except Exception:
-                            pass
-                        break
+        pdf_pages = _get_part_pdf_pages(parent_dir, base_name, prev_part)
+        # Check if this boundary cuts a book page in half
+        boundary_key = f"part{prev_part}_to_part{prev_part+1}"
+        if boundaries.get(boundary_key):
+            pdf_pages -= 1  # overlapping page: book page continues in next part
+        offset += pdf_pages
 
     print(f"[index] Computed page offset {offset} for {doc_name}", flush=True)
     return offset
+
+
+def _get_part_pdf_pages(parent_dir: Path, base_name: str, part_num: int) -> int:
+    """Read the actual PDF page count of a split part. Always accurate."""
+    # Look for the part's PDF file in sibling directories
+    for sibling in parent_dir.iterdir():
+        if not sibling.is_dir():
+            continue
+        for f in sibling.iterdir():
+            if f.name.startswith(base_name) and f"_part{part_num}." in f.name and f.suffix == ".pdf":
+                try:
+                    from PyPDF2 import PdfReader
+                    reader = PdfReader(str(f))
+                    return len(reader.pages)
+                except Exception:
+                    pass
+                break
+    # Fallback: try to estimate from page_map.cache or mineru_result.json
+    for sibling in parent_dir.iterdir():
+        if not sibling.is_dir():
+            continue
+        meta_path = sibling / "metadata.json"
+        if not meta_path.exists():
+            continue
+        try:
+            import json
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            name = meta.get("name", "")
+            if name.startswith(base_name) and f"_part{part_num}." in name:
+                mr_path = sibling / "mineru_result.json"
+                if mr_path.exists():
+                    mr = json.loads(mr_path.read_text(encoding="utf-8"))
+                    pdf_info = mr.get("pdf_info", [])
+                    if pdf_info:
+                        return len(pdf_info)
+                page_cache = sibling / "page_map.cache"
+                if page_cache.exists():
+                    cache = json.loads(page_cache.read_text(encoding="utf-8"))
+                    pages = cache.get("pages", [])
+                    if pages:
+                        return max(p.get("page_idx", 0) for p in pages) + 1
+        except Exception:
+            continue
+    return 0
+
+
+def _load_boundary_data(parent_dir: Path, base_name: str) -> dict:
+    """Load or compute boundary overlap analysis for all split boundaries.
+
+    Returns dict like {'part1_to_part2': True, 'part2_to_part3': False}
+    where True means MinerU detected the boundary page was cut in half."""
+    cache_path = parent_dir / "boundary_analysis.json"
+    if cache_path.exists():
+        try:
+            import json
+            return json.loads(cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # Discover all parts
+    parts = _discover_parts(parent_dir, base_name)
+    if len(parts) < 2:
+        return {}
+
+    # Find the original unsplit PDF (parent document)
+    original_pdf = None
+    for f in parent_dir.iterdir():
+        if f.suffix.lower() == ".pdf" and f.name.startswith(base_name) and "_part" not in f.name:
+            original_pdf = f
+            break
+    if not original_pdf:
+        return {}
+
+    boundaries = {}
+    for i in range(len(parts) - 1):
+        p1_num, p1_dir = parts[i]
+        p2_num, p2_dir = parts[i + 1]
+        boundary_key = f"part{p1_num}_to_part{p2_num}"
+
+        # Compute the boundary page index in the original PDF
+        # Sum pages of all parts before the boundary
+        boundary_page = 0
+        for p in range(1, p1_num + 1):
+            boundary_page += _get_part_pdf_pages(parent_dir, base_name, p)
+
+        # Extract 2-page micro-PDF: last page of part N + first page of part N+1
+        boundary_pdf = parent_dir / f"_boundary_{p1_num}_{p2_num}.pdf"
+        try:
+            _extract_pdf_pages(original_pdf, boundary_pdf, boundary_page - 1, 2)
+
+            # Submit to MinerU for page detection
+            try:
+                from ..config import get_config
+                config = get_config()
+                if config.mineru_token:
+                    from ..mineru_client import parse_document
+                    result = parse_document(str(boundary_pdf), config.mineru_token)
+                    import json as _json
+                    cl = _json.loads(result.content_list_json)
+                    mineru_pages = len(set(b.get("page_idx", 0) for b in cl))
+                    # If MinerU detected < 2 pages, the two PDF pages
+                    # were merged → they're the same book page
+                    boundaries[boundary_key] = (mineru_pages < 2)
+                    print(f"[boundary] {boundary_key}: pdf=2 mineru={mineru_pages} overlap={mineru_pages < 2}")
+                else:
+                    print(f"[boundary] No MinerU token, skipping boundary analysis")
+            except Exception as e:
+                print(f"[boundary] MinerU analysis failed for {boundary_key}: {e}")
+        except Exception as e:
+            print(f"[boundary] Failed to extract boundary PDF: {e}")
+        finally:
+            try:
+                boundary_pdf.unlink()
+            except Exception:
+                pass
+
+    # Cache results
+    try:
+        import json
+        cache_path.write_text(json.dumps(boundaries), encoding="utf-8")
+    except Exception:
+        pass
+
+    return boundaries
+
+
+def _discover_parts(parent_dir: Path, base_name: str) -> list[tuple[int, Path]]:
+    """Find all split-part directories for a document, sorted by part number."""
+    parts = []
+    for d in parent_dir.iterdir():
+        if not d.is_dir():
+            continue
+        meta_path = d / "metadata.json"
+        if not meta_path.exists():
+            continue
+        try:
+            import json
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            name = meta.get("name", "")
+            if name.startswith(base_name):
+                pm = re.search(r"_part(\d+)\.", name)
+                if pm:
+                    parts.append((int(pm.group(1)), d))
+        except Exception:
+            continue
+    parts.sort(key=lambda x: x[0])
+    return parts
+
+
+def _extract_pdf_pages(src: Path, dst: Path, start_page: int, count: int):
+    """Extract *count* pages from *src* PDF starting at 0-based *start_page*."""
+    from pypdf import PdfReader, PdfWriter
+    reader = PdfReader(str(src))
+    writer = PdfWriter()
+    end = min(start_page + count, len(reader.pages))
+    for i in range(start_page, end):
+        writer.add_page(reader.pages[i])
+    with open(dst, "wb") as f:
+        writer.write(f)
+    # Close reader to release file handles
+    try:
+        if hasattr(reader, "stream") and reader.stream:
+            reader.stream.close()
+    except Exception:
+        pass
 
 
 _PAGE_MARKER_RE = re.compile(r"\[PAGE:(\d+)(?:\|(-?\d+))?\]")

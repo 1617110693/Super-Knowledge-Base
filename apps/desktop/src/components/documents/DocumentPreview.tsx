@@ -1653,7 +1653,7 @@ const DocView = memo(function DocView({ content, anchoredContent, startCharMap, 
                 // element contains a page marker for a *different* page,
                 // it straddles two pages and shouldn't be highlighted
                 // for either (prevents overlap with adjacent page highlight).
-                const otherPageMarker = el.querySelector('[id^="page-"]:not([id="page-${pageNum}"])');
+                const otherPageMarker = el.querySelector(`[id^="page-"]:not([id="page-${pageNum}"])`);
                 if (otherPageMarker) return NodeFilter.FILTER_SKIP;
                 return NodeFilter.FILTER_ACCEPT;
               }

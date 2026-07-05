@@ -40,6 +40,9 @@ pub struct Document {
     /// If this document is a split part, the ID of the parent document
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_doc_id: Option<String>,
+    /// User-set page offset (real page number adjustment)
+    #[serde(default)]
+    pub page_offset: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -422,6 +422,7 @@ impl FileStore {
             embedding_model: String::new(),
             path: None,
             parent_doc_id,
+            page_offset: 0,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -722,6 +723,7 @@ impl FileStore {
                 embedding_model: "".to_string(),
                 path: None,
                 parent_doc_id: None,
+                page_offset: 0,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             });

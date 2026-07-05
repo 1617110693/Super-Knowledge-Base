@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef, useCallback, startTransition, memo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { MarkdownRenderer } from "../common/MarkdownRenderer";
 import { getDocumentContent, saveDocumentContent, saveDocumentChunks } from "../../services/tauriBridge";
 import { indexDocument, waitForIndex, getChunkRange, searchDocument } from "../../services/pythonClient";
@@ -74,6 +74,23 @@ export function DocumentPreview() {
     const v = new URLSearchParams(window.location.search).get("ci");
     return v ? parseInt(v) : null;
   });
+  // Watch for chunkIdx changes from URL (e.g., ChunkDetailDialog "View full doc") or tab store
+  const location = useLocation();
+  useEffect(() => {
+    // Priority 1: tab store lastChunkIdx (preserved across tab switches)
+    const tab = useTabStore.getState().tabs.find((t) => t.kbId === kbId && t.docId === docId);
+    if (tab?.lastChunkIdx != null) {
+      setChunkIdx(tab.lastChunkIdx);
+      useTabStore.getState().saveTabState(tab.id, { lastChunkIdx: null });
+      return;
+    }
+    // Priority 2: URL ?ci= param
+    const ci = new URLSearchParams(location.search).get("ci");
+    if (ci != null) {
+      const n = parseInt(ci);
+      if (!isNaN(n) && n !== chunkIdx) setChunkIdx(n);
+    }
+  }, [location.search, kbId, docId]);
   const [scrollTarget, setScrollTarget] = useState<{ text: string; pos: number; n: number } | null>(null);
   const [jumpTrigger, setJumpTrigger] = useState(0);
   const jumpCounter = useRef(0);
@@ -82,7 +99,11 @@ export function DocumentPreview() {
   const [imagesOpen, setImagesOpen] = useState(false);
   const [galleryMode, setGalleryMode] = useState<"grid" | "list">("grid");
   const [dialogIdx, setDialogIdx] = useState<number | null>(null);
-  const [fillTaskId, setFillTaskId] = useState<string | null>(null);
+  // VLM fill task — persist taskId so it survives tab switches.
+  // The Python backend keeps running in background; we just need to re-attach polling.
+  const [fillTaskId, setFillTaskId] = useState<string | null>(() => {
+    try { return localStorage.getItem(`skb-fill-${kbId}-${docId}`); } catch { return null; }
+  });
   const [fillProgress, setFillProgress] = useState<{ current: number; total: number; currentName: string; message: string; done: boolean; filled?: number; failed?: number; failed_details?: { name: string; error: string }[] } | null>(null);
   const docScrollRef = useRef<HTMLDivElement>(null);
 
@@ -655,7 +676,7 @@ export function DocumentPreview() {
           className="doc-edit-textarea w-full min-h-[400px] p-4 border rounded-lg bg-background font-mono text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary"
           disabled={saving} />
       ) : (
-        <DocView content={content} anchoredContent={anchoredContent} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollTarget={scrollTarget} scrollRef={docScrollRef} kbId={kbId} docId={docId} pageAnchorPositions={pageAnchorPositions} jumpTrigger={jumpTrigger} onActiveHeadingChange={setActiveHeadingText} />
+        <DocView content={content} anchoredContent={anchoredContent} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollTarget={scrollTarget} scrollRef={docScrollRef} kbId={kbId} docId={docId} pageAnchorPositions={pageAnchorPositions} pageChunksMap={pageChunksMap} jumpTrigger={jumpTrigger} onActiveHeadingChange={setActiveHeadingText} />
       )}
 
       {/* ── Fixed sidebar: TOC panel (Typora-style right sidebar) ── */}
@@ -1013,6 +1034,7 @@ function FillMissingBtn({ kbId, docId, taskId, setTaskId, progress, setProgress 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const persistKey = `skb-fill-${kbId}-${docId}`;
 
   const stopPolling = () => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -1034,9 +1056,13 @@ function FillMissingBtn({ kbId, docId, taskId, setTaskId, progress, setProgress 
           failed: p.failed,
           failed_details: p.failed_details,
         });
-        if (p.done) stopPolling();
-      } catch { /* ignore polling errors */ }
-    }, 800);
+        if (p.done) {
+            stopPolling();
+            setTaskId(null);
+            try { localStorage.removeItem(persistKey); } catch {}
+          }
+        } catch { /* ignore polling errors */ }
+      }, 800);
   };
 
   const handleFill = async () => {
@@ -1054,14 +1080,57 @@ function FillMissingBtn({ kbId, docId, taskId, setTaskId, progress, setProgress 
       if (r.done) {
         setProgress({ current: 0, total: 0, currentName: "", message: r.message || "All images have valid descriptions", done: true });
         setTaskId(null);
+        try { localStorage.removeItem(persistKey); } catch {}
       } else {
         setTaskId(r.task_id);
+        try { localStorage.setItem(persistKey, r.task_id); } catch {}
         startPolling(r.task_id);
       }
     } catch (e) { setError(String(e)); }
   };
 
-  // Cleanup polling on unmount
+  // Persist taskId changes
+  useEffect(() => {
+    if (taskId) {
+      try { localStorage.setItem(persistKey, taskId); } catch {}
+    }
+  }, [taskId, persistKey]);
+
+  // On mount: if we have a stored taskId but no progress yet, resume polling
+  useEffect(() => {
+    if (taskId && !pollRef.current) {
+      import("../../services/pythonClient").then(({ pollFillProgress }) => {
+      // Quick check: is the task still running?
+      pollFillProgress(taskId).then((p: any) => {
+        if (!p.done) {
+          setProgress({
+            current: p.current, total: p.total,
+            currentName: p.current_name || "", message: p.message || "",
+            done: p.done, filled: p.filled, failed: p.failed,
+            failed_details: p.failed_details,
+          });
+          startPolling(taskId);
+        } else {
+          // Task completed while we were away
+          setProgress({
+            current: p.total, total: p.total,
+            currentName: "", message: p.message || "Done",
+            done: true, filled: p.filled, failed: p.failed,
+            failed_details: p.failed_details,
+          });
+          setTaskId(null);
+          try { localStorage.removeItem(persistKey); } catch {}
+        }
+      }).catch(() => {
+        // Task not found — probably expired
+        setTaskId(null);
+        try { localStorage.removeItem(persistKey); } catch {}
+      });
+    });
+    }
+  }, []); // run once on mount
+
+  // Cleanup polling on unmount (but DON'T clear taskId — task keeps running in backend)
   useEffect(() => () => stopPolling(), []);
 
   const handleClose = () => {
@@ -1283,12 +1352,13 @@ function DocToc({
   );
 }
 
-const DocView = memo(function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarget, scrollRef, kbId, docId, pageAnchorPositions, jumpTrigger, onActiveHeadingChange }: {
+const DocView = memo(function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarget, scrollRef, kbId, docId, pageAnchorPositions, pageChunksMap, jumpTrigger, onActiveHeadingChange }: {
   content: string; anchoredContent: string; startCharMap: Map<number, number>; chunkIdx: number | null;
   scrollTarget?: { text: string; pos: number } | null;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   kbId?: string; docId?: string;
   pageAnchorPositions: { page: number; startChar: number }[];
+	  pageChunksMap: Map<number, number[]>;
   jumpTrigger: number;
   onActiveHeadingChange?: (headingText: string | null) => void;
 }) {
@@ -1473,7 +1543,14 @@ const DocView = memo(function DocView({ content, anchoredContent, startCharMap, 
 
     // ── Page-bar jump: use HTML anchor ──
     if (!scrollTarget) {
-      const pageNum = chunkPageMap.get(chunkIdx);
+      // chunkPageMap only has the first chunk per page. For other chunks,
+      // find their page from pageChunksMap.
+      let pageNum = chunkPageMap.get(chunkIdx);
+      if (pageNum == null) {
+        for (const [page, chunkIndices] of pageChunksMap) {
+          if (chunkIndices.includes(chunkIdx)) { pageNum = page; break; }
+        }
+      }
       if (pageNum != null) {
         // Ensure the section containing this page is rendered
         const sc = startCharMap.get(chunkIdx);

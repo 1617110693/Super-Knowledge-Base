@@ -486,6 +486,48 @@ export function SettingsPanel() {
           </div>
         </Section>
 
+        {/* Web Search */}
+        <Section id="websearch" title={t("settings.webSearch")} hint={form.web_search_provider || "duckduckgo"}>
+          <p className="text-xs text-muted-foreground">{t("settings.webSearchDesc")}</p>
+          <div>
+            <label className="block text-sm font-medium mb-1">{t("settings.webSearchProvider")}</label>
+            <select value={form.web_search_provider} onChange={(e) => update("web_search_provider", e.target.value)}
+              className="w-full px-3 py-2 border rounded-md text-sm bg-background">
+              <option value="duckduckgo">DuckDuckGo ({t("settings.free") || "free"})</option>
+              <option value="tavily">Tavily</option>
+              <option value="searxng">SearXNG</option>
+            </select>
+          </div>
+          {form.web_search_provider === "duckduckgo" ? (
+            <p className="text-xs text-muted-foreground">{t("settings.webSearchDdgDesc") || "DuckDuckGo is free and requires no API key. Results may be less comprehensive than dedicated search APIs."}</p>
+          ) : form.web_search_provider === "tavily" ? (
+            <div>
+              <label className="block text-sm font-medium mb-1">{t("settings.tavilyApiKey")}</label>
+              <input type="password" value={form.tavily_api_key || ""}
+                onChange={(e) => update("tavily_api_key", e.target.value)}
+                placeholder="tvly-..."
+                className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+              <p className="text-xs text-muted-foreground mt-1">
+                <a href="https://tavily.com" target="_blank" className="text-primary underline">Tavily</a> — free tier: 1000 searches/month
+              </p>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium mb-1">{t("settings.searxngBaseUrl")}</label>
+              <input type="text" value={form.searxng_base_url || ""}
+                onChange={(e) => update("searxng_base_url", e.target.value)}
+                placeholder="http://localhost:8080"
+                className="w-full px-3 py-2 border rounded-md text-sm bg-background" />
+            </div>
+          )}
+          <div>
+            <label className="block text-sm font-medium mb-1">{t("settings.webSearchMaxResults")}</label>
+            <input type="number" min={1} max={10} value={form.web_search_max_results || 5}
+              onChange={(e) => update("web_search_max_results", Math.max(1, Math.min(10, Number(e.target.value) || 5)))}
+              className="w-24 px-3 py-2 border rounded-md text-sm bg-background" />
+          </div>
+        </Section>
+
         {/* VLM */}
         <Section id="vlm" title={t("settings.vlm")} hint={form.vlm_model || t("settings.vlmHint")}>
           <p className="text-xs text-muted-foreground">{t("settings.vlmHint")}</p>

@@ -135,24 +135,45 @@ export function KBSettings() {
           });
         }
       }
-      // When parsing finishes, trigger index once
+      // When parsing finishes, trigger index once.
+      // For split-part documents: wait until ALL sibling parts are done parsing,
+      // then index all parts together so page offsets are calculated correctly.
       for (const doc of flat) {
         if (
-          doc.parse_status === "done" &&
-          doc.chunk_count === 0 &&
-          !indexedRef.current.has(doc.id)
-        ) {
+          doc.parse_status !== "done" ||
+          doc.chunk_count > 0 ||
+          indexedRef.current.has(doc.id)
+        ) continue;
+
+        // Determine which docs to index: if this is a split part, index ALL
+        // siblings together (in order from part 1 to N) once they're all done.
+        let toIndex: Document[];
+        if (doc.parent_doc_id) {
+          const siblings = flat.filter((d) => d.parent_doc_id === doc.parent_doc_id);
+          if (!siblings.every((s) => s.parse_status === "done")) continue;
+          // Sort by part number extracted from name
+          toIndex = [...siblings].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+          // Mark all so we don't re-enter
+          for (const s of toIndex) indexedRef.current.add(s.id);
+        } else {
           indexedRef.current.add(doc.id);
-          setIndexing((p) => ({ ...p, [doc.id]: true }));
+          toIndex = [doc];
+        }
+
+        // Index each doc sequentially so part 1 finishes first, part 2 can read
+        // part 1's page_map.cache, etc.
+        for (const d of toIndex) {
+          if (d.chunk_count > 0) continue; // already indexed
+          setIndexing((p) => ({ ...p, [d.id]: true }));
           try {
             const { getDocumentContent, saveDocumentChunks } = await import(
               "../../services/tauriBridge"
             );
-            const content = await getDocumentContent(kbId, doc.id);
+            const content = await getDocumentContent(kbId, d.id);
             const { task_id } = await indexDocument({
               kb_id: kbId,
-              doc_id: doc.id,
-              doc_name: doc.name,
+              doc_id: d.id,
+              doc_name: d.name,
               markdown_content: content.markdown,
             });
             let lastUpdate = 0;
@@ -160,11 +181,11 @@ export function KBSettings() {
               const now = Date.now();
               if (now - lastUpdate < 800) return;
               lastUpdate = now;
-              setIndexing((prev) => ({ ...prev, [doc.id]: { percent: p.percent, stage: p.stage, current: p.current, total: p.total } as any }));
+              setIndexing((prev) => ({ ...prev, [d.id]: { percent: p.percent, stage: p.stage, current: p.current, total: p.total } as any }));
             });
-            await saveDocumentChunks(kbId, doc.id, result.chunk_count!, result.embedding_model!, result.embedding_dim!);
+            await saveDocumentChunks(kbId, d.id, result.chunk_count!, result.embedding_model!, result.embedding_dim!);
             useKBStore.setState((s) => ({
-              documents: updateDocInTreeLocal(s.documents, doc.id, {
+              documents: updateDocInTreeLocal(s.documents, d.id, {
                 chunk_count: result.chunk_count,
                 embedding_model: result.embedding_model,
               } as Partial<Document>),
@@ -174,9 +195,9 @@ export function KBSettings() {
             }));
           } catch (e) {
             console.error("Auto-index failed:", e);
-            indexedRef.current.delete(doc.id);
+            indexedRef.current.delete(d.id);
           }
-          setIndexing((p) => ({ ...p, [doc.id]: false }));
+          setIndexing((p) => ({ ...p, [d.id]: false }));
         }
       }
     }, 3000);

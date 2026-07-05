@@ -268,6 +268,155 @@ export async function executeToolCall(
       };
     }
 
+    // ── Memory tools ─────────────────────────────────────────────────
+    case "create_entities": {
+      const entities = Array.isArray(parsedArgs.entities) ? parsedArgs.entities as any[] : [];
+      const { createEntities } = await import("./memoryStore");
+      const created = await createEntities(entities);
+      return {
+        result: {
+          tool_call_id: toolCall.id,
+          role: "tool",
+          content: JSON.stringify({ created: created.length, entities: created.map((e) => e.name) }),
+        },
+        newSources: [],
+      };
+    }
+    case "create_relations": {
+      const relations = Array.isArray(parsedArgs.relations) ? parsedArgs.relations as any[] : [];
+      const { createRelations } = await import("./memoryStore");
+      const created = await createRelations(relations);
+      return {
+        result: {
+          tool_call_id: toolCall.id,
+          role: "tool",
+          content: JSON.stringify({ created: created.length, relations: created.map((r) => `${r.from} --[${r.relationType}]--> ${r.to}`) }),
+        },
+        newSources: [],
+      };
+    }
+    case "add_observations": {
+      const observations = Array.isArray(parsedArgs.observations) ? parsedArgs.observations as any[] : [];
+      const { addObservations } = await import("./memoryStore");
+      const results = await addObservations(observations);
+      return {
+        result: {
+          tool_call_id: toolCall.id,
+          role: "tool",
+          content: JSON.stringify({ updated: results.length, details: results.map((r) => `${r.entityName}: +${r.added.length} facts`) }),
+        },
+        newSources: [],
+      };
+    }
+    case "delete_entities": {
+      const entityNames = Array.isArray(parsedArgs.entityNames) ? parsedArgs.entityNames as string[] : [];
+      const { deleteEntities } = await import("./memoryStore");
+      const deleted = await deleteEntities(entityNames);
+      return {
+        result: {
+          tool_call_id: toolCall.id,
+          role: "tool",
+          content: JSON.stringify({ deleted }),
+        },
+        newSources: [],
+      };
+    }
+    case "search_nodes": {
+      const query = String(parsedArgs.query || "");
+      const { searchNodes } = await import("./memoryStore");
+      const results = await searchNodes(query);
+      return {
+        result: {
+          tool_call_id: toolCall.id,
+          role: "tool",
+          content: JSON.stringify({
+            found: results.length,
+            results: results.map((e) => ({
+              name: e.name,
+              type: e.entityType,
+              observations: e.observations,
+            })),
+          }),
+        },
+        newSources: [],
+      };
+    }
+    case "read_graph": {
+      const { readGraph } = await import("./memoryStore");
+      const graph = readGraph();
+      return {
+        result: {
+          tool_call_id: toolCall.id,
+          role: "tool",
+          content: JSON.stringify({
+            entities: graph.entities.map((e) => ({
+              name: e.name,
+              type: e.entityType,
+              observations: e.observations,
+            })),
+            relations: graph.relations.map((r) => ({
+              from: r.from,
+              to: r.to,
+              type: r.relationType,
+            })),
+          }),
+        },
+        newSources: [],
+      };
+    }
+
+    // ── web_search ──
+    case "web_search": {
+      const query = String(parsedArgs.query || "");
+      const maxResults = Math.min(Number(parsedArgs.max_results) || 5, 10);
+      const { useSettingsStore } = await import("../stores/useSettingsStore");
+      const appSettings = useSettingsStore.getState().settings;
+      const { searchWeb } = await import("./webSearch");
+      const results = await searchWeb(query, {
+        provider: (appSettings as any).web_search_provider || "tavily",
+        tavilyApiKey: (appSettings as any).tavily_api_key || "",
+        searxngBaseUrl: (appSettings as any).searxng_base_url || "",
+        maxResults: (appSettings as any).web_search_max_results || maxResults,
+      });
+
+      return {
+        result: {
+          tool_call_id: toolCall.id,
+          role: "tool",
+          content: JSON.stringify({
+            query,
+            total: results.length,
+            results: results.map((r, i) => ({
+              index: i + 1,
+              title: r.title,
+              url: r.url,
+              content: r.content.slice(0, limits?.maxSearchResultChars ?? 2000),
+            })),
+          }),
+        },
+        newSources: [],
+      };
+    }
+
+    // ── web_fetch ──
+    case "web_fetch": {
+      const url = String(parsedArgs.url || "");
+      if (!url) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: "url is required" }) }, newSources: [] };
+      const { fetchWebContent } = await import("./webSearch");
+      const content = await fetchWebContent(url);
+      return {
+        result: {
+          tool_call_id: toolCall.id,
+          role: "tool",
+          content: JSON.stringify({
+            url,
+            content: content.slice(0, limits?.maxDocumentChars ?? 30000),
+          }),
+        },
+        newSources: [],
+      };
+    }
+
     // ── list_knowledge_bases ──
     case "list_knowledge_bases": {
       const filtered = allowedKbIds && allowedKbIds.length > 0

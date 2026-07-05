@@ -147,6 +147,162 @@ export const CHAT_TOOLS: ToolDefinition[] = [
       parameters: { type: "object", properties: {} },
     },
   },
+  // ── Memory tools ──────────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "create_entities",
+      description: "Create new memory entities about the user. Each entity has a unique name, a type (person/preference/project/topic/fact), and observations (facts about it). Use this to remember important information the user shares.",
+      parameters: {
+        type: "object",
+        properties: {
+          entities: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "Unique entity name" },
+                entityType: { type: "string", description: "Type: person, preference, project, topic, or fact" },
+                observations: { type: "array", items: { type: "string" }, description: "Facts/observations about this entity" },
+              },
+              required: ["name", "entityType", "observations"],
+            },
+          },
+        },
+        required: ["entities"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_relations",
+      description: "Create relations between existing memory entities (e.g., User A --likes--> Topic B). Both entities must already exist.",
+      parameters: {
+        type: "object",
+        properties: {
+          relations: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                from: { type: "string", description: "Source entity name" },
+                to: { type: "string", description: "Target entity name" },
+                relationType: { type: "string", description: "Relation type: likes, prefers, works_on, related_to" },
+              },
+              required: ["from", "to", "relationType"],
+            },
+          },
+        },
+        required: ["relations"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_observations",
+      description: "Add new observations/facts to existing memory entities. Use this to update what you know about the user as you learn new information.",
+      parameters: {
+        type: "object",
+        properties: {
+          observations: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                entityName: { type: "string", description: "Name of the entity to add facts to" },
+                contents: { type: "array", items: { type: "string" }, description: "New facts to add" },
+              },
+              required: ["entityName", "contents"],
+            },
+          },
+        },
+        required: ["observations"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_entities",
+      description: "Delete memory entities by name. Also removes their relations. Use sparingly — only when the user explicitly asks to forget something.",
+      parameters: {
+        type: "object",
+        properties: {
+          entityNames: {
+            type: "array",
+            items: { type: "string" },
+            description: "Names of entities to delete",
+          },
+        },
+        required: ["entityNames"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_nodes",
+      description: "Search the memory graph for entities matching a query. Searches entity names, types, and observations. Use this to find relevant memories before responding.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_graph",
+      description: "Read the entire memory graph to see all stored entities, observations, and relations. Use this to get an overview of what you already know about the user.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  // ── Web search tools ──────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description:
+        "Search the internet for up-to-date information. Use this when the user's question cannot be answered from local knowledge bases, or when asking about recent events, news, or information beyond your training data. Returns titles, URLs, and snippets.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search query — use keywords relevant to what you need to find",
+          },
+          max_results: {
+            type: "integer",
+            description: "Maximum number of results to return (default 5, max 10)",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "web_fetch",
+      description:
+        "Fetch and read the full content of a web page URL. Use this after web_search to read a specific result's full content in detail.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "The full URL of the web page to fetch and read",
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
 ];
 
 /** Return a human-readable label for a tool call (for interstitial UI). */
@@ -170,6 +326,34 @@ export function toolLabel(toolCall: ToolCall): string {
       return "Listing documents...";
     case "get_chunk_by_index":
       return "Fetching specific chunk...";
+    case "web_search": {
+      try {
+        const args = JSON.parse(toolCall.function.arguments);
+        return `Searching web: "${args.query || ""}"`;
+      } catch {
+        return "Searching the web...";
+      }
+    }
+    case "web_fetch": {
+      try {
+        const args = JSON.parse(toolCall.function.arguments);
+        return `Fetching: ${args.url || ""}`;
+      } catch {
+        return "Fetching web page...";
+      }
+    }
+    case "create_entities":
+      return "Saving memories...";
+    case "create_relations":
+      return "Creating memory relations...";
+    case "add_observations":
+      return "Adding memory observations...";
+    case "delete_entities":
+      return "Deleting memories...";
+    case "search_nodes":
+      return "Searching memory...";
+    case "read_graph":
+      return "Reading memory graph...";
     default:
       return `Running ${toolCall.function.name}...`;
   }

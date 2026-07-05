@@ -99,8 +99,16 @@ export function AppLayout() {
       ? `/chat/${tab.convId}`
       : `/kb/${tab.kbId}/documents/${tab.docId}`;
     if (location.pathname !== targetPath) {
-      navigatingByTabRef.current = true;
-      navigate(targetPath, { replace: true });
+      // Don't fight against external navigations: if the current URL already
+      // matches some tab's route, URL→Tab sync will handle the activation.
+      const matchesSomeTab = tabs.some((t) => {
+        const tp = t.type === "chat" ? `/chat/${t.convId}` : `/kb/${t.kbId}/documents/${t.docId}`;
+        return tp === location.pathname;
+      });
+      if (!matchesSomeTab) {
+        navigatingByTabRef.current = true;
+        navigate(targetPath, { replace: true });
+      }
     }
   }, [activeTabId, tabs]);
 

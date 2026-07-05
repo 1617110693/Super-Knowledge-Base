@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ChatMessage, SearchResult, ToolCall } from "../types";
+import type { ChatMessage, ChatSettings, SearchResult, ToolCall } from "../types";
 import { loadChatConversations, saveChatConversations } from "../services/tauriBridge";
 
 export interface Conversation {
@@ -8,6 +8,7 @@ export interface Conversation {
   messages: ChatMessage[];
   createdAt: string;
   updatedAt: string;
+  chatSettings: ChatSettings;
 }
 
 interface ChatState {
@@ -25,6 +26,7 @@ interface ChatState {
   deleteConversation: (id: string) => void;
   clearAll: () => void;
   renameConversation: (id: string, title: string) => void;
+  updateChatSettings: (convId: string, settings: Partial<ChatSettings>) => void;
 }
 
 function persistConversations(convs: Conversation[]) {
@@ -57,6 +59,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      chatSettings: { selectedKbIds: [], contextWindow: 1 },
     };
     const conversations = [conv, ...get().conversations];
     persistConversations(conversations);
@@ -127,6 +130,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const conversations = get().conversations.map((c) =>
       c.id === id ? { ...c, title } : c
     );
+    persistConversations(conversations);
+    set({ conversations });
+  },
+
+  updateChatSettings: (convId, settings) => {
+    const conversations = get().conversations.map((c) => {
+      if (c.id !== convId) return c;
+      return {
+        ...c,
+        chatSettings: { ...c.chatSettings, ...settings },
+        updatedAt: new Date().toISOString(),
+      };
+    });
     persistConversations(conversations);
     set({ conversations });
   },

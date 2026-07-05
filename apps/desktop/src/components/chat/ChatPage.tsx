@@ -1,240 +1,28 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useChatStore } from "../../stores/useChatStore";
+import { useTabStore } from "../../stores/useTabStore";
 import { useKBStore } from "../../stores/useKBStore";
 import { useSettingsStore } from "../../stores/useSettingsStore";
 import { useI18n } from "../../i18n";
 import { CHAT_TOOLS, toolLabel } from "../../services/toolDefinitions";
 import { executeToolCall } from "../../services/toolExecutor";
-import { Send, Loader2, Trash2, MessageSquare, User, Bot, Layers, FileText, X, ChevronDown, ChevronUp, Search, Copy, Check, RefreshCw, Square, ArrowDown, ArrowDownToLine, Eye } from "lucide-react";
-import { MarkdownRenderer } from "../common/MarkdownRenderer";
+import { Loader2, Trash2, MessageSquare, User, Bot, RefreshCw, ArrowDown, ArrowDownToLine } from "lucide-react";
+import { ChatMessageList } from "./ChatMessageList";
+import { ChatInput } from "./ChatInput";
+import { KBSelector, KBSelectedTags } from "./KBSelector";
+import { SourcesPanel } from "./SourcesPanel";
 import { ChunkDetailDialog } from "../common/ChunkDetailDialog";
 import { getChunkByIndex, getChunkRange } from "../../services/pythonClient";
 import { listDocuments } from "../../services/tauriBridge";
+import { loadMemoryGraph, formatMemoryForPrompt } from "../../services/memoryStore";
 import type { ChatMessage, SearchResult, ToolCall } from "../../types";
-
-function ThinkingBlock({ reasoning, isStreaming }: { reasoning: string; isStreaming: boolean }) {
-  const [open, setOpen] = useState(true);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const wasStreamingRef = useRef(isStreaming);
-
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [reasoning]);
-
-  useEffect(() => {
-    if (wasStreamingRef.current && !isStreaming) setOpen(false);
-    wasStreamingRef.current = isStreaming;
-  }, [isStreaming]);
-
-  return (
-    <div className="mb-2 border rounded-lg overflow-hidden bg-amber-50/30 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800">
-      <button onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 dark:text-amber-400 hover:bg-amber-100/50 dark:hover:bg-amber-900/30 transition-colors">
-        {isStreaming ? <Loader2 className="w-3 h-3 animate-spin shrink-0" /> : <ChevronDown className={`w-3 h-3 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />}
-        💭 {isStreaming ? "Thinking..." : "Thought process"}
-      </button>
-      {open && (
-        <div ref={scrollRef} className="max-h-48 overflow-y-auto px-3 py-2 border-t border-amber-200 dark:border-amber-800">
-          <div className="text-xs text-muted-foreground whitespace-pre-wrap break-words leading-relaxed">{reasoning}</div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 /** Normalize LaTeX math delimiters so remark-math can process them. */
 function normalizeMath(text: string): string {
   text = text.replace(/\\\((.+?)\\\)/gs, (_, m) => `$${m}$`);
   text = text.replace(/\\\[(.+?)\\\]/gs, (_, m) => `$$\n${m}\n$$`);
   text = text.replace(/\$\$\$\$/g, "$$");
-  return text;
-}
-
-// Limits are read from settings now — these are fallback defaults.
-
-/** Format a tool call argument value for display. */
-function fmtArg(v: unknown): string {
-  if (typeof v === "string") return v;
-  return JSON.stringify(v, null, 2);
-}
-
-/** Collapsible tool call cards — shows request args + response, auto-expand current. */
-function ToolCallCards({ toolCalls, toolResults, activeToolId }: {
-  toolCalls: ToolCall[];
-  toolResults: Record<string, string>;
-  activeToolId: string | null;
-}) {
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const manualRef = useRef<Set<string>>(new Set()); // user-toggled cards
-  const prevActiveRef = useRef<string | null>(null);
-  const resultsRef = useRef<Record<string, HTMLDivElement | null>>({});
-
-  if (!toolCalls || toolCalls.length === 0) return null;
-
-  // Auto-expand active tool, collapse previous auto-expanded ones
-  useEffect(() => {
-    const prev = prevActiveRef.current;
-    prevActiveRef.current = activeToolId;
-    if (!activeToolId) return;
-
-    setExpandedIds(prevIds => {
-      const next = new Set(manualRef.current); // keep manually-toggled
-      // Remove the old active tool (if it was auto-expanded, not manual)
-      if (prev && !manualRef.current.has(prev)) {
-        next.delete(prev);
-      }
-      // Expand the new active tool
-      next.add(activeToolId);
-      return next;
-    });
-
-    // Auto-scroll the active result
-    setTimeout(() => {
-      resultsRef.current[activeToolId]?.scrollTo({ top: resultsRef.current[activeToolId]?.scrollHeight, behavior: "smooth" });
-    }, 50);
-  }, [activeToolId]);
-
-  const toggle = (id: string) => {
-    setExpandedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-        manualRef.current.delete(id);
-      } else {
-        next.add(id);
-        manualRef.current.add(id);
-      }
-      return next;
-    });
-  };
-
-  const items = toolCalls.map((tc, i) => {
-    let args: Record<string, unknown> = {};
-    try { args = JSON.parse(tc.function.arguments); } catch { /* keep empty */ }
-    const label = toolLabel(tc);
-    const name = tc.function.name.replace(/_/g, " ");
-    const result = toolResults[tc.id];
-    return { tc, args, label, name, idx: i, result };
-  });
-
-  return (
-    <div className="space-y-1.5 w-full max-w-full">
-      {items.map(({ tc, args, label, name, idx, result }) => {
-        const isExpanded = expandedIds.has(tc.id || String(idx));
-        const isExecuting = activeToolId === tc.id && !result;
-        const argEntries = Object.entries(args).filter(([, v]) => v != null && v !== "" && (!Array.isArray(v) || v.length > 0));
-        const hasBody = argEntries.length > 0 || result;
-        return (
-          <div key={tc.id || idx} className="rounded-lg border bg-card/60 overflow-hidden min-w-0">
-            <button
-              onClick={() => hasBody && toggle(tc.id || String(idx))}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/50 transition-colors"
-            >
-              {isExecuting ? <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" /> : <Search className="w-3 h-3 text-primary shrink-0" />}
-              <span className="font-medium capitalize truncate flex-1 text-left">{name}</span>
-              <span className="text-muted-foreground truncate max-w-[300px] hidden sm:inline">{label}</span>
-              {hasBody && (
-                isExpanded
-                  ? <ChevronUp className="w-3 h-3 text-muted-foreground shrink-0" />
-                  : <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" />
-              )}
-            </button>
-            {isExpanded && (
-              <div className="border-t max-h-56 overflow-y-auto" ref={el => { resultsRef.current[tc.id || String(idx)] = el; }}>
-                {argEntries.length > 0 && (
-                  <table className="w-full text-[11px] border-collapse">
-                    <tbody>
-                      {argEntries.map(([k, v]) => (
-                        <tr key={k} className="border-b last:border-0">
-                          <td className="px-3 py-1 text-muted-foreground font-medium w-[25%] align-top whitespace-nowrap">{k}</td>
-                          <td className="px-3 py-1 font-mono whitespace-pre-wrap break-all">{fmtArg(v)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-                {result && (
-                  <div className="px-3 py-2 border-t border-dashed">
-                    <div className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">Result</div>
-                    <pre className="text-[11px] whitespace-pre-wrap break-all font-mono leading-relaxed max-h-64 overflow-y-auto">{_summarize(result)}</pre>
-                  </div>
-                )}
-                {isExecuting && (
-                  <div className="px-3 py-2 text-xs text-muted-foreground flex items-center gap-2">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Executing...
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/** Memoized message row — skips re-render when unchanged during streaming. */
-function MessageRow({
-  msg, i, isStreaming, isLast, streaming,
-  toolResults, activeToolId, setPreviewChunk,
-  copiedMsgIdx, handleCopy,
-}: {
-  msg: ChatMessage; i: number; isStreaming: boolean; isLast: boolean; streaming: boolean;
-  toolResults: Record<string, string>; activeToolId: string | null;
-  setPreviewChunk: (s: SearchResult | null) => void;
-  copiedMsgIdx: number | null; handleCopy: (c: string, i: number) => void;
-}) {
-  return (
-    <div className={`flex gap-3 group ${msg.role === "user" ? "justify-end" : ""}`}>
-      {msg.role === "assistant" && (
-        <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5"><Bot className="w-4 h-4 text-primary" /></div>
-      )}
-      <div className="relative max-w-[80%]">
-        <div className={`rounded-xl px-4 py-2.5 text-sm ${msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
-          {/* Reasoning / thinking block */}
-          {msg.role === "assistant" && msg.reasoning ? (
-            <ThinkingBlock reasoning={msg.reasoning} isStreaming={isStreaming} />
-          ) : null}
-          {msg.role === "assistant" && msg.content ? (
-            isStreaming ? (
-              <div className="whitespace-pre-wrap break-words">{msg.content}</div>
-            ) : (
-              <MarkdownRenderer
-                className="prose prose-sm max-w-none dark:prose-invert text-sm"
-                sources={msg.sources}
-                imgSources={msg.sources}
-                onSourceClick={(s) => setPreviewChunk(s as SearchResult)}
-              >
-                {msg.content}
-              </MarkdownRenderer>
-            )
-          ) : msg.role === "assistant" && msg.tool_calls && !msg.content ? (
-            <ToolCallCards toolCalls={msg.tool_calls} toolResults={toolResults} activeToolId={activeToolId} />
-          ) : msg.role === "assistant" && streaming && isLast ? (
-            <Loader2 className="w-3 h-3 animate-spin inline" />
-          ) : (
-            <div className="whitespace-pre-wrap break-words">{msg.content}</div>
-          )}
-        </div>
-        {msg.content && (
-          <button
-            onClick={() => handleCopy(msg.content, i)}
-            className={`absolute ${msg.role === "user" ? "-left-8 bottom-1" : "-right-8 bottom-1"} hidden group-hover:flex p-1 rounded hover:bg-muted text-muted-foreground transition-colors`}
-            title="Copy"
-          >
-            {copiedMsgIdx === i ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
-          </button>
-        )}
-      </div>
-      {msg.role === "user" && (
-        <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center shrink-0 mt-0.5"><User className="w-4 h-4 text-primary-foreground" /></div>
-      )}
-    </div>
-  );
-}
-
-function _summarize(text: string): string {
   return text;
 }
 
@@ -247,31 +35,30 @@ export function ChatPage() {
   const {
     conversations, activeConversationId,
     newConversation, addMessage, updateLastAssistant, updateLastAssistantWithToolCalls,
-    deleteConversation, setActiveConversation,
+    deleteConversation, setActiveConversation, updateChatSettings,
   } = useChatStore();
 
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
-  const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
   const [showKbDropdown, setShowKbDropdown] = useState(false);
   const [previewChunk, setPreviewChunk] = useState<SearchResult | null>(null);
   const [toolStatus, setToolStatus] = useState("");
   const [toolResults, setToolResults] = useState<Record<string, string>>({});
   const [activeToolId, setActiveToolId] = useState<string | null>(null);
   const [manualExpand, setManualExpand] = useState<Set<string>>(new Set());
-  const [sourcesExpanded, setSourcesExpanded] = useState(false);
   const [copiedMsgIdx, setCopiedMsgIdx] = useState<number | null>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
-  const [contextWindow, setContextWindow] = useState(1);
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { loadKBs(); }, []);
+  useEffect(() => { loadKBs(); loadMemoryGraph().catch(() => {}); }, []);
 
   const conv = conversations.find((c) => c.id === (convId || activeConversationId));
   const messages = conv?.messages || [];
+  const selectedKbIds: string[] = conv?.chatSettings?.selectedKbIds ?? [];
+  const contextWindow: number = conv?.chatSettings?.contextWindow ?? 1;
 
   // Collect all sources from the most recent assistant message
   const lastAssistantSources = [...messages].reverse().find((m) => m.role === "assistant")?.sources || [];
@@ -300,6 +87,8 @@ export function ChatPage() {
 
   // Track scroll position: pause auto-scroll when user scrolls up, resume when
   // they scroll back to the very bottom (within 4px tolerance).
+  // Also save scroll position to tab store for persistence across tab switches.
+  const lastScrollSave = useRef(0);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -309,13 +98,32 @@ export function ChatPage() {
       if (dist < 4) {
         setAutoScroll(true);
       } else if (dist > 20) {
-        // Only disable if user scrolled manually (not a programmatic scroll)
         setAutoScroll(false);
+      }
+      // Save scroll position to tab store (throttled to 500ms)
+      const now = Date.now();
+      if (now - lastScrollSave.current > 500 && conv) {
+        lastScrollSave.current = now;
+        const tab = useTabStore.getState().tabs.find((t) => t.type === "chat" && t.convId === conv.id);
+        if (tab) {
+          useTabStore.getState().saveTabState(tab.id, { scrollTop: el.scrollTop });
+        }
       }
     };
     el.addEventListener("scroll", onScroll, { passive: true });
+
+    // Restore scroll position on mount
+    const tab = useTabStore.getState().tabs.find((t) => t.type === "chat" && t.convId === conv?.id);
+    if (tab && tab.scrollTop > 0) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          el.scrollTop = tab.scrollTop;
+        });
+      });
+    }
+
     return () => el.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [conv?.id]);
 
   const handleSend = async (text?: string) => {
     const msg = (text || input).trim();
@@ -347,19 +155,26 @@ export function ChatPage() {
       const mathInstr = "Wrap ALL math in $..$ or $$..$$. Single symbols too: $x$, $\\alpha$, $A$. Display equations: $$A^T A$$. No bare LaTeX.";
       const citeInstr = "IMPORTANT: Each search result has an 'index' field (1,2,3...) AND a 'chunk_index' field (document position). Use the INDEX number for citation: write [N] where N is the result index, NOT the chunk_index. Example: if result index=1 has chunk_index=8, cite it as [1], not [8].";
       const imageInstr = "IMPORTANT — IMAGE REFERENCES: When your search results include content_type='image' chunks, ALWAYS include the image in your response using markdown: ![description](images/filename.jpg). Extract the exact filename from the chunk content (look for 'Image: hash.jpg' or 'images/hash.jpg'). The image will render inline as a clickable thumbnail for the user. Never skip images — they are key visual information that supplements your text answer.";
+      const webSearchEnabled = conv?.chatSettings?.webSearchEnabled ?? false;
+      const webInstr = "WEB SEARCH: You also have web_search (to search the internet) and web_fetch (to read specific URLs). Use these for recent information, news, or topics not covered by local knowledge bases. When citing web results, reference the URL or title so the user knows the source.";
       const kbNames = selectedKbIds.length > 0
         ? selectedKbIds.map((id) => knowledgeBases.find((kb) => kb.id === id)?.name || id).join(", ")
         : "";
-      const ragInstr = `You have access to knowledge bases: ${kbNames}.
+      const ragInstr = kbNames ? `You have access to knowledge bases: ${kbNames}.
 
 HOW TO ANSWER QUESTIONS (RAG-first workflow):
 1. Use search_knowledge_base to find the most relevant chunks across all KBs. This is your PRIMARY tool for answering questions — it returns precise, pre-chunked content.
 2. If you need more context around a result, use get_chunk_by_index with neighboring chunk_index values, or search_knowledge_base with context_window > 0.
 3. DO NOT use get_document or get_document_chunks to answer questions — documents can be hundreds of pages and will overflow context. These tools are for browsing/document management, not Q&A.
-4. get_document_summary gives you a document's structure (headings, chunk count) without loading content — use it to understand what a document covers.`;
-      const systemMsg = selectedKbIds.length > 0
-        ? `${ragInstr}\n\n${citeInstr}\n\n${imageInstr}\n\n${mathInstr}`
-        : `You are a helpful assistant. ${mathInstr}`;
+4. get_document_summary gives you a document's structure (headings, chunk count) without loading content — use it to understand what a document covers.` : "";
+      let systemMsg = kbNames
+        ? `${ragInstr}\n\n${citeInstr}\n\n${imageInstr}`
+        : "You are a helpful assistant.";
+      if (webSearchEnabled) systemMsg += `\n\n${webInstr}`;
+      // Inject memory context
+      const memoryPrompt = formatMemoryForPrompt(2000);
+      if (memoryPrompt) systemMsg += `\n\n${memoryPrompt}`;
+      systemMsg += `\n\n${mathInstr}`;
 
       // Build conversation history including tool messages
       const rawHistory = ([...currentConv.messages, userMsg] as ChatMessage[])
@@ -386,10 +201,14 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
       const kbList = knowledgeBases; // snapshot at send time
 
       for (let round = 0; round < (settings.max_tool_rounds || 10); round++) {
+        // Filter tools: only include web search tools when enabled
+        const activeTools = webSearchEnabled
+          ? CHAT_TOOLS
+          : CHAT_TOOLS.filter((t) => t.function.name !== "web_search" && t.function.name !== "web_fetch");
         const resp = await fetch(`${apiBase}/chat/completions`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-          body: JSON.stringify({ model, messages, tools: CHAT_TOOLS, tool_choice: "auto", stream: true }),
+          body: JSON.stringify({ model, messages, tools: activeTools, tool_choice: "auto", stream: true }),
         });
 
         if (!resp.ok) { const err = await resp.text(); throw new Error(err); }
@@ -583,10 +402,12 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
   };
 
   const toggleKb = (id: string) => {
-    setSelectedKbIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+    if (!conv) return;
+    const next = selectedKbIds.includes(id)
+      ? selectedKbIds.filter((x) => x !== id)
+      : [...selectedKbIds, id];
+    updateChatSettings(conv.id, { selectedKbIds: next });
   };
-
-  const kbNameById = (id: string) => knowledgeBases.find((kb) => kb.id === id)?.name || id;
 
   if (!conv) {
     return <div className="flex items-center justify-center h-full"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
@@ -665,46 +486,33 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
         {/* Context window toggle */}
         <label className="flex items-center gap-1 text-[11px] text-muted-foreground" title={t("chat.contextWindowHelp") || "Include neighboring chunks in search results for more context"}>
           <span className="hidden sm:inline">{t("chat.contextWindow") || "Ctx"}</span>
-          <select value={contextWindow} onChange={(e) => setContextWindow(Number(e.target.value))} className="px-1.5 py-0.5 border rounded bg-background text-[11px]">
+          <select value={contextWindow} onChange={(e) => { if (conv) updateChatSettings(conv.id, { contextWindow: Number(e.target.value) }); }} className="px-1.5 py-0.5 border rounded bg-background text-[11px]">
             <option value="0">±0</option>
             <option value="1">±1</option>
             <option value="2">±2</option>
           </select>
         </label>
 
+        {/* Web search toggle — always available (DuckDuckGo is free, no config needed) */}
+        <button
+          onClick={() => { if (conv) updateChatSettings(conv.id, { webSearchEnabled: !conv.chatSettings.webSearchEnabled }); }}
+          className={`p-1 rounded-md text-[11px] flex items-center gap-1 ${conv?.chatSettings?.webSearchEnabled ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"}`}
+          title={t("chat.webSearch")}
+        >
+          🌐 <span className="hidden sm:inline">{conv?.chatSettings?.webSearchEnabled ? t("chat.webSearchOn") : t("chat.webSearchOff")}</span>
+        </button>
+
         {/* Multi-select KB dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => setShowKbDropdown(!showKbDropdown)}
-            className="text-xs border rounded-md px-2 py-1 bg-background min-w-[100px] max-w-[180px] truncate text-left flex items-center gap-1"
-          >
-            {selectedKbIds.length === 0
-              ? t("chat.noKb")
-              : selectedKbIds.length === 1
-                ? kbNameById(selectedKbIds[0])
-                : t("chat.kbCount", { count: selectedKbIds.length })}
-            <ChevronDown className="w-3 h-3 ml-auto shrink-0" />
-          </button>
-          {showKbDropdown && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setShowKbDropdown(false)} />
-              <div className="absolute top-full right-0 mt-1 z-50 bg-card border rounded-lg shadow-lg p-1.5 min-w-[200px] max-h-[280px] overflow-y-auto">
-                <label className="flex items-center gap-2 px-2 py-1.5 hover:bg-muted rounded cursor-pointer text-xs">
-                  <input type="checkbox" checked={selectedKbIds.length === 0} onChange={() => setSelectedKbIds([])} />
-                  <span className="text-muted-foreground">{t("chat.noKb")}</span>
-                </label>
-                <hr className="my-1 border-border/50" />
-                {knowledgeBases.map((kb) => (
-                  <label key={kb.id} className="flex items-center gap-2 px-2 py-1.5 hover:bg-muted rounded cursor-pointer text-xs">
-                    <input type="checkbox" checked={selectedKbIds.includes(kb.id)} onChange={() => toggleKb(kb.id)} />
-                    <span className="truncate">{kb.name}</span>
-                    <span className="text-[10px] text-muted-foreground/60 ml-auto shrink-0">{kb.document_count}</span>
-                  </label>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+        <KBSelector
+          knowledgeBases={knowledgeBases}
+          selectedKbIds={selectedKbIds}
+          onToggleKb={toggleKb}
+          onClearAll={() => { if (conv) updateChatSettings(conv.id, { selectedKbIds: [] }); }}
+          showDropdown={showKbDropdown}
+          setShowDropdown={setShowKbDropdown}
+          noKbLabel={t("chat.noKb")}
+          kbCountLabel={(count) => t("chat.kbCount", { count })}
+        />
 
         <button onClick={handleNew} className="px-3 py-1 border rounded-md text-xs hover:bg-muted">{t("chat.new")}</button>
         <button onClick={() => setAutoScroll(!autoScroll)}
@@ -719,105 +527,70 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
       </div>
 
       {/* Selected KB tags */}
-      {selectedKbIds.length > 1 && (
-        <div className="flex flex-wrap gap-1 px-6 py-1.5 border-b shrink-0 bg-muted/20">
-          {selectedKbIds.map((id) => (
-            <span key={id} className="inline-flex items-center gap-1 text-[10px] bg-primary/10 text-primary rounded-full pl-2 pr-1 py-0.5">
-              {kbNameById(id)}
-              <X className="w-3 h-3 cursor-pointer hover:text-red-500" onClick={() => setSelectedKbIds((prev) => prev.filter((x) => x !== id))} />
-            </span>
-          ))}
+      <KBSelectedTags
+        selectedKbIds={selectedKbIds}
+        knowledgeBases={knowledgeBases}
+        onRemove={(id) => { if (conv) updateChatSettings(conv.id, { selectedKbIds: selectedKbIds.filter((x) => x !== id) }); }}
+      />
+
+      {/* Messages — scrollRef is the scrollable viewport used by the virtualizer */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4" style={{ overflowAnchor: "auto" }}>
+        {messages.length === 0 && !toolStatus ? (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center py-16">
+              <MessageSquare className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
+              <p className="text-sm text-muted-foreground">{t("chat.emptyHint")}</p>
+              {selectedKbIds.length === 0 && <p className="text-xs text-muted-foreground mt-1">{t("chat.selectKbHint")}</p>}
+            </div>
+          </div>
+        ) : (
+          <ChatMessageList
+            messages={messages}
+            streaming={streaming}
+            toolResults={toolResults}
+            activeToolId={activeToolId}
+            setPreviewChunk={setPreviewChunk}
+            copiedMsgIdx={copiedMsgIdx}
+            handleCopy={handleCopy}
+            autoScroll={autoScroll}
+            onToggleAutoScroll={() => setAutoScroll(!autoScroll)}
+            scrollRef={scrollRef as React.RefObject<HTMLDivElement | null>}
+          />
+        )}
+      </div>
+
+      {/* Tool execution interstitial */}
+      {toolStatus && streaming && (
+        <div className="flex gap-3 px-6">
+          <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5"><Bot className="w-4 h-4 text-primary" /></div>
+          <div className="max-w-[80%] min-w-[200px] rounded-xl border bg-muted/50 overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-2 text-xs">
+              <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" />
+              <span className="text-muted-foreground truncate">{toolStatus}</span>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-4" style={{ overflowAnchor: "auto" }}>
-        {messages.length === 0 && !toolStatus ? (
-          <div className="text-center py-16">
-            <MessageSquare className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
-            <p className="text-sm text-muted-foreground">{t("chat.emptyHint")}</p>
-            {selectedKbIds.length === 0 && <p className="text-xs text-muted-foreground mt-1">{t("chat.selectKbHint")}</p>}
-          </div>
-        ) : (
-          messages.filter((m) => m.role !== "tool").map((msg, i) => (
-            <MessageRow key={i}
-              msg={msg} i={i}
-              isStreaming={streaming && i === messages.length - 1}
-              isLast={i === messages.length - 1}
-              streaming={streaming}
-              toolResults={toolResults} activeToolId={activeToolId}
-              setPreviewChunk={setPreviewChunk}
-              copiedMsgIdx={copiedMsgIdx} handleCopy={handleCopy}
-            />
-          ))
-        )}
-
-        {/* Tool execution interstitial */}
-        {toolStatus && streaming && (
-          <div className="flex gap-3">
-            <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5"><Bot className="w-4 h-4 text-primary" /></div>
-            <div className="max-w-[80%] min-w-[200px] rounded-xl border bg-muted/50 overflow-hidden">
-              <div className="flex items-center gap-2 px-3 py-2 text-xs">
-                <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" />
-                <span className="text-muted-foreground truncate">{toolStatus}</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Sources — collapsible, shows max 6 items */}
-        {lastAssistantSources.length > 0 && (
-          <div className="border-t pt-3 mt-2">
-            <button
-              onClick={() => setSourcesExpanded(!sourcesExpanded)}
-              className="w-full text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1 hover:text-foreground transition-colors"
-            >
-              <Layers className="w-3 h-3" />
-              {t("chat.sources")} ({lastAssistantSources.length})
-              {sourcesExpanded
-                ? <ChevronUp className="w-3 h-3 ml-auto" />
-                : <ChevronDown className="w-3 h-3 ml-auto" />
-              }
-            </button>
-            {sourcesExpanded && (
-              <div className={`${lastAssistantSources.length > 6 ? "max-h-[240px] overflow-y-auto" : ""} space-y-1`}>
-                {lastAssistantSources.map((s, i) => (
-                  <div key={i}
-                    className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1 flex items-start gap-1.5 cursor-pointer hover:bg-muted transition-colors"
-                    onClick={() => setPreviewChunk(s)}>
-                    <FileText className="w-3 h-3 shrink-0 mt-0.5" />
-                    <span className="font-mono text-[10px] text-primary/70">[{i + 1}]</span>
-                    <span className="truncate">{s.doc_name}</span>
-                    <span className="text-[10px] text-muted-foreground/60 ml-auto shrink-0">{(s.score * 100).toFixed(0)}%</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        {error && <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
+      {/* Sources + Error — rendered below the message list */}
+      <div className="px-6 shrink-0">
+        <SourcesPanel
+          sources={lastAssistantSources}
+          onSourceClick={setPreviewChunk}
+          sourcesLabel={t("chat.sources")}
+        />
+        {error && <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 mt-2">{error}</div>}
       </div>
 
       {/* Input */}
-      <div className="px-6 py-4 border-t shrink-0 bg-card/30">
-        <div className="flex gap-2">
-          <textarea value={input} onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            placeholder={t("chat.placeholder")} rows={2} disabled={streaming}
-            className="flex-1 px-4 py-2.5 border rounded-xl text-sm bg-background resize-none focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50" />
-          {streaming ? (
-            <button onClick={handleStop}
-              className="px-4 bg-red-500 text-white rounded-xl hover:bg-red-600 shrink-0 self-stretch flex items-center justify-center">
-              <Square className="w-4 h-4" />
-            </button>
-          ) : (
-            <button onClick={() => handleSend()} disabled={!input.trim()}
-              className="px-4 bg-primary text-primary-foreground rounded-xl hover:opacity-90 disabled:opacity-50 shrink-0 self-stretch flex items-center justify-center">
-              <Send className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      </div>
+      <ChatInput
+        input={input}
+        setInput={setInput}
+        streaming={streaming}
+        onSend={handleSend}
+        onStop={handleStop}
+        placeholder={t("chat.placeholder")}
+      />
 
       {/* Scroll to bottom FAB */}
       {showScrollBtn && (

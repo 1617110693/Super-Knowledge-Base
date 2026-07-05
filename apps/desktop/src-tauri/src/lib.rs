@@ -188,6 +188,8 @@ pub fn run() {
             claude_config::configure_claude_mcp,
             chat::load_chat_conversations,
             chat::save_chat_conversations,
+            chat::load_memory_graph,
+            chat::save_memory_graph,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

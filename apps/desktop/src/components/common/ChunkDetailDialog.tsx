@@ -1,6 +1,7 @@
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { useI18n } from "../../i18n";
 import { useNavigate } from "react-router-dom";
+import { useTabStore } from "../../stores/useTabStore";
 import { FileText, X, ChevronLeft, ChevronRight, Eye } from "lucide-react";
 
 export interface ChunkInfo {
@@ -67,6 +68,14 @@ export function ChunkDetailDialog({ chunk, onClose, onPrev, onNext, hasPrev, has
               <button
                 onClick={() => {
                   onClose();
+                  // Save chunk index to tab store so DocumentPreview can scroll to it
+                  const tab = useTabStore.getState().tabs.find(
+                    (t) => t.type === "doc" && t.kbId === chunk.kb_id && t.docId === chunk.doc_id
+                  );
+                  if (tab) {
+                    useTabStore.getState().saveTabState(tab.id, { lastChunkIdx: ci! });
+                  }
+                  // Navigate to the document (query param ensures fresh-tab case works)
                   navigate(`/kb/${chunk.kb_id}/documents/${chunk.doc_id}?ci=${ci}`);
                 }}
                 className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border hover:bg-muted transition-colors"

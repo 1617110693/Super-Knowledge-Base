@@ -64,6 +64,12 @@ export interface ToolCall {
   function: { name: string; arguments: string };
 }
 
+export interface ChatSettings {
+  selectedKbIds: string[];
+  contextWindow: number;
+  webSearchEnabled?: boolean;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant" | "tool";
   content: string;
@@ -166,6 +172,11 @@ export interface AppSettings {
   max_search_result_chars: number;
   max_document_chars: number;
   max_chunk_chars: number;
+  // Web search
+  web_search_provider: "duckduckgo" | "tavily" | "searxng";
+  tavily_api_key: string;
+  searxng_base_url: string;
+  web_search_max_results: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -202,4 +213,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   max_search_result_chars: 2000,
   max_document_chars: 30000,
   max_chunk_chars: 800,
+  web_search_provider: "duckduckgo",
+  tavily_api_key: "",
+  searxng_base_url: "",
+  web_search_max_results: 5,
 };

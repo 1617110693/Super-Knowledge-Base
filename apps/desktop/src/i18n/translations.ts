@@ -196,6 +196,9 @@ export const translations = {
   "chat.selectKbHint": { en: "Select knowledge bases above to enable RAG tools.", "zh-CN": "在上方选择知识库以启用 RAG 工具。" },
   "chat.kbCount": { en: "{count} KBs", "zh-CN": "{count} 个知识库" },
   "chat.noApiKey": { en: "Please configure the LLM API Key in Settings first.", "zh-CN": "请先在设置中配置 LLM API Key。" },
+  "chat.webSearch": { en: "Web Search", "zh-CN": "联网搜索" },
+  "chat.webSearchOn": { en: "On", "zh-CN": "开" },
+  "chat.webSearchOff": { en: "Off", "zh-CN": "关" },
 
   // Settings
   "settings.title": { en: "Settings", "zh-CN": "设置" },
@@ -232,6 +235,16 @@ export const translations = {
   "settings.maxSearchResultChars": { en: "Max Search Result Chars", "zh-CN": "搜索结果截断字符数" },
   "settings.maxDocumentChars": { en: "Max Document Chars", "zh-CN": "文档内容截断字符数" },
   "settings.maxChunkChars": { en: "Max Chunk Chars", "zh-CN": "分块内容截断字符数" },
+  // Web Search
+  "settings.webSearch": { en: "Web Search", "zh-CN": "联网搜索" },
+  "settings.webSearchDesc": { en: "Configure web search for LLM to access real-time information from the internet.", "zh-CN": "配置联网搜索，让 LLM 能够从互联网获取实时信息。" },
+  "settings.webSearchProvider": { en: "Provider", "zh-CN": "搜索服务商" },
+  "settings.tavilyApiKey": { en: "Tavily API Key", "zh-CN": "Tavily API 密钥" },
+  "settings.searxngBaseUrl": { en: "SearXNG Base URL", "zh-CN": "SearXNG 地址" },
+  "settings.webSearchMaxResults": { en: "Max Results", "zh-CN": "最大结果数" },
+  "settings.free": { en: "free", "zh-CN": "免费" },
+  "settings.webSearchDdgDesc": { en: "DuckDuckGo is free and requires no configuration.", "zh-CN": "DuckDuckGo 完全免费，无需任何配置。" },
+
   "settings.navGeneral": { en: "General", "zh-CN": "通用" },
   "settings.navModels": { en: "Models", "zh-CN": "模型" },
   "settings.navChat": { en: "Chat & Tools", "zh-CN": "对话与工具" },

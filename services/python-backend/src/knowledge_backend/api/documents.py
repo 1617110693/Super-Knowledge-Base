@@ -222,6 +222,29 @@ def _extract_pdf_pages(src: Path, dst: Path, start_page: int, count: int):
 _PAGE_MARKER_RE = re.compile(r"\[PAGE:(\d+)(?:\|(-?\d+))?\]")
 
 
+def _find_math_ranges(text: str) -> list[tuple[int, int]]:
+    """Find ranges of LaTeX math blocks ($$...$$ and $...$) in *text*.
+    Returns sorted list of (start, end) character positions.
+    These ranges should be avoided when injecting page markers.
+    """
+    ranges: list[tuple[int, int]] = []
+    # Display math: $$...$$
+    for m in re.finditer(r"\$\$[\s\S]*?\$\$", text):
+        ranges.append((m.start(), m.end()))
+    # Inline math: $...$ (but not $$)
+    for m in re.finditer(r"(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)", text):
+        ranges.append((m.start(), m.end()))
+    ranges.sort()
+    # Merge overlapping/adjacent ranges
+    merged: list[tuple[int, int]] = []
+    for r in ranges:
+        if merged and r[0] <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], r[1]))
+        else:
+            merged.append(r)
+    return merged
+
+
 def _inject_page_markers(_markdown_text: str, doc_dir: Path) -> str:
     """Build tagged text from content_list.json blocks.
 
@@ -273,6 +296,17 @@ def _inject_page_markers(_markdown_text: str, doc_dir: Path) -> str:
     # Also embed each block's character position in the ORIGINAL markdown
     # so start_char can be recovered after chunking without fragile
     # substring search.
+    #
+    # IMPORTANT: skip positions inside LaTeX math blocks ($$...$$ and $...$)
+    # to avoid inserting [PAGE:N] markers that break math rendering.
+    _math_ranges = _find_math_ranges(_markdown_text)
+
+    def _inside_math(pos: int) -> bool:
+        for start, end in _math_ranges:
+            if start <= pos < end:
+                return True
+        return False
+
     parts: list[str] = []
     inserted = 0
     blank_pages = 0
@@ -286,6 +320,16 @@ def _inject_page_markers(_markdown_text: str, doc_dir: Path) -> str:
                     pos = _markdown_text.find(text[:max(15, len(text)//3)], _md_search)
                 if pos < 0:
                     pos = _markdown_text.find(text, 0)
+                # If the found position is inside a math block, search again
+                # from after that math block to find the correct occurrence.
+                if pos >= 0 and _inside_math(pos):
+                    # Find the math range containing pos and search after it
+                    for start, end in _math_ranges:
+                        if start <= pos < end:
+                            alt = _markdown_text.find(text, end)
+                            if alt >= 0:
+                                pos = alt
+                            break
                 if pos >= 0:
                     _md_search = pos + len(text)
                 parts.append(f"[PAGE:{pi + 1}|{pos}]{text}")

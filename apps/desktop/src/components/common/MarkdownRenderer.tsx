@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -46,7 +46,6 @@ function embedBadges(content: string, sourceCount: number): string {
   const segments = content.split(/(```[\s\S]*?```|`[^`\n]+`|\$\$[\s\S]*?\$\$|\$[^$\n]+\$)/g);
   return segments.map((seg, i) => {
     if (i % 2 === 1) return seg;
-    // Match [3-5] (range) or [3] (single)
     return seg.replace(/\[(\d+)(?:[-–](\d+))?\]/g, (m, n1, n2) => {
       const start = parseInt(n1) - 1;
       const end = n2 ? parseInt(n2) - 1 : start;
@@ -98,7 +97,6 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
 
 /* Shared cache: filename → data URL (survives component re-renders) */
 const _imgCache = new Map<string, string>();
-const _imgResolveCache = new Map<string, { kb_id: string; doc_id: string }>();
 
 function InlineImg({ src, alt, imgKbId, imgDocId, imgSources }: {
   src?: string; alt?: string; imgKbId?: string; imgDocId?: string;
@@ -111,7 +109,6 @@ function InlineImg({ src, alt, imgKbId, imgDocId, imgSources }: {
 
   const name = (src || "").replace(/\\/g, "/").split("/").pop() || src || "";
   const isDocImage = src?.startsWith("images/") || (!src?.match(/^https?:\/\//) && name !== src);
-  // Document preview has explicit kb/doc; chat relies on imgSources
   const isDocPreview = !!(imgKbId && imgDocId);
 
   useEffect(() => {
@@ -120,13 +117,8 @@ function InlineImg({ src, alt, imgKbId, imgDocId, imgSources }: {
     if (dataUrl && dataUrl !== src) return;
     if (!isDocImage) { setDataUrl(src); return; }
 
-    // Build candidate (kb, doc) pairs to try
     const candidates: { kb_id: string; doc_id: string }[] = [];
-
-    // 1. Explicit props (document preview)
     if (imgKbId && imgDocId) candidates.push({ kb_id: imgKbId, doc_id: imgDocId });
-
-    // 2. From imgSources: put content-matching sources first, then the rest
     if (imgSources) {
       const matching: typeof candidates = [];
       const others: typeof candidates = [];
@@ -156,7 +148,6 @@ function InlineImg({ src, alt, imgKbId, imgDocId, imgSources }: {
           const blob = new Blob([new Uint8Array(bytes)]);
           const url = URL.createObjectURL(blob);
           _imgCache.set(src, url);
-          _imgResolveCache.set(name, { kb_id, doc_id });
           setDataUrl(url);
           loaded = true;
           break;
@@ -176,7 +167,6 @@ function InlineImg({ src, alt, imgKbId, imgDocId, imgSources }: {
 
   const imgUrl = dataUrl || src;
 
-  // Document preview: full-size image, no thumbnail
   if (isDocPreview) {
     return (
       <span className="inline-block my-2">
@@ -185,17 +175,14 @@ function InlineImg({ src, alt, imgKbId, imgDocId, imgSources }: {
     );
   }
 
-  // Chat: thumbnail with click-to-expand overlay
   return (
     <span className="inline-block my-2">
-      {/* Thumbnail — always rendered, never removed */}
       <span className="block relative group cursor-pointer border rounded-lg overflow-hidden bg-muted/30 max-w-[260px]"
         onClick={() => setExpanded(true)} style={{ contain: "paint layout" }}>
         <img src={imgUrl} alt={alt || ""}
           className="block w-full max-h-40 object-contain" loading="lazy" />
         {alt ? <span className="block px-2 py-1 text-[10px] text-muted-foreground truncate leading-relaxed">{alt}</span> : null}
       </span>
-      {/* Fullscreen overlay — rendered on top, thumbnail stays */}
       {expanded && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 cursor-default"
           onClick={() => setExpanded(false)}>
@@ -211,9 +198,15 @@ function InlineImg({ src, alt, imgKbId, imgDocId, imgSources }: {
   );
 }
 
-export function MarkdownRenderer({ children, className, sources, onSourceClick, imgKbId, imgDocId, imgSources }: Props) {
+// ── Stable rehype plugins array (avoid new reference every render) ──
+const PLUGINS: any[] = [rehypeRaw, rehypeMathInHtml, [rehypeKatex, { strict: false, throwOnError: false }]];
+const REMARK_PLUGINS = [remarkGfm, remarkMath];
+
+// ── Component (memoized) ─────────────────────────────────────────────
+
+export const MarkdownRenderer = memo(function MarkdownRenderer({ children, className, sources, onSourceClick, imgKbId, imgDocId, imgSources }: Props) {
   const count = sources?.length || 0;
-  const content = count ? embedBadges(children, count) : children;
+  const content = useMemo(() => count ? embedBadges(children, count) : children, [children, count]);
 
   const onClick = useCallback((e: React.MouseEvent) => {
     if (!onSourceClick || !sources) return;
@@ -221,18 +214,37 @@ export function MarkdownRenderer({ children, className, sources, onSourceClick, 
     if (!el) return;
     const s = el.getAttribute("data-source-start");
     if (s != null) {
-      // Range badge [3-5]
       const start = parseInt(s);
       const end = parseInt(el.getAttribute("data-source-end") || s);
       if (start >= 0 && end < sources.length) {
         onSourceClick(mergeSources(sources.slice(start, end + 1)));
       }
     } else {
-      // Single badge [3]
       const idx = parseInt(el.getAttribute("data-source") || "-1");
       if (idx >= 0 && idx < sources.length) onSourceClick(sources[idx]);
     }
   }, [onSourceClick, sources]);
+
+  // Stable components object — cached across renders
+  const components = useMemo(() => ({
+    img({ src, alt }: any) {
+      return <InlineImg src={src} alt={alt} imgKbId={imgKbId} imgDocId={imgDocId} imgSources={imgSources} />;
+    },
+    a({ href, children: aChildren, ...props }: any) {
+      if (href && /^https?:\/\//.test(href)) {
+        return <a href={href} onClick={e => { e.preventDefault(); open(href!); }}
+          target="_blank" rel="noopener noreferrer" className="text-primary underline cursor-pointer" {...props}>{aChildren}</a>;
+      }
+      return <a href={href} {...props}>{aChildren}</a>;
+    },
+    sup({ children: sChildren, ...props }: any) {
+      return <sup {...props}>{sChildren}</sup>;
+    },
+    pre({ children: pChildren, ...props }: any) {
+      const code = (pChildren as any)?.props;
+      return <CodeBlock className={code?.className}>{code?.children || pChildren}</CodeBlock>;
+    },
+  }), [imgKbId, imgDocId, imgSources?.length]);
 
   return (
     <div className={className} onClick={onClick}>
@@ -247,30 +259,21 @@ export function MarkdownRenderer({ children, className, sources, onSourceClick, 
         .dark .skb-badge:hover{background:rgba(129,140,248,0.28)}
       `}</style>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeRaw, rehypeMathInHtml, [rehypeKatex, { strict: false, throwOnError: false }]]}
-        components={{
-          img({ src, alt }: any) {
-            return <InlineImg src={src} alt={alt} imgKbId={imgKbId} imgDocId={imgDocId} imgSources={imgSources} />;
-          },
-          a({ href, children: aChildren, ...props }) {
-            if (href && /^https?:\/\//.test(href)) {
-              return <a href={href} onClick={e => { e.preventDefault(); open(href!); }}
-                target="_blank" rel="noopener noreferrer" className="text-primary underline cursor-pointer" {...props}>{aChildren}</a>;
-            }
-            return <a href={href} {...props}>{aChildren}</a>;
-          },
-          sup({ children: sChildren, ...props }) {
-            return <sup {...props}>{sChildren}</sup>;
-          },
-          pre({ children: pChildren, ...props }) {
-            const code = (pChildren as any)?.props;
-            return <CodeBlock className={code?.className}>{code?.children || pChildren}</CodeBlock>;
-          },
-        }}
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={PLUGINS}
+        components={components}
       >
         {content}
       </ReactMarkdown>
     </div>
   );
-}
+}, (prev, next) => {
+  // Custom comparator: skip re-render if children string and key props are identical
+  return prev.children === next.children &&
+    prev.className === next.className &&
+    prev.sources === next.sources &&
+    prev.onSourceClick === next.onSourceClick &&
+    prev.imgKbId === next.imgKbId &&
+    prev.imgDocId === next.imgDocId &&
+    prev.imgSources === next.imgSources;
+});

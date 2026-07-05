@@ -13,7 +13,9 @@ pub struct KnowledgeBase {
     pub updated_at: DateTime<Utc>,
     pub document_count: u32,
     pub chunk_count: u32,
+    #[serde(default)]
     pub embedding_model: String,
+    #[serde(default)]
     pub embedding_dim: u32,
     #[serde(default)]
     pub pinned: bool,

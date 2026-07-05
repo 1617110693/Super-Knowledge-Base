@@ -20,6 +20,8 @@ export interface TabEntry {
   convId: string;  // for chat tabs
   docName: string; // display name
   isDirty: boolean;
+  editContent: string | null;  // in-progress edit content
+  isEditing: boolean;          // was in edit mode when tab switched
   cachedAt: number;
   lastAccessedAt: number;
   // Runtime state (saved/restored on tab switch)
@@ -65,6 +67,8 @@ function loadPersistedTabs(): TabEntry[] {
           pageChunksEntries: null,
           pageAnchorPositions: null,
           headings: null,
+          editContent: null,
+          isEditing: false,
           isDirty: false,
           cachedAt: 0,
           lastAccessedAt: 0,
@@ -156,6 +160,8 @@ export const useTabStore = create<TabState>((set, get) => ({
       docId,
       convId: "",
       docName,
+      editContent: null,
+      isEditing: false,
       isDirty: false,
       cachedAt: 0,
       lastAccessedAt: Date.now(),
@@ -222,6 +228,8 @@ export const useTabStore = create<TabState>((set, get) => ({
       docId: "",
       convId,
       docName: convTitle,
+      editContent: null,
+      isEditing: false,
       isDirty: false,
       cachedAt: 0,
       lastAccessedAt: Date.now(),

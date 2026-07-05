@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef, useCallback, startTransition } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback, startTransition, memo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { MarkdownRenderer } from "../common/MarkdownRenderer";
 import { getDocumentContent, saveDocumentContent, saveDocumentChunks } from "../../services/tauriBridge";
@@ -65,7 +65,7 @@ export function DocumentPreview() {
     try { return localStorage.getItem(`skb-toc-${docId}`) === "true"; } catch { return false; }
   });
   const wrappedSetTocOpen = (v: boolean) => {
-    setTocOpen(v);
+    startTransition(() => setTocOpen(v));
     try { localStorage.setItem(`skb-toc-${docId}`, String(v)); } catch {}
   };
 
@@ -175,6 +175,12 @@ export function DocumentPreview() {
       setPageChunksMap(entriesToMap<number, number[]>(tab.pageChunksEntries));
       setHasPageData((tab.pageAnchorPositions?.length ?? 0) > 0);
       setLoading(false);
+
+      // Restore edit state if the tab was being edited
+      if (tab.isEditing && tab.editContent != null) {
+        setEditing(true);
+        setEditContent(tab.editContent);
+      }
 
       // Restore scroll position after a paint
       if (tab.scrollTop > 0) {
@@ -289,8 +295,37 @@ export function DocumentPreview() {
     })();
   }, [kbId, docId]);
 
-  const handleStartEdit = () => { setEditContent(content); setEditError(""); setEditing(true); };
-  const handleCancelEdit = () => { setEditing(false); setEditContent(""); };
+  const handleStartEdit = () => {
+    const initialContent = content;
+    setEditContent(initialContent);
+    setEditError("");
+    setEditing(true);
+    // Save edit state to tab store for cross-tab persistence
+    const tab = useTabStore.getState().tabs.find((t) => t.kbId === kbId && t.docId === docId);
+    if (tab) useTabStore.getState().saveTabState(tab.id, { isEditing: true, editContent: initialContent });
+    // Position cursor at approximate reading position
+    setTimeout(() => {
+      const ta = document.querySelector(".doc-edit-textarea") as HTMLTextAreaElement | null;
+      if (!ta) return;
+      let charPos = 0;
+      if (chunkIdx != null) {
+        const sc = startCharMap.get(chunkIdx);
+        if (sc != null && sc > 0) charPos = sc;
+      }
+      ta.focus();
+      ta.setSelectionRange(charPos, charPos);
+      const lineHeight = 20;
+      const linesBefore = content.slice(0, charPos).split("\n").length;
+      ta.scrollTop = Math.max(0, (linesBefore - 5) * lineHeight);
+    }, 50);
+  };
+  const handleCancelEdit = () => {
+    setEditing(false);
+    setEditContent("");
+    // Clear edit state and dirty flag
+    const tab = useTabStore.getState().tabs.find((t) => t.kbId === kbId && t.docId === docId);
+    if (tab) useTabStore.getState().saveTabState(tab.id, { isEditing: false, editContent: null, isDirty: false });
+  };
 
   const jumpToChunk = useCallback((ci: number, heading?: { text: string; pos: number }) => {
     setSearchResults(null);
@@ -405,6 +440,13 @@ export function DocumentPreview() {
           content: editContent,
           cachedAt: Date.now(),
           isDirty: false,
+          isEditing: false,
+          editContent: null,
+          // Clear chunk caches since content changed
+          startCharEntries: null,
+          pageChunksEntries: null,
+          pageAnchorPositions: null,
+          headings: null,
         });
       }
     } catch (e) { setEditError(String(e)); }
@@ -438,16 +480,6 @@ export function DocumentPreview() {
       if (timer) clearTimeout(timer);
     };
   }, [kbId, docId]);
-
-  // Mark document as dirty when editing starts
-  useEffect(() => {
-    if (editing && kbId && docId) {
-      const tab = useTabStore.getState().tabs.find((t) => t.kbId === kbId && t.docId === docId);
-      if (tab) {
-        useTabStore.getState().saveTabState(tab.id, { isDirty: true });
-      }
-    }
-  }, [editing, kbId, docId]);
 
   if (loading) {
     return (
@@ -494,7 +526,7 @@ export function DocumentPreview() {
             </>
           ) : (
             <>
-              <button onClick={() => setSearchOpen(!searchOpen)}
+              <button onClick={() => startTransition(() => setSearchOpen(!searchOpen))}
                 className={`p-1 rounded transition-colors ${searchOpen ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}
                 title={t("search.searchBtn")}>
                 <Search className="w-3.5 h-3.5" />
@@ -522,7 +554,7 @@ export function DocumentPreview() {
                 <List className="w-3.5 h-3.5" />
               </button>
               {imageNames.length > 0 && (
-                <button onClick={() => setImagesOpen(!imagesOpen)}
+                <button onClick={() => startTransition(() => setImagesOpen(!imagesOpen))}
                   className={`p-1 rounded transition-colors ${imagesOpen ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}
                   title="Images">
                   <ImageIcon className="w-3.5 h-3.5" />
@@ -610,8 +642,17 @@ export function DocumentPreview() {
       )}
 
       {editing ? (
-        <textarea value={editContent} onChange={e => setEditContent(e.target.value)}
-          className="w-full min-h-[400px] p-4 border rounded-lg bg-background font-mono text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary"
+        <textarea value={editContent} onChange={e => {
+            setEditContent(e.target.value);
+            const tab = useTabStore.getState().tabs.find((t) => t.kbId === kbId && t.docId === docId);
+            if (tab) {
+              useTabStore.getState().saveTabState(tab.id, {
+                editContent: e.target.value,
+                isDirty: e.target.value !== content,
+              });
+            }
+          }}
+          className="doc-edit-textarea w-full min-h-[400px] p-4 border rounded-lg bg-background font-mono text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary"
           disabled={saving} />
       ) : (
         <DocView content={content} anchoredContent={anchoredContent} startCharMap={startCharMap} chunkIdx={chunkIdx} scrollTarget={scrollTarget} scrollRef={docScrollRef} kbId={kbId} docId={docId} pageAnchorPositions={pageAnchorPositions} jumpTrigger={jumpTrigger} onActiveHeadingChange={setActiveHeadingText} />
@@ -1242,7 +1283,7 @@ function DocToc({
   );
 }
 
-function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarget, scrollRef, kbId, docId, pageAnchorPositions, jumpTrigger, onActiveHeadingChange }: {
+const DocView = memo(function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarget, scrollRef, kbId, docId, pageAnchorPositions, jumpTrigger, onActiveHeadingChange }: {
   content: string; anchoredContent: string; startCharMap: Map<number, number>; chunkIdx: number | null;
   scrollTarget?: { text: string; pos: number } | null;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
@@ -1618,6 +1659,16 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
       targetEl.style.backgroundColor = "#fef3c7";
       targetEl.style.transition = "background-color 0.5s";
       highlightRef.current = targetEl;
+      // Wait a few frames for KaTeX layout to stabilize, then re-adjust
+      let settleFrames = 0;
+      const settle = () => {
+        if (++settleFrames <= 5) {
+          targetEl.scrollIntoView({ block: "start", behavior: "instant" });
+          requestAnimationFrame(settle);
+          return;
+        }
+      };
+      requestAnimationFrame(settle);
       setTimeout(() => {
         if (highlightRef.current === targetEl) {
           targetEl.style.backgroundColor = "";
@@ -1674,4 +1725,4 @@ function DocView({ content, anchoredContent, startCharMap, chunkIdx, scrollTarge
       </div>
     </div>
   );
-}
+});

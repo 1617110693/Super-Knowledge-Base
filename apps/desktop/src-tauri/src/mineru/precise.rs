@@ -46,6 +46,7 @@ pub async fn parse_with_precise(
         .unwrap_or("document.pdf");
 
     let client = Client::builder()
+        .use_rustls_tls()
         .timeout(Duration::from_secs(120))
         .build()
         .map_err(|e| AppError::MinerU(format!("Failed to create HTTP client: {}", e)))?;
@@ -185,13 +186,34 @@ async fn poll_batch_results(
             pg.percent = 10 + ((attempt as f32 / MAX_POLL_ATTEMPTS as f32) * 80.0) as u8;
         }
 
-        let resp = client
+        let resp = match client
             .get(&url)
             .header("Authorization", format!("Bearer {}", token))
             .send()
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!(
+                    "[SKB] MinerU poll request failed (attempt {}): {}, skipping",
+                    attempt + 1,
+                    e
+                );
+                continue;
+            }
+        };
 
-        let result: serde_json::Value = resp.json().await?;
+        let result: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "[SKB] MinerU poll json failed (attempt {}): {}, skipping",
+                    attempt + 1,
+                    e
+                );
+                continue;
+            }
+        };
 
         if result["code"].as_i64().unwrap_or(-1) != 0 {
             continue; // Keep polling
@@ -245,10 +267,9 @@ async fn download_and_extract_markdown(
     zip_url: &str,
     _file_name: &str,
 ) -> Result<PreciseResult, AppError> {
-    // Download the ZIP file
-    let resp = client.get(zip_url).send().await?;
-    let zip_bytes = resp.bytes().await?;
-    let raw_zip = zip_bytes.to_vec(); // clone for caching
+    // Download the ZIP file (with retry — CDN connections can be flaky)
+    let zip_bytes = download_zip_with_retry(client, zip_url).await?;
+    let raw_zip = zip_bytes.clone(); // clone for caching
 
     // Extract the ZIP in memory — find both full.md and the JSON metadata
     let cursor = std::io::Cursor::new(zip_bytes);
@@ -336,6 +357,126 @@ async fn download_and_extract_markdown(
             "full.md not found in result archive".to_string(),
         )),
     }
+}
+
+/// Download the MinerU result ZIP with retry + friendly error classification.
+/// - 404 → link expired, tell user to re-parse (no retry, retrying won't help)
+/// - connect/timeout/5xx → retry with exponential backoff
+async fn download_zip_with_retry(client: &Client, url: &str) -> Result<Vec<u8>, AppError> {
+    const MAX_RETRIES: u32 = 3;
+    let mut last_err: String = "unknown".into();
+
+    for attempt in 0..MAX_RETRIES {
+        if attempt > 0 {
+            let backoff = 1u64 << (attempt - 1); // 1s, 2s
+            sleep(Duration::from_secs(backoff)).await;
+            eprintln!("[SKB] MinerU zip download retry {}/{}", attempt + 1, MAX_RETRIES);
+        }
+
+        match client.get(url).timeout(Duration::from_secs(300)).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if !status.is_success() {
+                    if status.as_u16() == 404 {
+                        return Err(AppError::MinerU(
+                            "结果链接已过期或不存在(404),请重新解析该文档".to_string(),
+                        ));
+                    }
+                    last_err = format!("HTTP {status}");
+                    eprintln!("[SKB] MinerU zip download {status} (attempt {})", attempt + 1);
+                    continue;
+                }
+                match resp.bytes().await {
+                    Ok(b) => {
+                        eprintln!(
+                            "[SKB] MinerU zip downloaded {} bytes (attempt {})",
+                            b.len(),
+                            attempt + 1
+                        );
+                        return Ok(b.to_vec());
+                    }
+                    Err(e) => {
+                        last_err = format!("读取响应体失败: {e}");
+                        eprintln!(
+                            "[SKB] MinerU zip bytes error: {e} (attempt {})",
+                            attempt + 1
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                let kind = if e.is_timeout() {
+                    "超时"
+                } else if e.is_connect() {
+                    "连接失败"
+                } else {
+                    "请求失败"
+                };
+                let mut chain = format!("{e}");
+                let mut src = std::error::Error::source(&e);
+                while let Some(s) = src {
+                    chain.push_str(&format!(" → {s}"));
+                    src = s.source();
+                }
+                last_err = format!("{kind}: {chain}");
+                eprintln!(
+                    "[SKB] MinerU zip download {kind}: {chain} (attempt {})",
+                    attempt + 1
+                );
+            }
+        }
+    }
+
+    // reqwest 全部失败 — fallback 到系统 curl(绕过 rustls/native-tls 的 TLS 握手兼容性问题,
+    // 某些本地网络/中间盒会阻断 reqwest 的 ClientHello 但放行 curl/schannel 的)
+    eprintln!("[SKB] reqwest 下载失败({last_err}),尝试 curl fallback");
+    match download_zip_via_curl(url).await {
+        Ok(bytes) => Ok(bytes),
+        Err(curl_err) => Err(AppError::MinerU(format!(
+            "结果下载失败: reqwest({last_err}); curl fallback({curl_err})。可能是本地网络对 CDN 的 TLS 兼容性问题,请检查网络或稍后重试。"
+        ))),
+    }
+}
+
+/// Fallback: 用系统 curl 下载 zip,绕过 reqwest TLS 后端的握手兼容性问题。
+/// curl 在 Windows 用 Schannel,对某些 CDN/中间盒的 TLS 兼容性更好。
+/// Windows 10 1803+ 自带 curl;macOS/Linux 通常也有。
+async fn download_zip_via_curl(url: &str) -> Result<Vec<u8>, AppError> {
+    let output = tokio::process::Command::new("curl")
+        .arg("--ssl-no-revoke")
+        .arg("-sSL")
+        .arg("--fail")
+        .arg("--max-time")
+        .arg("300")
+        .arg(url)
+        .output()
+        .await
+        .map_err(|e| AppError::MinerU(format!("curl 启动失败(系统可能未安装 curl): {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = output.status.code().unwrap_or(-1);
+        // curl 退出码 22 = HTTP 错误(如 404 链接过期)
+        if code == 22 {
+            return Err(AppError::MinerU(
+                "结果链接已过期或不存在(404),请重新解析该文档".to_string(),
+            ));
+        }
+        return Err(AppError::MinerU(format!(
+            "curl 退出码 {code}: {}",
+            stderr.trim()
+        )));
+    }
+
+    if output.stdout.is_empty() {
+        return Err(AppError::MinerU("curl 返回空数据".to_string()));
+    }
+
+    eprintln!(
+        "[SKB] curl fallback 下载 {} bytes",
+        output.stdout.len()
+    );
+    Ok(output.stdout)
 }
 
 fn read_zip_bytes(file: &mut zip::read::ZipFile) -> Result<Vec<u8>, std::io::Error> {

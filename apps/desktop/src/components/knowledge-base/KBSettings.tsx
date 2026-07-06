@@ -3,7 +3,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useKBStore } from "../../stores/useKBStore";
 import { useTabStore } from "../../stores/useTabStore";
 import { useI18n } from "../../i18n";
-import { indexDocument, waitForIndex } from "../../services/pythonClient";
 import {
   FileText, Layers, Upload, Trash2, Loader2,
   CheckCircle, XCircle, Clock, Eye,
@@ -59,7 +58,7 @@ export function KBSettings() {
   const { knowledgeBases, documents, loadKBs, loadDocuments, uploadDocument, deleteDocument, refreshDocument, setActiveKB, updateKB, copyKB, reindexDocument, reindexAll, indexingProgress } = useKBStore();
   const [dragOver, setDragOver] = useState(false);
   const uploadingRef = useRef(false);
-  const [indexing, setIndexing] = useState<Record<string, boolean>>({});
+  const [indexing] = useState<Record<string, boolean>>({});
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<{ docId: string; docName: string } | null>(null);
   const [deleteKBTarget, setDeleteKBTarget] = useState(false);
@@ -116,8 +115,7 @@ export function KBSettings() {
   const kb = knowledgeBases.find((k) => k.id === kbId);
   useEffect(() => { if (kb) setActiveKB(kb); }, [kb]);
 
-  // Poll MinerU parsing + trigger index when parsing finishes
-  const indexedRef = useRef<Set<string>>(new Set());
+  // Poll MinerU parsing progress (indexing is handled by uploadDocument/reindexDocument in the store)
   const [parseProgress, setParseProgress] = useState<Record<string, { percent: number; stage: string }>>({});
   useEffect(() => {
     if (!kbId) return;
@@ -135,71 +133,10 @@ export function KBSettings() {
           });
         }
       }
-      // When parsing finishes, trigger index once.
-      // For split-part documents: wait until ALL sibling parts are done parsing,
-      // then index all parts together so page offsets are calculated correctly.
-      for (const doc of flat) {
-        if (
-          doc.parse_status !== "done" ||
-          doc.chunk_count > 0 ||
-          indexedRef.current.has(doc.id)
-        ) continue;
-
-        // Determine which docs to index: if this is a split part, index ALL
-        // siblings together (in order from part 1 to N) once they're all done.
-        let toIndex: Document[];
-        if (doc.parent_doc_id) {
-          const siblings = flat.filter((d) => d.parent_doc_id === doc.parent_doc_id);
-          if (!siblings.every((s) => s.parse_status === "done")) continue;
-          // Sort by part number extracted from name
-          toIndex = [...siblings].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-          // Mark all so we don't re-enter
-          for (const s of toIndex) indexedRef.current.add(s.id);
-        } else {
-          indexedRef.current.add(doc.id);
-          toIndex = [doc];
-        }
-
-        // Index each doc sequentially so part 1 finishes first, part 2 can read
-        // part 1's page_map.cache, etc.
-        for (const d of toIndex) {
-          if (d.chunk_count > 0) continue; // already indexed
-          setIndexing((p) => ({ ...p, [d.id]: true }));
-          try {
-            const { getDocumentContent, saveDocumentChunks } = await import(
-              "../../services/tauriBridge"
-            );
-            const content = await getDocumentContent(kbId, d.id);
-            const { task_id } = await indexDocument({
-              kb_id: kbId,
-              doc_id: d.id,
-              doc_name: d.name,
-              markdown_content: content.markdown,
-            });
-            let lastUpdate = 0;
-            const result = await waitForIndex(task_id, (p) => {
-              const now = Date.now();
-              if (now - lastUpdate < 800) return;
-              lastUpdate = now;
-              setIndexing((prev) => ({ ...prev, [d.id]: { percent: p.percent, stage: p.stage, current: p.current, total: p.total } as any }));
-            });
-            await saveDocumentChunks(kbId, d.id, result.chunk_count!, result.embedding_model!, result.embedding_dim!);
-            useKBStore.setState((s) => ({
-              documents: updateDocInTreeLocal(s.documents, d.id, {
-                chunk_count: result.chunk_count,
-                embedding_model: result.embedding_model,
-              } as Partial<Document>),
-              knowledgeBases: s.knowledgeBases.map((k) =>
-                k.id === kbId ? { ...k, embedding_model: result.embedding_model || "", embedding_dim: result.embedding_dim || 0 } : k
-              ),
-            }));
-          } catch (e) {
-            console.error("Auto-index failed:", e);
-            indexedRef.current.delete(d.id);
-          }
-          setIndexing((p) => ({ ...p, [d.id]: false }));
-        }
-      }
+      // Index is handled by uploadDocument (store action) and reindexDocument,
+      // which write progress to the global indexingProgress store so it survives
+      // tab/page switches. Do NOT trigger index here — re-entering on remount
+      // caused duplicate indexes and progress resetting to 0%.
     }, 3000);
     return () => clearInterval(interval);
   }, [kbId, refreshDocument]);

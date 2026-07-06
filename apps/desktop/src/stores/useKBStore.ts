@@ -153,65 +153,87 @@ export const useKBStore = create<KBState>((set, get) => ({
     // will regroup after the parse+index loop.
     set((s) => ({ documents: groupParts([...allDocs, ...s.documents]) }));
 
-    // 3. Parse each document (skip main doc if it has parts — parts are parsed instead)
+    // 3. Parse all documents in PARALLEL (skip main doc if it has parts).
+    //    Split parts are parsed concurrently — MinerU handles independent batch tasks.
     const docsToParse = allDocs.filter(doc => {
-      // If this doc has child parts, skip parsing the main doc (it's the original large file)
       if (allDocs.some(p => p.parent_doc_id === doc.id)) return false;
       return true;
     });
-    for (const d of docsToParse) {
-      try {
-        await tauriBridge.startParsing(kbId, d.id);
-        const parsed = await tauriBridge.pollParseStatus(kbId, d.id);
-        set((s) => ({
-          documents: updateDocInTree(s.documents, d.id, parsed),
-        }));
+    // Sort by name so split parts index in order (part1, part2, ...) below.
+    const parseOrder = [...docsToParse].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true })
+    );
 
-        // 4. Index (if parsing succeeded)
-        if (parsed.parse_status === "done") {
-          set((s) => ({ indexingProgress: { ...s.indexingProgress, [d.id]: { percent: 0, stage: "starting", current: 0, total: 0 } } }));
-          try {
-            const { getDocumentContent, saveDocumentChunks } = await import(
-              "../services/tauriBridge"
-            );
-            const { indexDocument, waitForIndex } = await import("../services/pythonClient");
-            const content = await getDocumentContent(kbId, d.id);
-            const { task_id } = await indexDocument({
-              kb_id: kbId,
-              doc_id: d.id,
-              doc_name: d.name,
-              markdown_content: content.markdown,
-            });
-            let lastUpdate = 0;
-            const result = await waitForIndex(task_id, (p) => {
-              const now = Date.now();
-              if (now - lastUpdate < 800) return; // throttle to ~1.2 Hz
-              lastUpdate = now;
-              set((s) => ({ indexingProgress: { ...s.indexingProgress, [d.id]: { percent: p.percent, stage: p.stage, current: p.current, total: p.total } } }));
-            });
-            await saveDocumentChunks(kbId, d.id, result.chunk_count!, result.embedding_model!, result.embedding_dim!);
-            set((s) => {
-              const { [d.id]: _, ...rest } = s.indexingProgress;
-              return {
-                documents: updateDocInTree(s.documents, d.id, {
-                  chunk_count: result.chunk_count,
-                  embedding_model: result.embedding_model,
-                } as Partial<Document>),
-                knowledgeBases: s.knowledgeBases.map((k) =>
-                  k.id === kbId ? { ...k, embedding_model: result.embedding_model || "", embedding_dim: result.embedding_dim || 0 } : k
-                ),
-                indexingProgress: rest,
-              };
-            });
-          } catch (e) {
-            console.error("Auto-index failed:", e);
-            set((s) => { const { [d.id]: _, ...rest } = s.indexingProgress; return { indexingProgress: rest }; });
+    // 3+4. Parse (parallel) + index (sequential) in the BACKGROUND.
+    //    Fire-and-forget so uploadDocument returns immediately; the flow runs in
+    //    the store closure and survives tab/page navigation. Progress goes to the
+    //    global indexingProgress store (not local component state) so it persists.
+    (async () => {
+      // Parallel parse: start + poll until each doc reaches a terminal state.
+      // (pollParseStatus is one-shot — returns current state, doesn't wait.)
+      await Promise.all(parseOrder.map(async (d) => {
+        try {
+          await tauriBridge.startParsing(kbId, d.id);
+          let parsed = await tauriBridge.pollParseStatus(kbId, d.id);
+          const deadline = Date.now() + 15 * 60 * 1000; // 15 min timeout
+          while ((parsed.parse_status === "parsing" || parsed.parse_status === "pending") && Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 2000));
+            parsed = await tauriBridge.pollParseStatus(kbId, d.id);
           }
+          set((s) => ({ documents: updateDocInTree(s.documents, d.id, parsed) }));
+        } catch { /* parse failed, keep original doc */ }
+      }));
+
+      // Sequential index — part N depends on part N-1's page_map.cache for
+      // page_offset calculation, so index must stay ordered (parse is parallel).
+      for (const d of parseOrder) {
+        const flat = get().documents.flatMap(doc =>
+          doc.parts?.length ? [doc, ...doc.parts] : [doc]
+        );
+        const latest = flat.find(doc => doc.id === d.id);
+        if (!latest || latest.parse_status !== "done" || latest.chunk_count > 0) continue;
+        // Skip if another flow (manual reindex, etc.) is already indexing this doc
+        if (get().indexingProgress[d.id]) continue;
+
+        set((s) => ({ indexingProgress: { ...s.indexingProgress, [d.id]: { percent: 0, stage: "starting", current: 0, total: 0 } } }));
+        try {
+          const { getDocumentContent, saveDocumentChunks } = await import("../services/tauriBridge");
+          const { indexDocument, waitForIndex } = await import("../services/pythonClient");
+          const content = await getDocumentContent(kbId, d.id);
+          const { task_id } = await indexDocument({
+            kb_id: kbId,
+            doc_id: d.id,
+            doc_name: d.name,
+            markdown_content: content.markdown,
+          });
+          let lastUpdate = 0;
+          const result = await waitForIndex(task_id, (p) => {
+            const now = Date.now();
+            if (now - lastUpdate < 800) return; // throttle to ~1.2 Hz
+            lastUpdate = now;
+            set((s) => ({ indexingProgress: { ...s.indexingProgress, [d.id]: { percent: p.percent, stage: p.stage, current: p.current, total: p.total } } }));
+          });
+          await saveDocumentChunks(kbId, d.id, result.chunk_count!, result.embedding_model!, result.embedding_dim!);
+          set((s) => {
+            const { [d.id]: _, ...rest } = s.indexingProgress;
+            return {
+              documents: updateDocInTree(s.documents, d.id, {
+                chunk_count: result.chunk_count,
+                embedding_model: result.embedding_model,
+              } as Partial<Document>),
+              knowledgeBases: s.knowledgeBases.map((k) =>
+                k.id === kbId ? { ...k, embedding_model: result.embedding_model || "", embedding_dim: result.embedding_dim || 0 } : k
+              ),
+              indexingProgress: rest,
+            };
+          });
+        } catch (e) {
+          console.error("Auto-index failed:", e);
+          set((s) => { const { [d.id]: _, ...rest } = s.indexingProgress; return { indexingProgress: rest }; });
         }
-      } catch { /* parse failed, keep original doc */ }
-    }
-    // Re-group after all parsing completes
-    set((s) => ({ documents: groupParts(s.documents) }));
+      }
+      set((s) => ({ documents: groupParts(s.documents) }));
+    })().catch(e => console.error("parse+index background flow failed:", e));
   },
 
   deleteDocument: async (kbId: string, docId: string) => {

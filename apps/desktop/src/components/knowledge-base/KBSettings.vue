@@ -290,10 +290,13 @@ async function handleDeleteConfirm() {
 // ── Delete KB ──
 async function handleDeleteKB() {
   if (kbId.value) {
-    await store.deleteKB(kbId.value);
-    router.push("/");
+    const id = kbId.value;
+    deleteKBTarget.value = false;
+    // Navigate first to avoid Transition out-in blank state
+    await router.push("/");
+    // Then delete in background
+    await store.deleteKB(id);
   }
-  deleteKBTarget.value = false;
 }
 
 // ── Reindex ──

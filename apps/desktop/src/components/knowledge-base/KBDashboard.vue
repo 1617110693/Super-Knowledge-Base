@@ -91,6 +91,7 @@ function formatDate(dateStr: string): string {
             v-model="store.viewMode"
             size="small"
             style="width: 110px"
+            :teleported="false"
             @change="(v: any) => store.setViewMode(v as ViewMode)"
           >
             <el-option
@@ -107,6 +108,7 @@ function formatDate(dateStr: string): string {
           <el-select
             v-model="store.sortMode"
             size="small"
+            :teleported="false"
             :placeholder="t('kb.sortPlaceholder')"
             @change="(v: any) => store.setSortMode(v as SortMode)"
           >
@@ -199,6 +201,7 @@ function formatDate(dateStr: string): string {
       :title="t('kb.createDialogTitle')"
       width="420px"
       :close-on-click-modal="false"
+      :teleported="false"
     >
       <el-form @submit.prevent="handleCreateKB">
         <el-form-item :label="t('kb.name')" required :error="createError">
@@ -270,6 +273,58 @@ function formatDate(dateStr: string): string {
 .view-select :deep(.el-select) { min-width: 100px; }
 .sort-select { display: flex; align-items: center; gap: 4px; color: var(--text-secondary); }
 .sort-select :deep(.el-select) { min-width: 110px; }
+
+/* Style select dropdowns to match app theme */
+:deep(.el-select-dropdown) {
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  background: var(--surface);
+}
+:deep(.el-select-dropdown__item) {
+  border-radius: 6px;
+  margin: 2px 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+:deep(.el-select-dropdown__item.is-selected) {
+  font-weight: 600;
+  color: var(--accent-color);
+  background: var(--accent-muted);
+}
+:deep(.el-popper) {
+  border: 1px solid var(--border-color) !important;
+  background: var(--surface) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08) !important;
+}
+:deep(.el-popper .el-scrollbar) {
+  background: var(--surface);
+}
+:deep(.el-select-dropdown__list) {
+  background: var(--surface);
+  padding: 4px;
+}
+:deep(.el-select__wrapper) {
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--border-color) inset;
+  min-height: 28px;
+  padding: 0 8px;
+}
+:deep(.el-select__wrapper.is-focused) {
+  box-shadow: 0 0 0 1px var(--accent-color) inset;
+}
+:deep(.el-button--small) {
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  font-size: 13px;
+  background: var(--surface);
+  color: var(--text-primary);
+}
+:deep(.el-button--small:hover) {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
 
 .kb-grid { display: grid; gap: 16px; }
 .kb-grid.view-card { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }

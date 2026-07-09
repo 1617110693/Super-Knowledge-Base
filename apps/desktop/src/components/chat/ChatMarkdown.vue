@@ -94,6 +94,17 @@ function embedBadges(content: string): string {
   });
 }
 
+// Helper: render $...$ math inside HTML element content
+function renderInlineMathInHtml(inner: string): string {
+  if (inner.includes('class="katex"') || inner.includes('class="katex-display"')) return inner;
+  return inner.replace(/\$([^$]+?)\$/g, (_m: string, math: string) => {
+    let content = math.replace(/([_^])\s+(?=\{)/g, '$1');
+    content = content.replace(/\\left\s*\{/g, '\\left\\{').replace(/\\right\s*\}/g, '\\right\\}');
+    try { return katex.renderToString(content, { throwOnError: false, strict: false }); }
+    catch { return `$${math}$`; }
+  });
+}
+
 const renderedHtml = computed(() => {
   const prepared = embedBadges(props.content);
   // Pre-process \tag in inline math: convert $...\tag{N}...$ to display math
@@ -102,7 +113,19 @@ const renderedHtml = computed(() => {
   });
   // Normalize $$$...$$$ to $$...$$
   processedContent = processedContent.replace(/\$\$\$(.+?)\$\$\$/gs, '$$\n$1\n$$');
-  return md.render(processedContent);
+  // Catch: $ on its own line with \tag{N} before closing $ (MinerU multi-line format)
+  processedContent = processedContent.replace(/^\$\n([\s\S]*?)\\tag\{([^}]+)\}\n\s*\$$/gm, (_, body, tag) => {
+    return `$$\n${body.trim()}\n\\tag{${tag}}\n$$`;
+  });
+  let html = md.render(processedContent);
+  // Post-process: render $...$ inside HTML tables (td/th)
+  html = html.replace(/(<td[^>]*>)([\s\S]*?)(<\/td>)/gi, (_m: string, open: string, inner: string, close: string) => {
+    return open + renderInlineMathInHtml(inner) + close;
+  });
+  html = html.replace(/(<th[^>]*>)([\s\S]*?)(<\/th>)/gi, (_m: string, open: string, inner: string, close: string) => {
+    return open + renderInlineMathInHtml(inner) + close;
+  });
+  return html;
 });
 
 function onBadgeClick(e: MouseEvent) {
@@ -119,7 +142,7 @@ function onBadgeClick(e: MouseEvent) {
 <style scoped>
 .chat-markdown { line-height: 1.7; word-wrap: break-word; }
 .chat-markdown :deep(pre) { background: var(--surface-raised); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px 16px; overflow-x: auto; }
-.chat-markdown :deep(code) { font-family: "SF Mono", "Fira Code", "Consolas", monospace; font-size: 0.875em; }
+.chat-markdown :deep(code) { font-family: "SF Mono", "Fira Code", "Consolas", monospace; font-size: 0.875em; color: var(--text-primary); }
 .chat-markdown :deep(pre code) { background: none; padding: 0; }
 .chat-markdown :deep(img) { max-width: 100%; border-radius: 6px; }
 .chat-markdown :deep(a) { color: var(--accent-color); text-decoration: none; }

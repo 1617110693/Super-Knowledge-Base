@@ -68,6 +68,7 @@ const renameDraft = ref("");
 const chatPopover = ref(false);
 const chatBtnRef = ref<HTMLButtonElement | null>(null);
 const popoverRef = ref<HTMLDivElement | null>(null);
+const chatPopoverStyle = ref<Record<string, string>>({});
 
 // ── Python error dialog ──
 const showError = ref(false);
@@ -88,6 +89,14 @@ watch(chatPopover, (val) => {
   if (val) {
     document.addEventListener("mousedown", onDocumentClick);
     document.addEventListener("keydown", onKeyDown);
+    // Position popover relative to the chat button
+    if (chatBtnRef.value) {
+      const rect = chatBtnRef.value.getBoundingClientRect();
+      chatPopoverStyle.value = {
+        top: `${rect.top}px`,
+        left: `${rect.right + 8}px`,
+      };
+    }
   } else {
     document.removeEventListener("mousedown", onDocumentClick);
     document.removeEventListener("keydown", onKeyDown);
@@ -155,27 +164,26 @@ function handleDeleteConversation(convId: string) {
 </script>
 
 <template>
-  <!-- ═══════ Collapsed mode ═══════ -->
-  <template v-if="collapsed">
-    <aside class="sidebar sidebar-collapsed">
-      <!-- Top: expand button -->
-      <button
-        class="sb-icon-btn"
-        :title="t('nav.expandSidebar')"
-        @click="toggleCollapsed"
-      >
-        <PanelLeft :size="16" />
-      </button>
+  <aside class="sidebar" :class="collapsed ? 'sidebar-collapsed' : 'sidebar-expanded'">
+    <!-- Collapsed mode icons -->
+    <div v-show="collapsed" class="sidebar-collapsed-content">
+      <div class="sc-top">
+        <button
+          class="sb-icon-btn"
+          :title="t('nav.expandSidebar')"
+          @click="toggleCollapsed"
+        >
+          <PanelLeft :size="16" />
+        </button>
+        <span
+          class="sb-status-dot"
+          :class="settingsStore.pythonRunning ? 'bg-green' : 'bg-red'"
+          :title="settingsStore.pythonRunning ? t('app.backendReady') : t('app.backendOffline')"
+        />
+      </div>
 
-      <!-- Backend status -->
-      <span
-        class="sb-status-dot"
-        :class="settingsStore.pythonRunning ? 'bg-green' : 'bg-red'"
-        :title="settingsStore.pythonRunning ? t('app.backendReady') : t('app.backendOffline')"
-      />
-
-      <div class="sb-icon-list">
-        <!-- Overview -->
+      <!-- Scrollable: overview + KBs + chat -->
+      <div class="sc-icons">
         <button
           class="sb-icon-btn"
           :class="{ active: isActive('/') && !kbId }"
@@ -185,7 +193,6 @@ function handleDeleteConversation(convId: string) {
           <LayoutDashboard :size="16" />
         </button>
 
-        <!-- KBs -->
         <button
           v-for="kb in sortedKBs.slice(0, 8)"
           :key="kb.id"
@@ -198,7 +205,6 @@ function handleDeleteConversation(convId: string) {
           <Layers v-else :size="16" />
         </button>
 
-        <!-- Chat popover -->
         <div class="sb-popover-host">
           <button
             ref="chatBtnRef"
@@ -213,58 +219,22 @@ function handleDeleteConversation(convId: string) {
             v-if="chatPopover"
             ref="popoverRef"
             class="sb-popover"
+            :style="chatPopoverStyle"
           >
             <div class="sb-popover-header">
               <span class="sb-popover-title">{{ t("nav.chatSection") }}</span>
-              <button
-                class="sb-icon-btn-xs"
-                :title="t('nav.newChat')"
-                @click="startNewChat"
-              >
+              <button class="sb-icon-btn-xs" :title="t('nav.newChat')" @click="startNewChat">
                 <Plus :size="14" />
               </button>
             </div>
             <div class="sb-popover-list">
-              <p v-if="recentConversations.length === 0" class="sb-empty-text">
-                {{ t("nav.noConversations") }}
-              </p>
-              <div
-                v-for="conv in recentConversations"
-                :key="conv.id"
-                class="sb-popover-item group"
-              >
-                <router-link
-                  :to="`/chat/${conv.id}`"
-                  class="sb-popover-link"
-                  :class="{
-                    active:
-                      chatStore.activeConversationId === conv.id &&
-                      route.path.startsWith('/chat'),
-                  }"
-                  @click="
-                    chatStore.setActiveConversation(conv.id);
-                    tabStore.openTab({
-                      id: conv.id,
-                      title: conv.title || conv.messages[0]?.content?.slice(0, 30) || t('chat.new'),
-                      url: `/chat/${conv.id}`,
-                    });
-                    chatPopover = false;
-                  "
-                >
-                  <MessageSquare :size="12" class="shrink-0" />
-                  <span class="truncate">
-                    {{
-                      conv.title ||
-                      conv.messages[0]?.content?.slice(0, 40) ||
-                      t("chat.new")
-                    }}
-                  </span>
-                </router-link>
-                <button
-                  class="sb-popover-delete"
-                  @click.prevent.stop="handleDeleteConversation(conv.id)"
-                  :title="t('kb.deleteTooltip')"
-                >
+              <p v-if="recentConversations.length === 0" class="sb-empty-text">{{ t("nav.noConversations") }}</p>
+              <div v-for="conv in recentConversations" :key="conv.id" class="sb-popover-item group">
+                <button class="sb-popover-link" @click="tabStore.openTab({ id: conv.id, title: conv.title || conv.messages[0]?.content?.slice(0, 30) || t('chat.new'), url: `/chat/${conv.id}` }); router.push(`/chat/${conv.id}`); chatPopover = false">
+                  <MessageSquare :size="12" />
+                  <span class="truncate">{{ conv.title || conv.messages[0]?.content?.slice(0, 30) || t("chat.new") }}</span>
+                </button>
+                <button class="sb-popover-delete" :title="t('kb.deleteTooltip')" @click.stop="handleDeleteConversation(conv.id)">
                   <Trash2 :size="10" />
                 </button>
               </div>
@@ -273,45 +243,15 @@ function handleDeleteConversation(convId: string) {
         </div>
       </div>
 
-      <!-- Bottom: Settings -->
-      <div class="sb-bottom">
-        <button
-          class="sb-icon-btn"
-          :class="{ active: isActive('/settings') }"
-          :title="t('nav.settings')"
-          @click="router.push('/settings')"
-        >
+      <div class="sc-bottom">
+        <button class="sb-icon-btn" :class="{ active: isActive('/settings') }" :title="t('nav.settings')" @click="router.push('/settings')">
           <Settings :size="16" />
         </button>
       </div>
+    </div>
 
-      <!-- Error dialog -->
-      <Teleport to="body">
-        <div
-          v-if="showError && settingsStore.pythonError"
-          class="modal-overlay"
-          @click="showError = false"
-        >
-          <div class="modal-card" @click.stop>
-            <div class="modal-header">
-              <h3 class="modal-title">
-                <AlertCircle :size="20" class="text-red-500" />
-                {{ t("app.backendError") }}
-              </h3>
-              <button class="sb-icon-btn-xs" @click="showError = false">
-                <X :size="16" />
-              </button>
-            </div>
-            <pre class="modal-error">{{ settingsStore.pythonError }}</pre>
-          </div>
-        </div>
-      </Teleport>
-    </aside>
-  </template>
-
-  <!-- ═══════ Expanded mode ═══════ -->
-  <template v-else>
-    <aside class="sidebar sidebar-expanded">
+    <!-- ═══════ Expanded mode content ═══════ -->
+    <div class="sidebar-expanded-content">
       <!-- App header -->
       <div class="sb-header">
         <div class="sb-header-row">
@@ -376,11 +316,10 @@ function handleDeleteConversation(convId: string) {
               <Pin
                 v-if="kb.pinned"
                 :size="10"
-                class="text-amber-500 shrink-0"
+                class="shrink-0 text-amber-500"
               />
-              <Layers v-else :size="12" class="shrink-0" />
+              <Layers v-else :size="10" class="shrink-0" />
               <span class="truncate">{{ kb.name }}</span>
-              <span class="sb-item-count">{{ kb.document_count }}</span>
             </router-link>
           </div>
         </div>
@@ -492,7 +431,7 @@ function handleDeleteConversation(convId: string) {
           {{ t("nav.settings") }}
         </router-link>
       </div>
-    </aside>
+    </div>
 
     <!-- Error dialog -->
     <Teleport to="body">
@@ -515,7 +454,7 @@ function handleDeleteConversation(convId: string) {
         </div>
       </div>
     </Teleport>
-  </template>
+  </aside>
 </template>
 
 <style scoped>
@@ -589,21 +528,11 @@ function handleDeleteConversation(convId: string) {
   border-radius: 50%;
   flex-shrink: 0;
 }
-.bg-green {
-  background: var(--el-color-success);
-}
-.bg-red {
-  background: var(--el-color-danger);
-}
-.text-primary {
-  color: var(--el-color-primary);
-}
-.text-amber-500 {
-  color: #f59e0b;
-}
-.text-red-500 {
-  color: var(--el-color-danger);
-}
+.bg-green { background: var(--el-color-success); }
+.bg-red { background: var(--el-color-danger); }
+.text-primary { color: var(--el-color-primary); }
+.text-amber-500 { color: #f59e0b; }
+.text-red-500 { color: var(--el-color-danger); }
 
 /* ── Icon list (collapsed) ── */
 .sb-icon-list {
@@ -614,7 +543,19 @@ function handleDeleteConversation(convId: string) {
   gap: 2px;
   padding: 4px;
   width: 100%;
+  min-height: 0;
   overflow-y: auto;
+}
+
+.sb-bottom-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  padding: 4px;
+  margin-top: auto;
+  flex-shrink: 0;
 }
 
 .sb-bottom {
@@ -627,367 +568,155 @@ function handleDeleteConversation(convId: string) {
 }
 
 /* ── Popover (collapsed) ── */
-.sb-popover-host {
-  position: relative;
-}
-
+.sb-popover-host { position: relative; }
 .sb-popover {
-  position: fixed;
-  z-index: 100;
-  width: 240px;
-  max-height: 300px;
-  background: var(--surface);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
-  overflow: visible;
-  left: 60px;
-  top: auto;
-  margin-top: -8px;
+  position: fixed; z-index: 100; width: 280px; max-height: 400px;
+  background: var(--surface); border: 1px solid var(--border-color);
+  border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+  overflow: visible; left: 60px; top: auto; margin-top: -8px;
 }
-
 .sb-popover::before {
-  content: '';
-  position: absolute;
-  left: -5px;
-  top: 14px;
-  width: 10px;
-  height: 10px;
-  background: var(--surface);
+  content: ''; position: absolute; left: -5px; top: 14px;
+  width: 10px; height: 10px; background: var(--surface);
   border-left: 1px solid var(--border-color);
   border-bottom: 1px solid var(--border-color);
   transform: rotate(45deg);
 }
-
 .sb-popover-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-bottom: 1px solid var(--el-border-color-lighter);
   background: var(--el-fill-color-lighter);
 }
-
-.sb-popover-title {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--el-text-color-secondary);
-}
-
-.sb-popover-list {
-  max-height: 240px;
-  overflow-y: auto;
-}
-
-.sb-popover-item {
-  position: relative;
-  display: flex;
-}
-
+.sb-popover-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--el-text-color-secondary); }
+.sb-popover-list { max-height: 240px; overflow-y: auto; }
+.sb-popover-item { position: relative; display: flex; }
 .sb-popover-link {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  text-decoration: none;
-  transition: all 120ms;
-  overflow: hidden;
+  flex: 1; display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px; font-size: 12px; color: var(--el-text-color-secondary);
+  text-decoration: none; transition: all 120ms; overflow: hidden;
 }
-.sb-popover-link:hover {
-  background: var(--el-fill-color);
-}
-.sb-popover-link.active {
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
-  font-weight: 500;
-}
-
+.sb-popover-link:hover { background: var(--el-fill-color); }
+.sb-popover-link.active { background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-weight: 500; }
 .sb-popover-delete {
-  display: none;
-  position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 20px;
-  height: 20px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--el-text-color-disabled);
-  cursor: pointer;
+  display: none; position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 20px; height: 20px; border: none; border-radius: 4px;
+  background: transparent; color: var(--el-text-color-disabled); cursor: pointer;
 }
-.group:hover .sb-popover-delete {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.sb-popover-delete:hover {
-  background: var(--el-color-danger-light-9);
-  color: var(--el-color-danger);
-}
+.group:hover .sb-popover-delete { display: flex; align-items: center; justify-content: center; }
+.sb-popover-delete:hover { background: var(--el-color-danger-light-9); color: var(--el-color-danger); }
 
 /* ── Expanded Header ── */
-.sb-header {
-  padding: 12px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  flex-shrink: 0;
-}
+.sb-header { padding: 12px; border-bottom: 1px solid var(--el-border-color-lighter); flex-shrink: 0; }
+.sb-header-row { display: flex; align-items: center; justify-content: space-between; }
+.sb-app-title { font-size: 14px; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 6px; }
+.sb-status-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.sb-status-text { font-size: 11px; color: var(--el-text-color-disabled); }
+.sb-error-link { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 11px; color: #d97706; background: none; border: none; cursor: pointer; padding: 0; }
+.sb-error-link:hover { color: #b45309; }
 
-.sb-header-row {
+/* ── Collapsed wrappers ── */
+.sidebar-collapsed-content {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  height: 100%;
+  width: 52px;
 }
-
-.sb-app-title {
-  font-size: 14px;
-  font-weight: 700;
-  margin: 0;
+.sc-top {
   display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.sb-status-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.sb-status-text {
-  font-size: 11px;
-  color: var(--el-text-color-disabled);
-}
-
-.sb-error-link {
-  display: flex;
+  flex-direction: column;
   align-items: center;
   gap: 4px;
-  margin-top: 4px;
-  font-size: 11px;
-  color: #d97706;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0;
+  padding: 8px 0 4px;
+  flex-shrink: 0;
 }
-.sb-error-link:hover {
-  color: #b45309;
+.sc-icons {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  width: 100%;
+  overflow-y: auto;
+  min-height: 0;
+}
+.sc-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  flex-shrink: 0;
+}
+.sidebar-expanded-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  transition: opacity 120ms ease 130ms;
+}
+.sidebar-collapsed .sidebar-expanded-content {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* ── Middle section ── */
-.sb-middle {
-  flex: 1;
-  display: grid;
-  grid-template-rows: 1fr 1fr;
-  gap: 2px;
-  padding: 4px;
-  overflow: hidden;
-  min-height: 0;
-}
+.sb-middle { flex: 1; display: grid; grid-template-rows: 1fr 1fr; gap: 2px; padding: 4px; overflow: hidden; min-height: 0; }
 
 /* ── Sections ── */
-.sb-section {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-height: 0;
-}
-
+.sb-section { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
 .sb-section-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--el-text-color-secondary);
-  cursor: pointer;
-  font-size: 13px;
-  transition: all 120ms;
-  flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+  border: none; border-radius: 6px; background: transparent;
+  color: var(--el-text-color-secondary); cursor: pointer; font-size: 13px; transition: all 120ms; flex-shrink: 0;
 }
-.sb-section-header:hover {
-  background: var(--el-fill-color);
-}
-
-.sb-section-label {
-  flex: 1;
-  text-align: left;
-}
-
-.ml-auto {
-  margin-left: auto;
-}
-
+.sb-section-header:hover { background: var(--el-fill-color); }
+.sb-section-label { flex: 1; text-align: left; }
+.ml-auto { margin-left: auto; }
 .sb-section-list {
-  margin-left: 8px;
-  border-left: 1px solid var(--el-border-color-lighter);
-  padding-left: 4px;
-  overflow-y: auto;
-  flex: 1;
-  min-height: 0;
+  margin-left: 8px; border-left: 1px solid var(--el-border-color-lighter);
+  padding-left: 4px; overflow-y: auto; flex: 1; min-height: 0;
 }
 
 /* ── Items ── */
 .sb-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  text-decoration: none;
-  transition: all 120ms;
-  overflow: hidden;
+  display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px;
+  font-size: 12px; color: var(--el-text-color-secondary);
+  text-decoration: none; transition: all 120ms; overflow: hidden;
 }
-.sb-item:hover {
-  background: var(--el-fill-color);
-  color: var(--el-text-color-primary);
-}
-.sb-item.active {
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
-  font-weight: 500;
-}
-
-.sb-item-count {
-  font-size: 10px;
-  color: var(--el-text-color-disabled);
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.sb-empty-text {
-  font-size: 11px;
-  color: var(--el-text-color-disabled);
-  padding: 4px 8px;
-  margin: 0;
-}
+.sb-item:hover { background: var(--el-fill-color); color: var(--el-text-color-primary); }
+.sb-item.active { background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-weight: 500; }
+.sb-item-count { font-size: 10px; color: var(--el-text-color-disabled); margin-left: auto; flex-shrink: 0; }
+.sb-empty-text { font-size: 11px; color: var(--el-text-color-disabled); padding: 4px 8px; margin: 0; }
 
 /* ── Chat items ── */
-.sb-chat-item {
-  position: relative;
-  display: flex;
-}
-
-.sb-chat-actions {
-  display: none;
-  position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-  gap: 2px;
-  align-items: center;
-}
-.group:hover .sb-chat-actions {
-  display: flex;
-}
-
-.sb-rename-input {
-  font-size: 11px;
-  padding: 2px 6px;
-  border: 1px solid var(--el-color-primary);
-  border-radius: 4px;
-  outline: none;
-  flex: 1;
-  background: var(--el-bg-color);
-}
+.sb-chat-item { position: relative; display: flex; }
+.sb-chat-actions { display: none; position: absolute; right: 4px; top: 50%; transform: translateY(-50%); gap: 2px; align-items: center; }
+.group:hover .sb-chat-actions { display: flex; }
+.sb-rename-input { font-size: 11px; padding: 2px 6px; border: 1px solid var(--el-color-primary); border-radius: 4px; outline: none; flex: 1; background: var(--el-bg-color); }
 
 /* ── Footer ── */
-.sb-footer {
-  padding: 4px;
-  border-top: 1px solid var(--el-border-color-lighter);
-  flex-shrink: 0;
-}
+.sb-footer { padding: 4px; border-top: 1px solid var(--el-border-color-lighter); flex-shrink: 0; }
 
 /* ── Modal ── */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
-}
-
-.modal-card {
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color);
-  border-radius: 12px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
-  max-width: 500px;
-  width: 90%;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-}
-
-.modal-title {
-  font-size: 15px;
-  font-weight: 600;
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.modal-error {
-  font-size: 11px;
-  padding: 16px;
-  margin: 0;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
-  background: var(--el-fill-color-lighter);
-  flex: 1;
-  max-height: 400px;
-}
+.modal-overlay { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.5); }
+.modal-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color); border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.18); max-width: 500px; width: 90%; max-height: 80vh; display: flex; flex-direction: column; }
+.modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px; border-bottom: 1px solid var(--el-border-color-lighter); }
+.modal-title { font-size: 15px; font-weight: 600; margin: 0; display: flex; align-items: center; gap: 8px; }
+.modal-error { font-size: 11px; padding: 16px; margin: 0; overflow-y: auto; white-space: pre-wrap; word-break: break-all; background: var(--el-fill-color-lighter); flex: 1; max-height: 400px; }
 
 /* ── Utilities ── */
-.truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.shrink-0 {
-  flex-shrink: 0;
-}
-.flex-1 {
-  flex: 1;
-}
-.items-center {
-  align-items: center;
-}
-.gap-1 {
-  gap: 4px;
-}
-.px-2 {
-  padding-left: 8px;
-  padding-right: 8px;
-}
-.py-1 {
-  padding-top: 4px;
-  padding-bottom: 4px;
-}
-.mt-auto {
-  margin-top: auto;
-}
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shrink-0 { flex-shrink: 0; }
+.flex-1 { flex: 1; }
+.items-center { align-items: center; }
+.gap-1 { gap: 4px; }
+.px-2 { padding-left: 8px; padding-right: 8px; }
+.py-1 { padding-top: 4px; padding-bottom: 4px; }
+.mt-auto { margin-top: auto; }
 </style>

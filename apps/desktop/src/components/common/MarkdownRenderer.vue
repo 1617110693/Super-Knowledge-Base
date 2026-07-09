@@ -67,6 +67,17 @@ md.renderer.rules["display_math"] = function (tokens, idx) {
   catch { return `$$\n${tokens[idx].content}\n$$`; }
 };
 
+// Helper: render $...$ math inside HTML element content
+function renderInlineMathInHtml(inner: string): string {
+  if (inner.includes('class="katex"') || inner.includes('class="katex-display"')) return inner;
+  return inner.replace(/\$([^$]+?)\$/g, (_m: string, math: string) => {
+    let content = math.replace(/([_^])\s+(?=\{)/g, '$1');
+    content = content.replace(/\\left\s*\{/g, '\\left\\{').replace(/\\right\s*\}/g, '\\right\\}');
+    try { return katex.renderToString(content, { throwOnError: false, strict: false }); }
+    catch { return `$${math}$`; }
+  });
+}
+
 const renderedHtml = computed(() => {
   // Pre-process \tag in inline math: convert $...\tag{N}...$ to display math
   let processedContent = props.content;
@@ -75,8 +86,25 @@ const renderedHtml = computed(() => {
   });
   // Normalize $$$...$$$ to $$...$$
   processedContent = processedContent.replace(/\$\$\$(.+?)\$\$\$/gs, '$$\n$1\n$$');
+  // Catch: $ on its own line with \tag{N} before closing $ (MinerU multi-line format)
+  processedContent = processedContent.replace(/^\$\n([\s\S]*?)\\tag\{([^}]+)\}\n\s*\$$/gm, (_, body, tag) => {
+    return `$$\n${body.trim()}\n\\tag{${tag}}\n$$`;
+  });
 
   let html = md.render(processedContent);
+
+  // Post-process: render $...$ inside HTML elements (e.g. <td> in tables)
+  // that markdown-it skipped because html:true treats HTML content as literal.
+  // Only replace $...$ that are NOT already inside katex spans.
+  html = html.replace(/(<td[^>]*>)([\s\S]*?)(<\/td>)/gi, (_m: string, open: string, inner: string, close: string) => {
+    return open + renderInlineMathInHtml(inner) + close;
+  });
+  html = html.replace(/(<th[^>]*>)([\s\S]*?)(<\/th>)/gi, (_m: string, open: string, inner: string, close: string) => {
+    return open + renderInlineMathInHtml(inner) + close;
+  });
+  html = html.replace(/(<figcaption[^>]*>)([\s\S]*?)(<\/figcaption>)/gi, (_m: string, open: string, inner: string, close: string) => {
+    return open + renderInlineMathInHtml(inner) + close;
+  });
 
   // Replace [N] or [N-M] with clickable source badges
   if (props.sources?.length) {
@@ -152,6 +180,7 @@ function onBadgeClick(e: MouseEvent) {
 .markdown-renderer :deep(code) {
   font-family: "SF Mono", "Fira Code", "Consolas", monospace;
   font-size: 0.875em;
+  color: var(--text-primary, inherit);
 }
 
 .markdown-renderer :deep(pre code) {

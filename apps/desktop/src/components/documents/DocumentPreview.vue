@@ -443,6 +443,8 @@ watch([kbId, docId], async ([newKbId, newDocId], [oldKbId, oldDocId]) => {
     doc.value = docData;
     curDocName = docData.name || docData.id;
     curContent = docData.markdown;
+    // Pre-process MinerU multi-line $...\tag{}...$ into $$...$$ before section splitting
+    curContent = curContent.replace(/^\$\n([\s\S]*?)\\tag\{([^}]+)\}\n\s*\$$/gm, '$$\n$1\n\\tag{$2}\n$$');
     docName.value = curDocName;
     content.value = curContent;
     mdAvailable.value = docData.md_available !== false;
@@ -918,11 +920,49 @@ onUnmounted(() => stopFillPolling());
 
 // ── Anchored content: inject <a id="page-N"> anchors for scroll positioning ─
 // Anchors are sorted high->low so injection preserves earlier positions.
+// Skip positions inside math blocks ($$...$$ or $...$) to avoid breaking LaTeX.
+
+function findMathRanges(content: string): [number, number][] {
+  const ranges: [number, number][] = [];
+  // Display math $$...$$
+  let i = 0;
+  while (i < content.length) {
+    const dd = content.indexOf('$$', i);
+    if (dd === -1) break;
+    const end = content.indexOf('$$', dd + 2);
+    if (end === -1) break;
+    ranges.push([dd, end + 2]);
+    i = end + 2;
+  }
+  // Inline math $...$ (skip $$)
+  i = 0;
+  while (i < content.length) {
+    const d = content.indexOf('$', i);
+    if (d === -1) break;
+    if (content[d + 1] === '$') { i = d + 2; continue; }
+    const end = content.indexOf('$', d + 1);
+    if (end === -1) break;
+    ranges.push([d, end + 1]);
+    i = end + 1;
+  }
+  return ranges.sort((a, b) => a[0] - b[0]);
+}
+
+function isInsideMath(pos: number, ranges: [number, number][]): boolean {
+  for (const [start, end] of ranges) {
+    if (pos >= start && pos < end) return true;
+    if (pos < start) return false;
+  }
+  return false;
+}
+
 const anchoredContent = computed(() => {
   if (!content.value || pageAnchorPositions.value.length === 0) return content.value;
+  const mathRanges = findMathRanges(content.value);
   let result = content.value;
   for (const { page, startChar } of pageAnchorPositions.value) {
     if (startChar < 0 || startChar > result.length) continue;
+    if (isInsideMath(startChar, mathRanges)) continue;
     const anchor = `<a id="page-${page}" data-page="${page}"></a>`;
     result = result.slice(0, startChar) + anchor + result.slice(startChar);
   }
@@ -931,15 +971,17 @@ const anchoredContent = computed(() => {
 
 // ── Section anchor injection helper ────────────────────────────────────────
 
-/** Inject page anchors into a section string. */
+/** Inject page anchors into a section string, skipping math blocks. */
 function injectAnchorsIntoSection(
   sec: string, secStart: number, secEnd: number,
   positions: { page: number; startChar: number }[],
 ): string {
+  const mathRanges = findMathRanges(sec);
   let result = sec;
   for (const { page, startChar } of positions) {
     if (startChar >= secStart && startChar < secEnd) {
       const relPos = startChar - secStart;
+      if (isInsideMath(relPos, mathRanges)) continue;
       result = result.slice(0, relPos) +
         '<a id="page-' + page + '" data-page="' + page + '"></a>' +
         result.slice(relPos);
@@ -1217,14 +1259,17 @@ watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
     const sc = startCharMap.value.get(ci);
     if (sc != null) {
       const si = charToSection.value(sc);
-      if (container && sectionEstimatedTops.value[si] != null) {
-        container.scrollTop = sectionEstimatedTops.value[si];
-      }
       const sectionEl = container.querySelector(`[data-section-idx="${si}"]`) as HTMLElement | null;
       if (sectionEl) {
+        sectionEl.scrollIntoView({ block: "start", behavior: "instant" });
         sectionEl.style.backgroundColor = "#fef3c7";
         sectionEl.style.transition = "background-color 0.8s ease";
         setTimeout(() => { sectionEl.style.backgroundColor = ""; }, 2500);
+        return;
+      }
+      // Fallback: use estimated tops when DOM element not found
+      if (sectionEstimatedTops.value[si] != null) {
+        container.scrollTop = sectionEstimatedTops.value[si];
       }
     }
   }
@@ -1237,7 +1282,13 @@ watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
       if (chunkIndices.includes(ci)) { pageNum = page; break; }
     }
     if (pageNum != null) {
-      docStore.setPage(pageNum);
+      if (!pdfOpened) {
+        await openPdf();
+        await nextTick();
+        setTimeout(() => docStore.setPage(pageNum), 300);
+      } else {
+        docStore.setPage(pageNum);
+      }
       return;
     }
   }

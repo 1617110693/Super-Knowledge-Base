@@ -3448,7 +3448,6 @@ name = "super-knowledge-base"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "open",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

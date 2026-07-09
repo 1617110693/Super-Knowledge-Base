@@ -1152,14 +1152,10 @@ async function browseGGUF(field: "local_embedding_model" | "local_rerank_model")
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 12px 0 10px;
-  margin-bottom: 4px;
+  padding: 8px 0 16px;
+  margin-bottom: 8px;
   border-bottom: 1px solid var(--border-color);
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  background: var(--surface);
+  background: none;
 }
 
 .settings-header h2 {

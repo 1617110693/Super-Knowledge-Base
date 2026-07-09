@@ -56,11 +56,13 @@ md.block.ruler.before("paragraph", "display_math", (state, startLine, endLine, s
 // Render math tokens
 md.renderer.rules["inline_math"] = function (tokens, idx) {
   let content = tokens[idx].content.replace(/([_^])\s+(?=\{)/g, '$1');
+  content = content.replace(/\\left\s*\{/g, '\\left\\{').replace(/\\right\s*\}/g, '\\right\\}');
   try { return katex.renderToString(content, { throwOnError: false, strict: false }); }
   catch { return `$${tokens[idx].content}$`; }
 };
 md.renderer.rules["display_math"] = function (tokens, idx) {
   let content = tokens[idx].content.replace(/([_^])\s+(?=\{)/g, '$1');
+  content = content.replace(/\\left\s*\{/g, '\\left\\{').replace(/\\right\s*\}/g, '\\right\\}');
   try { return katex.renderToString(content, { displayMode: true, throwOnError: false, strict: false }); }
   catch { return `$$\n${tokens[idx].content}\n$$`; }
 };

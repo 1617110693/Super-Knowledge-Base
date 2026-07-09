@@ -374,11 +374,6 @@ pub async fn open_document_file(
         )));
     }
 
-    // Open with OS default application
-    open::that(&original_path).map_err(|e| {
-        AppError::PythonBackend(format!("Failed to open file: {}", e))
-    })?;
-
     Ok(original_path.to_string_lossy().to_string())
 }
 

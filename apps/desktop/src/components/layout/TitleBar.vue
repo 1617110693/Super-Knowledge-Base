@@ -9,11 +9,6 @@
     </div>
 
     <div class="titlebar-right">
-      <!-- User Guide -->
-      <button class="titlebar-icon-btn" title="Guide" @click="showGuide = true">
-        <BookOpen :size="14" />
-      </button>
-
       <!-- Theme Toggle -->
       <button class="titlebar-icon-btn" :title="themeTitle" @click="cycleTheme">
         <Sun v-if="theme === 'light'" :size="14" />
@@ -41,26 +36,21 @@
         <X :size="14" />
       </button>
     </div>
-
-    <!-- User Guide Dialog -->
-    <UserGuideDialog :visible="showGuide" @update:visible="showGuide = $event" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, onMounted } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, Sun, Moon, Monitor, Globe, BookOpen } from "lucide-vue-next";
+import { Minus, Square, X, Sun, Moon, Monitor, Globe } from "lucide-vue-next";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useI18n } from "@/i18n/index";
-import UserGuideDialog from "@/components/common/UserGuideDialog.vue";
 
 const win = getCurrentWindow();
 const settingsStore = useSettingsStore();
 const { t, locale, toggleLocale } = useI18n();
 
 const theme = ref<"light" | "dark" | "system">("system");
-const showGuide = ref(false);
 
 const themeTitle = ref("");
 
@@ -76,20 +66,6 @@ onMounted(async () => {
     applyTheme();
     updateThemeTitle();
   });
-
-  // First-launch detection
-  const s = settingsStore.settings;
-  const isFresh = !s.embedding_api_key && !s.mineru_token && !s.llm_api_key;
-  if (isFresh && !s.has_seen_guide) {
-    setTimeout(() => { showGuide.value = true; }, 600);
-  }
-});
-
-// Persist has_seen_guide when the user closes the guide dialog
-watch(() => showGuide.value, (val) => {
-  if (!val) {
-    settingsStore.saveSettings({ ...settingsStore.settings, has_seen_guide: true });
-  }
 });
 
 function applyTheme() {

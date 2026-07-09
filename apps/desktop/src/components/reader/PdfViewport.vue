@@ -15,6 +15,11 @@ const scrollRef = ref<HTMLDivElement | null>(null);
 const spacerRef = ref<HTMLDivElement | null>(null);
 const listRef = ref<HTMLDivElement | null>(null);
 const loading = ref(false);
+
+// ── Ctrl+Wheel zoom ──
+function onWheel(e: WheelEvent) {
+  if (e.ctrlKey || e.metaKey) { e.preventDefault(); doc.setZoom(doc.zoom + (e.deltaY > 0 ? -0.1 : 0.1)); }
+}
 const selToolbar = ref<InstanceType<typeof SelectionToolbar> | null>(null);
 const ctxMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null);
 const notePopup = ref<{ x: number; y: number; id: string; content: string } | null>(null);
@@ -844,12 +849,14 @@ onMounted(() => {
   scrollRef.value?.addEventListener("scroll", onScroll, { passive: true });
   document.addEventListener("mousemove", onDocMouseMove);
   document.addEventListener("mouseup", onDocMouseUp);
+  scrollRef.value?.addEventListener("wheel", onWheel, { passive: false });
 });
 onUnmounted(() => {
   if (renderAborter) renderAborter.abort();
   if (zoomTimer) clearTimeout(zoomTimer);
   ioObserver?.disconnect();
   for (const [, e] of pageCache) if (e.canvas) e.canvas.remove();
+  scrollRef.value?.removeEventListener("wheel", onWheel);
   pageCache.clear();
   document.removeEventListener("mousemove", onDocMouseMove);
   document.removeEventListener("mouseup", onDocMouseUp);

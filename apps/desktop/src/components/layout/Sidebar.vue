@@ -636,14 +636,27 @@ function handleDeleteConversation(convId: string) {
   z-index: 100;
   width: 240px;
   max-height: 300px;
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color);
+  background: var(--surface);
+  border: 1px solid var(--border-color);
   border-radius: 12px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
-  overflow: hidden;
+  overflow: visible;
   left: 60px;
   top: auto;
   margin-top: -8px;
+}
+
+.sb-popover::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 14px;
+  width: 10px;
+  height: 10px;
+  background: var(--surface);
+  border-left: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  transform: rotate(45deg);
 }
 
 .sb-popover-header {

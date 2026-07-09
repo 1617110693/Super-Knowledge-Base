@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { ref, shallowRef, markRaw } from "vue";
 
 export interface OutlineItem {
   title: string;
@@ -9,7 +9,7 @@ export interface OutlineItem {
 
 export const useDocumentStore = defineStore("document", () => {
   const document = ref<any>(null);
-  const pdfDoc = ref<any>(null);
+  const pdfDoc = shallowRef<any>(null);
   const currentPage = ref(1);
   const pageCount = ref(0);
   const zoom = ref(1.0);

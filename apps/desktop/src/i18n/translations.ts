@@ -246,6 +246,15 @@ export const translations = {
   "search.searchAllTitle": { en: "Global Search Results", "zh-CN": "全局搜索结果" },
   "search.noResults": { en: "No results found", "zh-CN": "未找到结果" },
   "search.chunkLabel": { en: "Chunk {n}", "zh-CN": "第 {n} 块" },
+  "search.knowledgeBases": { en: "Knowledge Bases", "zh-CN": "知识库" },
+  "search.allKbsPlaceholder": { en: "All KBs", "zh-CN": "全部知识库" },
+  "search.noResultsFound": { en: "No results found", "zh-CN": "未找到结果" },
+  "search.untitled": { en: "Untitled", "zh-CN": "未命名" },
+  "search.openDocument": { en: "Open Document", "zh-CN": "打开文档" },
+  "search.searching": { en: "Searching...", "zh-CN": "搜索中…" },
+  "search.searchType": { en: "Search Type", "zh-CN": "搜索类型" },
+  "search.topK": { en: "Top-K", "zh-CN": "返回数量" },
+  "search.score": { en: "Score", "zh-CN": "相关性评分" },
 
   // Chat
   "chat.title": { en: "RAG Chat", "zh-CN": "RAG 对话" },

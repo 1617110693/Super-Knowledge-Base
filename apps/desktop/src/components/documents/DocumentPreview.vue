@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, markRaw } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   ArrowLeft, Search, X, ChevronRight, FileText, Pencil, Check, XCircle,
@@ -11,6 +11,23 @@ import PdfViewport from "@/components/reader/PdfViewport.vue";
 import { useDocumentStore } from "@/stores/document";
 import { useAnnotationStore } from "@/stores/annotations";
 import { openDocumentFile } from "@/services/tauriBridge";
+
+// ── PDF.js legacy worker (avoids private-field issues in Tauri webview) ──
+let pdfjsWorker: Worker | null = null;
+let pdfjsLibModule: any = null;
+async function ensurePdfjs() {
+  if (pdfjsLibModule) return pdfjsLibModule;
+  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.min.mjs");
+  if (!pdfjsWorker) {
+    pdfjsWorker = new Worker(
+      new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url),
+      { type: "module" }
+    );
+    pdfjsLib.GlobalWorkerOptions.workerPort = pdfjsWorker;
+  }
+  pdfjsLibModule = pdfjsLib;
+  return pdfjsLib;
+}
 import {
   getDocumentContent, saveDocumentContent, saveDocumentChunks,
   listDocumentImages, readDocumentImage,
@@ -147,6 +164,7 @@ const docId = computed(() => route.params.docId as string);
 
 const content = ref("");
 const docName = ref("");
+const doc = ref<any>(null);
 const loading = ref(true);
 const startCharMap = ref<Map<number, number>>(new Map());
 const pageChunksMap = ref<Map<number, number[]>>(new Map());
@@ -178,12 +196,13 @@ async function openPdf() {
   try {
     const filePath = await openDocumentFile(kbId.value, docId.value);
     if (!filePath) return;
-    // Load PDF via pdfjs-dist
-    const pdfjsLib = await import("pdfjs-dist");
-    // Load the document — pass the file path directly
-    const loadingTask = pdfjsLib.getDocument({ url: filePath });
+    // Read file as binary (Tauri webview blocks file:// URLs)
+    const { readFile } = await import("@tauri-apps/plugin-fs");
+    const data = await readFile(filePath);
+    const pdfjsLib = await ensurePdfjs();
+    const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(data) });
     const pdf = await loadingTask.promise;
-    docStore.pdfDoc = pdf;
+    docStore.pdfDoc = markRaw(pdf);
     docStore.pageCount = pdf.numPages;
     docStore.document = { path: filePath } as any;
     docStore.currentPage = 1;
@@ -193,24 +212,6 @@ async function openPdf() {
     viewMode.value = "pdf";
   } catch (e) {
     console.error("Failed to open PDF:", e);
-    // Try fallback with { data: filePath } for environments where direct path doesn't work
-    try {
-      const filePath = await openDocumentFile(kbId.value, docId.value);
-      if (!filePath) return;
-      const pdfjsLib = await import("pdfjs-dist");
-      const loadingTask = pdfjsLib.getDocument({ data: filePath });
-      const pdf = await loadingTask.promise;
-      docStore.pdfDoc = pdf;
-      docStore.pageCount = pdf.numPages;
-      docStore.document = { path: filePath } as any;
-      docStore.currentPage = 1;
-      docStore.zoom = 1.0;
-      annotationStore.loadAnnotations(filePath);
-      pdfOpened = true;
-      viewMode.value = "pdf";
-    } catch (e2) {
-      console.error("Failed to open PDF with fallback:", e2);
-    }
   }
 }
 
@@ -438,12 +439,13 @@ watch([kbId, docId], async ([newKbId, newDocId], [oldKbId, oldDocId]) => {
   let curDocName = newDocId;
   let curContent = "";
   try {
-    const doc = await getDocumentContent(newKbId, newDocId);
-    curDocName = doc.name || doc.id;
-    curContent = doc.markdown;
+    const docData = await getDocumentContent(newKbId, newDocId);
+    doc.value = docData;
+    curDocName = docData.name || docData.id;
+    curContent = docData.markdown;
     docName.value = curDocName;
     content.value = curContent;
-    mdAvailable.value = doc.md_available !== false;
+    mdAvailable.value = docData.md_available !== false;
   } catch { docName.value = newDocId; }
 
   try {
@@ -486,6 +488,23 @@ watch([kbId, docId], async ([newKbId, newDocId], [oldKbId, oldDocId]) => {
       editContent: null,
     };
   } catch { /* ignore */ }
+
+  // Resolve image paths in content
+  if (content.value && imageNames.value.length > 0) {
+    for (const name of imageNames.value) {
+      const src = imageSrcs.value.get(name);
+      if (src) {
+        content.value = content.value.replace(
+          new RegExp(`\\(images/${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g'),
+          `(${src})`
+        );
+        content.value = content.value.replace(
+          new RegExp(`src="images/${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'g'),
+          `src="${src}"`
+        );
+      }
+    }
+  }
 
   loading.value = false;
 
@@ -681,6 +700,14 @@ watch([loading, () => route.query.view], async ([isLoading, view]) => {
     await openPdf();
   }
 }, { immediate: true });
+
+// Auto-open PDF when document is loaded
+watch([loading, doc], async ([isLoading, doc]) => {
+  if (!isLoading && doc?.file_type === 'pdf' && !pdfOpened) {
+    await nextTick();
+    await openPdf();
+  }
+});
 
 function onKeydown(ev: KeyboardEvent) {
   if (editing.value) return;
@@ -1177,6 +1204,40 @@ watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
         }, 2500);
       };
       requestAnimationFrame(tryAnchor);
+      return;
+    }
+
+    // ── Fallback: no page data → scroll by section ──
+    // If in PDF view, jump to the corresponding page instead
+    if (viewMode.value === 'pdf' && pageNum != null) {
+      docStore.setPage(pageNum);
+      return;
+    }
+
+    const sc = startCharMap.value.get(ci);
+    if (sc != null) {
+      const si = charToSection.value(sc);
+      if (container && sectionEstimatedTops.value[si] != null) {
+        container.scrollTop = sectionEstimatedTops.value[si];
+      }
+      const sectionEl = container.querySelector(`[data-section-idx="${si}"]`) as HTMLElement | null;
+      if (sectionEl) {
+        sectionEl.style.backgroundColor = "#fef3c7";
+        sectionEl.style.transition = "background-color 0.8s ease";
+        setTimeout(() => { sectionEl.style.backgroundColor = ""; }, 2500);
+      }
+    }
+  }
+
+  // ── If in PDF view, try page jump ──
+  if (viewMode.value === 'pdf') {
+    const ci = chunkIdx.value;
+    let pageNum: number | null = null;
+    for (const [page, chunkIndices] of pageChunksMap.value) {
+      if (chunkIndices.includes(ci)) { pageNum = page; break; }
+    }
+    if (pageNum != null) {
+      docStore.setPage(pageNum);
       return;
     }
   }
@@ -2607,6 +2668,10 @@ function nextImage() {
   font-size: 12px;
   line-height: 1.6;
   white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  max-height: 200px;
+  overflow-y: auto;
   color: var(--text-primary, #222);
 }
 

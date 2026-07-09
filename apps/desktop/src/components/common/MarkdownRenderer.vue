@@ -19,8 +19,8 @@ const md = new MarkdownIt({
   linkify: true,
 });
 
-// Inline math: $...$
-md.inline.ruler.push("inline_math", (state, silent) => {
+// Inline math: $...$ (runs before emphasis so _ inside math is not treated as italic)
+md.inline.ruler.before("emphasis", "inline_math", (state, silent) => {
   const pos = state.pos;
   if (state.src[pos] !== "$") return false;
   const end = state.src.indexOf("$", pos + 1);
@@ -35,8 +35,8 @@ md.inline.ruler.push("inline_math", (state, silent) => {
   return true;
 });
 
-// Display math: $$...$$
-md.block.ruler.push("display_math", (state, startLine, endLine, silent) => {
+// Display math: $$...$$ (before paragraph to capture $$ blocks)
+md.block.ruler.before("paragraph", "display_math", (state, startLine, endLine, silent) => {
   const startPos = state.bMarks[startLine] + state.tShift[startLine];
   if (state.src.slice(startPos, startPos + 2) !== "$$") return false;
   const end = state.src.indexOf("$$", startPos + 2);
@@ -48,23 +48,33 @@ md.block.ruler.push("display_math", (state, startLine, endLine, silent) => {
     token.markup = "$$";
     token.block = true;
   }
-  const newLine = state.src.slice(0, end).split("\n").length - 1;
+  const newLine = startLine + state.src.slice(state.bMarks[startLine], end).split("\n").length - 1;
   state.line = newLine + 1;
   return true;
 });
 
 // Render math tokens
 md.renderer.rules["inline_math"] = function (tokens, idx) {
-  try { return katex.renderToString(tokens[idx].content, { throwOnError: false }); }
+  let content = tokens[idx].content.replace(/([_^])\s+(?=\{)/g, '$1');
+  try { return katex.renderToString(content, { throwOnError: false, strict: false }); }
   catch { return `$${tokens[idx].content}$`; }
 };
 md.renderer.rules["display_math"] = function (tokens, idx) {
-  try { return katex.renderToString(tokens[idx].content, { displayMode: true, throwOnError: false }); }
+  let content = tokens[idx].content.replace(/([_^])\s+(?=\{)/g, '$1');
+  try { return katex.renderToString(content, { displayMode: true, throwOnError: false, strict: false }); }
   catch { return `$$\n${tokens[idx].content}\n$$`; }
 };
 
 const renderedHtml = computed(() => {
-  let html = md.render(props.content);
+  // Pre-process \tag in inline math: convert $...\tag{N}...$ to display math
+  let processedContent = props.content;
+  processedContent = processedContent.replace(/\$([^$]+?)\\tag\{([^}]+)\}([^$]*?)\$/g, (_, before, tag, after) => {
+    return `$$\n${before}${after}\n\\tag{${tag}}\n$$`;
+  });
+  // Normalize $$$...$$$ to $$...$$
+  processedContent = processedContent.replace(/\$\$\$(.+?)\$\$\$/gs, '$$\n$1\n$$');
+
+  let html = md.render(processedContent);
 
   // Replace [N] or [N-M] with clickable source badges
   if (props.sources?.length) {

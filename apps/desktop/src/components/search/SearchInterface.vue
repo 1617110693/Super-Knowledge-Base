@@ -14,6 +14,10 @@ import {
   X,
   Loader2,
 } from "lucide-vue-next";
+import { useI18n } from "@/i18n/index";
+import MarkdownRenderer from "@/components/common/MarkdownRenderer.vue";
+
+const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{
@@ -117,7 +121,7 @@ function scoreColor(score: number): string {
       <div class="search-row">
         <el-input
           v-model="query"
-          placeholder="Search documents in this knowledge base..."
+          :placeholder="t('search.placeholder')"
           clearable
           size="large"
           @keydown.enter="doSearch"
@@ -133,11 +137,11 @@ function scoreColor(score: number): string {
             >
               <template v-if="!searching">
                 <Search :size="16" style="margin-right: 4px" />
-                Search
+                {{ t("search.searchBtn") }}
               </template>
               <template v-else>
                 <Loader2 :size="16" class="spin" style="margin-right: 4px" />
-                Searching
+                {{ t("search.searching") || "Searching" }}
               </template>
             </el-button>
           </template>
@@ -148,19 +152,19 @@ function scoreColor(score: number): string {
         <div class="option-item">
           <label class="option-label">
             <Settings2 :size="14" />
-            Search Type
+            {{ t("search.searchType") || "Search Type" }}
           </label>
           <el-select v-model="searchType" size="small" style="width: 140px">
-            <el-option label="Hybrid (Vector + FTS)" value="hybrid" />
-            <el-option label="Vector Only" value="vector" />
-            <el-option label="Full-Text Only" value="fts" />
+            <el-option :label="t('search.hybrid')" value="hybrid" />
+            <el-option :label="t('search.vector')" value="vector" />
+            <el-option :label="t('search.fts')" value="fts" />
           </el-select>
         </div>
 
         <div class="option-item">
           <label class="option-label">
             <Hash :size="14" />
-            Top-K ({{ topK }})
+            {{ t("search.topK") || "Top-K" }} ({{ topK }})
           </label>
           <el-slider
             v-model="topK"
@@ -177,7 +181,7 @@ function scoreColor(score: number): string {
         <div class="option-item">
           <label class="option-label">
             <RotateCcw :size="14" />
-            Rerank
+            {{ t("search.rerank") }}
           </label>
           <el-switch v-model="rerank" size="small" />
         </div>
@@ -185,7 +189,7 @@ function scoreColor(score: number): string {
         <div class="option-item">
           <label class="option-label">
             <SlidersHorizontal :size="14" />
-            Context Window ({{ contextWindow }})
+            {{ t("search.contextWindow") }} ({{ contextWindow }})
           </label>
           <el-slider
             v-model="contextWindow"
@@ -215,8 +219,7 @@ function scoreColor(score: number): string {
 
       <!-- Summary -->
       <div v-if="searched && !error" class="result-summary">
-        Found <strong>{{ total }}</strong> result{{ total !== 1 ? "s" : "" }}
-        in {{ (searchTimeMs / 1000).toFixed(2) }}s
+        {{ t("search.results", { count: total, time: searchTimeMs }) }}
       </div>
 
       <!-- Loading -->
@@ -227,7 +230,7 @@ function scoreColor(score: number): string {
       <!-- Empty -->
       <el-empty
         v-else-if="searched && results.length === 0"
-        description="No results found. Try adjusting search parameters."
+        :description="t('search.noResults')"
         :image-size="80"
       />
 
@@ -242,7 +245,7 @@ function scoreColor(score: number): string {
           <div class="result-header">
             <span class="result-title" @click.stop="navigateToDocument(result)">
               <FileText :size="14" />
-              {{ result.doc_name || "Untitled" }}
+              {{ result.doc_name || (t("search.untitled") || "Untitled") }}
             </span>
             <el-tag
               :style="{
@@ -257,15 +260,15 @@ function scoreColor(score: number): string {
             </el-tag>
           </div>
           <div class="result-content">
-            {{ truncate(result.content, 400) }}
+            <MarkdownRenderer :content="truncate(result.content, 400)" />
           </div>
           <div class="result-footer">
             <span v-if="result.page_start != null" class="page-info">
-              Page {{ result.page_start }}{{ result.page_end != null && result.page_end !== result.page_start ? `-${result.page_end}` : "" }}
+              {{ t("search.page") }} {{ result.page_start }}{{ result.page_end != null && result.page_end !== result.page_start ? `-${result.page_end}` : "" }}
             </span>
             <button class="view-doc-btn" @click.stop="navigateToDocument(result)">
               <ExternalLink :size="12" />
-              Open Document
+              {{ t("search.openDocument") || "Open Document" }}
             </button>
           </div>
         </div>
@@ -275,7 +278,7 @@ function scoreColor(score: number): string {
     <!-- Chunk Detail Dialog -->
     <el-dialog
       v-model="showChunkDetail"
-      title="Chunk Detail"
+      :title="t('search.chunkDetail')"
       width="700px"
       top="5vh"
       destroy-on-close
@@ -283,10 +286,10 @@ function scoreColor(score: number): string {
       <template v-if="selectedChunk">
         <div class="chunk-meta">
           <el-descriptions :column="2" size="small" border>
-            <el-descriptions-item label="Document">
+            <el-descriptions-item :label="t('search.selectDoc') || 'Document'">
               {{ selectedChunk.doc_name }}
             </el-descriptions-item>
-            <el-descriptions-item label="Score">
+            <el-descriptions-item :label="t('search.score') || 'Score'">
               <el-tag
                 :style="{
                   backgroundColor: scoreColor(selectedChunk.score),
@@ -300,32 +303,32 @@ function scoreColor(score: number): string {
             </el-descriptions-item>
             <el-descriptions-item
               v-if="selectedChunk.page_start != null"
-              label="Page"
+              :label="t('search.page')"
             >
               {{ selectedChunk.page_start }}
               {{ selectedChunk.page_end != null && selectedChunk.page_end !== selectedChunk.page_start ? `- ${selectedChunk.page_end}` : "" }}
             </el-descriptions-item>
             <el-descriptions-item
               v-if="selectedChunk.metadata?.chunk_index != null"
-              label="Chunk Index"
+              :label="t('search.chunkIndexLabel') || 'Chunk Index'"
             >
               {{ selectedChunk.metadata.chunk_index }}
             </el-descriptions-item>
           </el-descriptions>
         </div>
         <div class="chunk-content">
-          <pre>{{ selectedChunk.content }}</pre>
+          <MarkdownRenderer :content="selectedChunk.content" />
         </div>
       </template>
       <template #footer>
-        <el-button @click="showChunkDetail = false">Close</el-button>
+        <el-button @click="showChunkDetail = false">{{ t("kb.cancel") }}</el-button>
         <el-button
           v-if="selectedChunk"
           type="primary"
           @click="navigateToDocument(selectedChunk); showChunkDetail = false"
         >
           <ExternalLink :size="14" style="margin-right: 4px" />
-          Open Document
+          {{ t("search.openDocument") || "Open Document" }}
         </el-button>
       </template>
     </el-dialog>
@@ -493,15 +496,6 @@ function scoreColor(score: number): string {
   border: 1px solid var(--el-border-color-light);
   border-radius: var(--el-border-radius-base);
   padding: 12px;
-}
-
-.chunk-content pre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--el-text-color-regular);
 }
 
 .spin {

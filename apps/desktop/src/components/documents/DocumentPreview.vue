@@ -2,14 +2,19 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
-  Search, X, ChevronRight, FileText, Pencil, Check, XCircle,
+  ArrowLeft, Search, X, ChevronRight, FileText, Pencil, Check, XCircle,
   List, Image as ImageIcon, LayoutGrid, Rows3, Settings,
-  AlertTriangle, RefreshCw,
+  AlertTriangle, RefreshCw, Save, Loader2,
 } from "lucide-vue-next";
 import MarkdownRenderer from "@/components/common/MarkdownRenderer.vue";
+import PdfViewport from "@/components/reader/PdfViewport.vue";
+import { useDocumentStore } from "@/stores/document";
+import { useAnnotationStore } from "@/stores/annotations";
+import { openDocumentFile } from "@/services/tauriBridge";
 import {
   getDocumentContent, saveDocumentContent, saveDocumentChunks,
   listDocumentImages, readDocumentImage,
+  getImageMeta, saveImageDesc,
 } from "@/services/tauriBridge";
 import {
   indexDocument, waitForIndex, getChunkRange, searchDocument,
@@ -160,6 +165,55 @@ const searchOpen = ref(false);
 const activeHeadingText = ref<string | null>(null);
 const mdAvailable = ref(true);
 
+// PDF view mode
+const viewMode = ref<"markdown" | "pdf">("markdown");
+const docStore = useDocumentStore();
+const annotationStore = useAnnotationStore();
+
+// Open PDF file in PdfViewport
+let pdfOpened = false;
+async function openPdf() {
+  if (!kbId.value || !docId.value) return;
+  if (pdfOpened) { viewMode.value = "pdf"; return; }
+  try {
+    const filePath = await openDocumentFile(kbId.value, docId.value);
+    if (!filePath) return;
+    // Load PDF via pdfjs-dist
+    const pdfjsLib = await import("pdfjs-dist");
+    // Load the document — pass the file path directly
+    const loadingTask = pdfjsLib.getDocument({ url: filePath });
+    const pdf = await loadingTask.promise;
+    docStore.pdfDoc = pdf;
+    docStore.pageCount = pdf.numPages;
+    docStore.document = { path: filePath } as any;
+    docStore.currentPage = 1;
+    docStore.zoom = 1.0;
+    annotationStore.loadAnnotations(filePath);
+    pdfOpened = true;
+    viewMode.value = "pdf";
+  } catch (e) {
+    console.error("Failed to open PDF:", e);
+    // Try fallback with { data: filePath } for environments where direct path doesn't work
+    try {
+      const filePath = await openDocumentFile(kbId.value, docId.value);
+      if (!filePath) return;
+      const pdfjsLib = await import("pdfjs-dist");
+      const loadingTask = pdfjsLib.getDocument({ data: filePath });
+      const pdf = await loadingTask.promise;
+      docStore.pdfDoc = pdf;
+      docStore.pageCount = pdf.numPages;
+      docStore.document = { path: filePath } as any;
+      docStore.currentPage = 1;
+      docStore.zoom = 1.0;
+      annotationStore.loadAnnotations(filePath);
+      pdfOpened = true;
+      viewMode.value = "pdf";
+    } catch (e2) {
+      console.error("Failed to open PDF with fallback:", e2);
+    }
+  }
+}
+
 // TOC open state persisted per document
 const tocOpen = ref(false);
 const wrappedSetTocOpen = (v: boolean) => {
@@ -179,6 +233,11 @@ const imageSrcs = ref<Map<string, string>>(new Map());
 const imagesOpen = ref(false);
 const galleryMode = ref<"grid" | "list">("grid");
 const dialogIdx = ref<number | null>(null);
+const imageMeta = ref<Record<string, any>>({});
+const editingDesc = ref(false);
+const descEditText = ref("");
+const descSaving = ref(false);
+const vlmLoading = ref(false);
 
 // VLM fill task
 const fillTaskId = ref<string | null>(null);
@@ -614,7 +673,14 @@ onUnmounted(() => {
   if (scrollTimer) clearTimeout(scrollTimer);
 });
 
-// ── Keyboard shortcuts ─────────────────────────────────────────────────────
+// ── Auto-detect PDF view from route query ──────────────────────────────
+
+watch([loading, () => route.query.view], async ([isLoading, view]) => {
+  if (!isLoading && view === 'pdf' && docId.value && kbId.value) {
+    await nextTick();
+    await openPdf();
+  }
+}, { immediate: true });
 
 function onKeydown(ev: KeyboardEvent) {
   if (editing.value) return;
@@ -667,6 +733,61 @@ async function loadImage(name: string) {
     const blob = new Blob([new Uint8Array(bytes)]);
     imageSrcs.value = new Map(imageSrcs.value).set(name, URL.createObjectURL(blob));
   } catch { /* ignore */ }
+}
+
+// ── Image meta / VLM descriptions ───────────────────────────────────────────
+
+const currentImageDesc = computed(() => {
+  if (dialogIdx.value == null) return "";
+  const name = imageNames.value[dialogIdx.value];
+  return imageMeta.value[name]?.description || "";
+});
+
+async function loadImageMeta() {
+  if (!kbId.value || !docId.value) return;
+  try {
+    const meta = await getImageMeta(kbId.value, docId.value);
+    imageMeta.value = meta as Record<string, any>;
+  } catch { /* ignore */ }
+}
+
+async function saveDesc() {
+  if (!kbId.value || !docId.value || dialogIdx.value == null) return;
+  const name = imageNames.value[dialogIdx.value];
+  if (!name) return;
+  descSaving.value = true;
+  try {
+    await saveImageDesc(kbId.value, docId.value, name, descEditText.value);
+    imageMeta.value = {
+      ...imageMeta.value,
+      [name]: { ...(imageMeta.value[name] || {}), description: descEditText.value },
+    };
+    editingDesc.value = false;
+  } catch { /* ignore */ }
+  descSaving.value = false;
+}
+
+async function handleReAnalyze() {
+  if (!kbId.value || !docId.value || dialogIdx.value == null) return;
+  const name = imageNames.value[dialogIdx.value];
+  if (!name) return;
+  vlmLoading.value = true;
+  try {
+    const { pythonFetch } = await import("@/services/pythonClient");
+    const r = await pythonFetch<any>("/images/describe", {
+      method: "POST",
+      body: JSON.stringify({ kb_id: kbId.value, doc_id: docId.value, filename: name }),
+    });
+    if (r.description) {
+      descEditText.value = r.description;
+      await saveImageDesc(kbId.value, docId.value, name, r.description);
+      imageMeta.value = {
+        ...imageMeta.value,
+        [name]: { ...(imageMeta.value[name] || {}), description: r.description },
+      };
+    }
+  } catch { /* ignore */ }
+  vlmLoading.value = false;
 }
 
 // ── VLM fill ───────────────────────────────────────────────────────────────
@@ -1131,6 +1252,7 @@ async function openImageDialog(i: number) {
   const name = imageNames.value[i];
   if (!imageSrcs.value.has(name)) await loadImage(name);
   dialogIdx.value = i;
+  loadImageMeta();
 }
 
 // ── Image dialog navigation ────────────────────────────────────────────────
@@ -1176,8 +1298,11 @@ function nextImage() {
     <template v-else>
       <!-- Header -->
       <div class="doc-header">
-        <!-- Left: search + edit -->
+        <!-- Left: back + search + edit -->
         <div class="header-actions-left">
+          <button @click="router.back()" class="icon-btn" title="Back">
+            <ArrowLeft :size="14" />
+          </button>
           <template v-if="editing">
             <button @click="handleSave" :disabled="saving" class="icon-btn text-green-600" title="Save">
               <div v-if="saving" class="spinner-sm" />
@@ -1207,9 +1332,24 @@ function nextImage() {
           <h2 class="doc-title">{{ docName }}</h2>
         </div>
 
-        <!-- Right: TOC + images -->
-        <div class="header-actions-right">
+        <!-- Right: TOC + images + PDF toggle -->
+        <div class="header-actions-right" style="width: auto; gap: 2px">
           <template v-if="!editing">
+            <button
+              @click="openPdf"
+              :class="['icon-btn', viewMode === 'pdf' ? 'active' : '']"
+              title="View PDF"
+            >
+              <FileText :size="14" />
+            </button>
+            <button
+              v-if="viewMode === 'pdf'"
+              @click="viewMode = 'markdown'"
+              class="icon-btn"
+              title="View Markdown"
+            >
+              <X :size="14" />
+            </button>
             <button
               @click="wrappedSetTocOpen(!tocOpen)"
               :class="['icon-btn', tocOpen ? 'active' : '']"
@@ -1239,6 +1379,12 @@ function nextImage() {
         v-model="editContent"
         class="doc-edit-textarea"
         :disabled="saving"
+      />
+
+      <!-- PDF view -->
+      <PdfViewport
+        v-else-if="viewMode === 'pdf' && !editing"
+        style="flex: 1; min-height: 0;"
       />
 
       <!-- DocView -->
@@ -1548,18 +1694,73 @@ function nextImage() {
           >
             &rsaquo;
           </button>
-          <div class="image-dialog-content">
-            <img
-              v-if="imageSrcs.has(imageNames[dialogIdx])"
-              :src="imageSrcs.get(imageNames[dialogIdx])"
-              :alt="imageNames[dialogIdx]"
-              class="image-dialog-img"
-            />
-            <div v-else class="image-dialog-loading">
-              <div class="spinner" />
+          <div class="image-dialog-body">
+            <!-- Image area -->
+            <div class="image-dialog-image-area">
+              <img
+                v-if="imageSrcs.has(imageNames[dialogIdx])"
+                :src="imageSrcs.get(imageNames[dialogIdx])"
+                :alt="imageNames[dialogIdx]"
+                class="image-dialog-img"
+              />
+              <div v-else class="image-dialog-loading">
+                <div class="spinner" />
+              </div>
+              <div class="image-dialog-meta-bar">
+                <span class="font-medium text-sm truncate">{{ imageNames[dialogIdx] }}</span>
+                <span class="text-xs muted-text shrink-0">{{ dialogIdx + 1 }} / {{ imageNames.length }}</span>
+              </div>
             </div>
-            <p class="image-dialog-name">{{ imageNames[dialogIdx] }}</p>
-            <p class="text-xs muted-text">{{ dialogIdx + 1 }} / {{ imageNames.length }}</p>
+            <!-- Info panel -->
+            <div class="image-dialog-info-panel">
+              <h3 class="image-dialog-panel-title" :title="imageNames[dialogIdx]">{{ imageNames[dialogIdx] }}</h3>
+              <p class="text-xs text-muted-foreground mt-1">{{ dialogIdx + 1 }} / {{ imageNames.length }}</p>
+              <div class="image-desc-section">
+                <div class="image-desc-header">
+                  <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Description</span>
+                  <div class="flex gap-1">
+                    <button
+                      @click="handleReAnalyze"
+                      :disabled="vlmLoading"
+                      class="btn-icon"
+                      title="Re-analyze with VLM"
+                    >
+                      <Loader2 v-if="vlmLoading" :size="14" class="animate-spin" />
+                      <RefreshCw v-else :size="14" />
+                    </button>
+                    <button
+                      v-if="!editingDesc"
+                      @click="editingDesc = true; descEditText = currentImageDesc"
+                      class="btn-icon"
+                      title="Edit description"
+                    >
+                      <Pencil :size="14" />
+                    </button>
+                    <button
+                      v-else
+                      @click="saveDesc"
+                      :disabled="descSaving"
+                      class="btn-icon text-green-600"
+                      title="Save"
+                    >
+                      <Save v-if="!descSaving" :size="14" />
+                      <Loader2 v-else :size="14" class="animate-spin" />
+                    </button>
+                  </div>
+                </div>
+                <div v-if="editingDesc" class="desc-edit-area">
+                  <textarea v-model="descEditText" class="desc-textarea" placeholder="Enter description..." />
+                  <div class="flex gap-2 mt-1">
+                    <button @click="saveDesc" :disabled="descSaving" class="btn-secondary text-xs">Save</button>
+                    <button @click="editingDesc = false" class="btn-secondary text-xs">Cancel</button>
+                  </div>
+                </div>
+                <p v-else-if="currentImageDesc" class="description-text">{{ currentImageDesc }}</p>
+                <div v-else class="desc-empty-state">
+                  <p class="text-xs muted-text">No description yet.</p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1589,11 +1790,15 @@ function nextImage() {
   display: flex;
   align-items: center;
   gap: 2px;
-  width: 56px;
   flex-shrink: 0;
 }
 
+.header-actions-left {
+  width: 84px;
+}
+
 .header-actions-right {
+  width: 56px;
   justify-content: flex-end;
 }
 
@@ -1696,11 +1901,11 @@ function nextImage() {
 .error-banner {
   padding: 8px 12px;
   margin: 0 16px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  background: color-mix(in srgb, var(--bg-secondary) 90%, var(--accent-color) 10%);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 12px;
-  color: #dc2626;
+  color: var(--text-primary);
 }
 
 .edit-hint {
@@ -2297,12 +2502,24 @@ function nextImage() {
 .image-dialog-nav.left { left: -60px; }
 .image-dialog-nav.right { right: -60px; }
 
-.image-dialog-content {
-  text-align: center;
+.image-dialog-body {
+  display: flex;
+  gap: 16px;
+  max-width: 90vw;
+  max-height: 85vh;
+}
+
+.image-dialog-image-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
 }
 
 .image-dialog-img {
-  max-width: 90vw;
+  max-width: 60vw;
   max-height: 75vh;
   object-fit: contain;
   border-radius: 8px;
@@ -2312,10 +2529,123 @@ function nextImage() {
   padding: 48px;
 }
 
+.image-dialog-meta-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin-top: 12px;
+  color: #fff;
+}
+
 .image-dialog-name {
   font-size: 13px;
   color: #fff;
   margin-top: 12px;
+}
+
+/* ── Image Dialog Info Panel ── */
+.image-dialog-info-panel {
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--bg-color, #fff);
+  border-radius: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+}
+
+.image-dialog-panel-title {
+  font-weight: 600;
+  font-size: 13px;
+  padding: 16px 16px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-desc-section {
+  padding: 12px 16px 16px;
+  flex: 1;
+}
+
+.image-desc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.btn-icon {
+  padding: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--text-secondary, #666);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-icon:hover {
+  background: var(--accent-muted, #f0f0f0);
+}
+
+.btn-icon:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.text-muted-foreground {
+  color: var(--text-secondary, #666);
+}
+
+.description-text {
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--text-primary, #222);
+}
+
+.desc-edit-area {
+  margin-top: 4px;
+}
+
+.desc-textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 8px;
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--bg-color, #fff);
+  color: var(--text-primary, #222);
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.desc-textarea:focus {
+  border-color: var(--accent-color, #3b82f6);
+  box-shadow: 0 0 0 1px var(--accent-color, #3b82f6);
+}
+
+.desc-empty-state {
+  padding: 16px 0;
+  text-align: center;
+}
+
+/* Override animation class for lucide spinner */
+:global(.animate-spin) {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ── Focus mode ── */

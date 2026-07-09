@@ -13,7 +13,7 @@
     overflow: hidden;
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
                  "Helvetica Neue", "Microsoft YaHei", sans-serif;
-    font-size: 14px;
+    font-size: 15px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -62,3 +62,21 @@
 .skb-badge:hover { background: rgba(79,70,229,0.24); }
 .dark .skb-badge { background: rgba(129,140,248,0.15); color: #a5b4fc; }
 .dark .skb-badge:hover { background: rgba(129,140,248,0.28); }
+
+/* Animations */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slideIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+
+.animate-fade-in { animation: fadeIn 200ms cubic-bezier(0.4, 0, 0.2, 1); }
+.animate-fade-in-up { animation: fadeInUp 300ms cubic-bezier(0.4, 0, 0.2, 1); }
+.animate-slide-in { animation: slideIn 200ms cubic-bezier(0.4, 0, 0.2, 1); }
+.animate-scale-in { animation: scaleIn 200ms cubic-bezier(0.0, 0, 0.2, 1); }
+
+/* Stagger animations */
+.stagger-enter-active { transition: all 200ms ease-out; }
+.stagger-leave-active { transition: all 150ms ease-in; }
+.stagger-enter-from { opacity: 0; transform: translateY(8px); }
+.stagger-leave-to { opacity: 0; transform: translateY(-8px); }
+.stagger-move { transition: transform 200ms ease; }

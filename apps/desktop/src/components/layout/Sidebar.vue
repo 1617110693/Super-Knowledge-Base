@@ -24,6 +24,7 @@ import { useKBStore } from "@/stores/kbStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useChatStore } from "@/stores/chatStore";
 import { useTabStore } from "@/stores/tabStore";
+import { useI18n } from "@/i18n/index";
 import type { KnowledgeBase } from "@/types";
 
 const COLLAPSED_KEY = "skb-sidebar-collapsed";
@@ -33,6 +34,8 @@ const route = useRoute();
 const kbStore = useKBStore();
 const settingsStore = useSettingsStore();
 const chatStore = useChatStore();
+const tabStore = useTabStore();
+const { t } = useI18n();
 
 const kbId = computed(() => route.params.kbId as string | undefined);
 
@@ -155,20 +158,20 @@ function handleDeleteConversation(convId: string) {
   <!-- ═══════ Collapsed mode ═══════ -->
   <template v-if="collapsed">
     <aside class="sidebar sidebar-collapsed">
-      <!-- App icon -->
+      <!-- Top: expand button -->
       <button
         class="sb-icon-btn"
-        title="Home"
-        @click="router.push('/')"
+        :title="t('nav.expandSidebar')"
+        @click="toggleCollapsed"
       >
-        <BookOpen :size="20" class="text-primary" />
+        <PanelLeft :size="16" />
       </button>
 
       <!-- Backend status -->
       <span
         class="sb-status-dot"
         :class="settingsStore.pythonRunning ? 'bg-green' : 'bg-red'"
-        :title="settingsStore.pythonRunning ? 'Backend ready' : 'Backend offline'"
+        :title="settingsStore.pythonRunning ? t('app.backendReady') : t('app.backendOffline')"
       />
 
       <div class="sb-icon-list">
@@ -176,7 +179,7 @@ function handleDeleteConversation(convId: string) {
         <button
           class="sb-icon-btn"
           :class="{ active: isActive('/') && !kbId }"
-          title="Overview"
+          :title="t('nav.overview')"
           @click="router.push('/')"
         >
           <LayoutDashboard :size="16" />
@@ -201,7 +204,7 @@ function handleDeleteConversation(convId: string) {
             ref="chatBtnRef"
             class="sb-icon-btn"
             :class="{ active: route.path.startsWith('/chat') }"
-            title="Chat"
+            :title="t('nav.chatSection')"
             @click="chatPopover = !chatPopover"
           >
             <MessageSquare :size="16" />
@@ -212,10 +215,10 @@ function handleDeleteConversation(convId: string) {
             class="sb-popover"
           >
             <div class="sb-popover-header">
-              <span class="sb-popover-title">Chat</span>
+              <span class="sb-popover-title">{{ t("nav.chatSection") }}</span>
               <button
                 class="sb-icon-btn-xs"
-                title="New chat"
+                :title="t('nav.newChat')"
                 @click="startNewChat"
               >
                 <Plus :size="14" />
@@ -223,7 +226,7 @@ function handleDeleteConversation(convId: string) {
             </div>
             <div class="sb-popover-list">
               <p v-if="recentConversations.length === 0" class="sb-empty-text">
-                No conversations
+                {{ t("nav.noConversations") }}
               </p>
               <div
                 v-for="conv in recentConversations"
@@ -240,6 +243,11 @@ function handleDeleteConversation(convId: string) {
                   }"
                   @click="
                     chatStore.setActiveConversation(conv.id);
+                    tabStore.openTab({
+                      id: conv.id,
+                      title: conv.title || conv.messages[0]?.content?.slice(0, 30) || t('chat.new'),
+                      url: `/chat/${conv.id}`,
+                    });
                     chatPopover = false;
                   "
                 >
@@ -248,14 +256,14 @@ function handleDeleteConversation(convId: string) {
                     {{
                       conv.title ||
                       conv.messages[0]?.content?.slice(0, 40) ||
-                      "New chat"
+                      t("chat.new")
                     }}
                   </span>
                 </router-link>
                 <button
                   class="sb-popover-delete"
                   @click.prevent.stop="handleDeleteConversation(conv.id)"
-                  title="Delete"
+                  :title="t('kb.deleteTooltip')"
                 >
                   <Trash2 :size="10" />
                 </button>
@@ -265,22 +273,15 @@ function handleDeleteConversation(convId: string) {
         </div>
       </div>
 
-      <!-- Bottom -->
+      <!-- Bottom: Settings -->
       <div class="sb-bottom">
         <button
           class="sb-icon-btn"
           :class="{ active: isActive('/settings') }"
-          title="Settings"
+          :title="t('nav.settings')"
           @click="router.push('/settings')"
         >
           <Settings :size="16" />
-        </button>
-        <button
-          class="sb-icon-btn mt-auto"
-          title="Expand sidebar"
-          @click="toggleCollapsed"
-        >
-          <PanelLeft :size="16" />
         </button>
       </div>
 
@@ -295,7 +296,7 @@ function handleDeleteConversation(convId: string) {
             <div class="modal-header">
               <h3 class="modal-title">
                 <AlertCircle :size="20" class="text-red-500" />
-                Backend Error
+                {{ t("app.backendError") }}
               </h3>
               <button class="sb-icon-btn-xs" @click="showError = false">
                 <X :size="16" />
@@ -316,11 +317,11 @@ function handleDeleteConversation(convId: string) {
         <div class="sb-header-row">
           <h1 class="sb-app-title">
             <BookOpen :size="16" class="text-primary" />
-            Super KB
+            {{ t("nav.superKb") }}
           </h1>
           <button
             class="sb-icon-btn-xs"
-            title="Collapse sidebar"
+            :title="t('nav.collapseSidebar')"
             @click="toggleCollapsed"
           >
             <PanelLeftClose :size="14" />
@@ -332,7 +333,7 @@ function handleDeleteConversation(convId: string) {
             :class="settingsStore.pythonRunning ? 'bg-green' : 'bg-red'"
           />
           <span class="sb-status-text">
-            {{ settingsStore.pythonRunning ? "Backend ready" : "Backend offline" }}
+            {{ settingsStore.pythonRunning ? t("app.backendReady") : t("app.backendOffline") }}
           </span>
         </div>
         <button
@@ -341,7 +342,7 @@ function handleDeleteConversation(convId: string) {
           @click="showError = true"
         >
           <AlertCircle :size="12" />
-          View error
+          {{ t("nav.viewError") }}
         </button>
       </div>
 
@@ -353,7 +354,7 @@ function handleDeleteConversation(convId: string) {
             <ChevronDown v-if="kbExpanded" :size="12" />
             <ChevronRight v-else :size="12" />
             <FolderOpen :size="16" />
-            <span class="sb-section-label">Knowledge Bases</span>
+            <span class="sb-section-label">{{ t("nav.knowledgeBases") }}</span>
           </button>
           <div v-if="kbExpanded" class="sb-section-list">
             <router-link
@@ -362,7 +363,7 @@ function handleDeleteConversation(convId: string) {
               :class="{ active: isActive('/') && !kbId }"
             >
               <LayoutDashboard :size="12" class="shrink-0" />
-              Overview
+              {{ t("nav.overview") }}
             </router-link>
             <router-link
               v-for="kb in sortedKBs"
@@ -386,28 +387,31 @@ function handleDeleteConversation(convId: string) {
 
         <!-- Chat Section -->
         <div class="sb-section">
-          <button
+          <div
             class="sb-section-header"
+            role="button"
+            tabindex="0"
             @click="chatExpanded = !chatExpanded"
+            @keydown.enter="chatExpanded = !chatExpanded"
           >
             <ChevronDown v-if="chatExpanded" :size="12" />
             <ChevronRight v-else :size="12" />
             <MessageSquare :size="16" />
-            <span class="sb-section-label">Chat</span>
+            <span class="sb-section-label">{{ t("nav.chatSection") }}</span>
             <button
               class="sb-icon-btn-xs ml-auto"
-              title="New chat"
+              :title="t('nav.newChat')"
               @click.stop="startNewChatExpanded"
             >
               <Plus :size="12" />
             </button>
-          </button>
+          </div>
           <div v-if="chatExpanded" class="sb-section-list">
             <p
               v-if="recentConversations.length === 0"
               class="sb-empty-text"
             >
-              No conversations
+              {{ t("nav.noConversations") }}
             </p>
             <div
               v-for="conv in recentConversations"
@@ -435,14 +439,21 @@ function handleDeleteConversation(convId: string) {
                       chatStore.activeConversationId === conv.id &&
                       route.path.startsWith('/chat'),
                   }"
-                  @click="chatStore.setActiveConversation(conv.id)"
+                  @click="
+                    chatStore.setActiveConversation(conv.id);
+                    tabStore.openTab({
+                      id: conv.id,
+                      title: conv.title || conv.messages[0]?.content?.slice(0, 30) || t('chat.new'),
+                      url: `/chat/${conv.id}`,
+                    });
+                  "
                 >
                   <MessageSquare :size="12" class="shrink-0" />
                   <span class="truncate">
                     {{
                       conv.title ||
                       conv.messages[0]?.content?.slice(0, 30) ||
-                      "New chat"
+                      t("chat.new")
                     }}
                   </span>
                 </router-link>
@@ -452,14 +463,14 @@ function handleDeleteConversation(convId: string) {
                     @click.prevent.stop="
                       startRename(conv.id, conv.title)
                     "
-                    title="Rename"
+                    :title="t('nav.renameTooltip')"
                   >
                     <Pencil :size="10" />
                   </button>
                   <button
                     class="sb-icon-btn-xs hover:text-red-500"
                     @click.prevent.stop="handleDeleteConversation(conv.id)"
-                    title="Delete"
+                    :title="t('kb.deleteTooltip')"
                   >
                     <Trash2 :size="10" />
                   </button>
@@ -478,7 +489,7 @@ function handleDeleteConversation(convId: string) {
           :class="{ active: isActive('/settings') }"
         >
           <Settings :size="16" />
-          Settings
+          {{ t("nav.settings") }}
         </router-link>
       </div>
     </aside>
@@ -494,7 +505,7 @@ function handleDeleteConversation(convId: string) {
           <div class="modal-header">
             <h3 class="modal-title">
               <AlertCircle :size="20" class="text-red-500" />
-              Backend Error
+              {{ t("app.backendError") }}
             </h3>
             <button class="sb-icon-btn-xs" @click="showError = false">
               <X :size="16" />
@@ -517,6 +528,7 @@ function handleDeleteConversation(convId: string) {
   flex-shrink: 0;
   overflow: hidden;
   height: 100%;
+  transition: width 250ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .sidebar-collapsed {

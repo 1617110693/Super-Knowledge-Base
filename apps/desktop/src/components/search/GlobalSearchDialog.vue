@@ -13,7 +13,9 @@ import {
   ExternalLink,
   BookOpen,
 } from "lucide-vue-next";
+import { useI18n } from "@/i18n/index";
 
+const { t } = useI18n();
 const router = useRouter();
 
 const visible = ref(false);
@@ -115,7 +117,7 @@ defineExpose({ open, close });
 <template>
   <el-dialog
     v-model="visible"
-    title="Global Search"
+    :title="t('search.searchAllTitle')"
     width="700px"
     top="8vh"
     :close-on-click-modal="true"
@@ -129,7 +131,7 @@ defineExpose({ open, close });
         <el-input
           ref="searchInputRef"
           v-model="query"
-          placeholder="Search across all knowledge bases... (Ctrl+K)"
+          :placeholder="t('search.searchAllPlaceholder')"
           size="large"
           clearable
           autofocus
@@ -145,12 +147,12 @@ defineExpose({ open, close });
       <div class="filter-bar">
         <div class="filter-label">
           <Database :size="14" />
-          <span>Knowledge Bases</span>
+          <span>{{ t('search.knowledgeBases') || "Knowledge Bases" }}</span>
         </div>
         <el-select
           v-model="selectedKbIds"
           multiple
-          placeholder="All KBs (leave empty to search all)"
+          :placeholder="t('search.allKbsPlaceholder') || 'All KBs (leave empty to search all)'"
           size="small"
           clearable
           collapse-tags
@@ -180,8 +182,7 @@ defineExpose({ open, close });
       <div class="search-results-area">
         <!-- Summary -->
         <div v-if="!searching && results.length > 0" class="result-summary">
-          Found <strong>{{ total }}</strong> result{{ total !== 1 ? "s" : "" }}
-          across {{ new Set(results.map((r) => r.kb_id)).size }} KB{{ new Set(results.map((r) => r.kb_id)).size !== 1 ? "s" : "" }}
+          {{ t("search.results", { count: total, time: 0 }) }}
         </div>
 
         <!-- Loading -->
@@ -194,7 +195,7 @@ defineExpose({ open, close });
         <!-- Empty -->
         <el-empty
           v-else-if="query && !searching && results.length === 0 && !error"
-          description="No results found across knowledge bases."
+          :description="t('search.noResultsFound') || 'No results found across knowledge bases.'"
           :image-size="60"
         />
 
@@ -214,7 +215,7 @@ defineExpose({ open, close });
                 </span>
                 <span class="doc-name">
                   <FileText :size="12" />
-                  {{ result.doc_name || "Untitled" }}
+                  {{ result.doc_name || (t("search.untitled") || "Untitled") }}
                 </span>
               </div>
               <el-tag
@@ -239,7 +240,7 @@ defineExpose({ open, close });
               </span>
               <span class="open-hint">
                 <ExternalLink :size="11" />
-                Open document
+                {{ t("search.openDocument") || "Open document" }}
               </span>
             </div>
           </div>

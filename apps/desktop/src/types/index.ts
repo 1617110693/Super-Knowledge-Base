@@ -177,6 +177,8 @@ export interface AppSettings {
   tavily_api_key: string;
   searxng_base_url: string;
   web_search_max_results: number;
+  fontSize: number;
+  has_seen_guide?: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -217,4 +219,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   tavily_api_key: "",
   searxng_base_url: "",
   web_search_max_results: 5,
+  fontSize: 15,
+  has_seen_guide: false,
 };

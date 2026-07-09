@@ -33,7 +33,7 @@
         :title="t('chat.webSearch')"
         @click="toggleWebSearch"
       >
-        <span class="text-sm transition-transform" :class="{ 'opacity-50': !webSearchEnabled }">🌐</span>
+        <Globe class="w-4 h-4 transition-transform" :class="{ 'opacity-50': !webSearchEnabled }" />
         <span>{{ webSearchEnabled ? (t('chat.webSearchOn') || 'On') : (t('chat.webSearchOff') || 'Off') }}</span>
       </button>
 
@@ -160,6 +160,7 @@
       @update:visible="previewChunk = null"
       @prev="navigatePreviewChunk(-1)"
       @next="navigatePreviewChunk(1)"
+      @openDocument="openDocFromChunk"
     />
   </div>
 </template>
@@ -169,7 +170,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   MessageSquare, Plus, ArrowDownToLine, ArrowDown,
-  RefreshCw, Trash2, X,
+  RefreshCw, Trash2, X, Globe,
 } from "lucide-vue-next";
 import type { ChatMessage, SearchResult, ToolCall } from "@/types";
 import { useChatStore } from "@/stores/chatStore";
@@ -258,6 +259,7 @@ function kbNameById(id: string): string {
 
 // ── Initialize conversation ──
 onMounted(async () => {
+  await chatStore.load();
   await kbStore.loadKBs();
   loadMemoryGraph().catch(() => {});
 
@@ -890,6 +892,19 @@ function navigatePreviewChunk(delta: number) {
         .catch(() => {});
     })
     .catch(() => {});
+}
+
+// ── Open document from chunk preview ──
+function openDocFromChunk(docId: string) {
+  if (previewChunk.value) {
+    const kbId = previewChunk.value.kb_id;
+    const ci = previewChunk.value.metadata?.chunk_index;
+    const url = ci != null
+      ? `/kb/${kbId}/documents/${docId}?ci=${ci}`
+      : `/kb/${kbId}/documents/${docId}`;
+    router.push(url);
+    previewChunk.value = null;
+  }
 }
 </script>
 

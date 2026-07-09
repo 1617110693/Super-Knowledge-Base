@@ -28,6 +28,7 @@ import {
 } from "lucide-vue-next";
 import { useKBStore } from "@/stores/kbStore";
 import { useTabStore } from "@/stores/tabStore";
+import { useI18n } from "@/i18n/index";
 import type { Document } from "@/types";
 import { ElMessage, ElMessageBox } from "element-plus";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
@@ -38,6 +39,7 @@ const route = useRoute();
 const router = useRouter();
 const store = useKBStore();
 const tabStore = useTabStore();
+const { t } = useI18n();
 
 const kbId = computed(() => route.params.kbId as string);
 const kb = computed(() => store.knowledgeBases.find((k) => k.id === kbId.value) ?? null);
@@ -142,6 +144,21 @@ onUnmounted(() => {
   if (parseTimer) clearInterval(parseTimer);
 });
 
+// Watch for KB ID changes in the URL and reload documents
+watch(
+  () => route.params.kbId,
+  async (newId) => {
+    if (newId && typeof newId === "string") {
+      loadingDocs.value = true;
+      await store.loadKBs();
+      await store.loadDocuments(newId);
+      loadingDocs.value = false;
+      loadPaths();
+      startParsePolling();
+    }
+  }
+);
+
 watch(
   () => store.documents,
   () => {
@@ -218,7 +235,7 @@ async function doUpload(filePath: string) {
   } catch (e: any) {
     const msg = String(e);
     uploadError.value = msg.includes("Embedding model mismatch")
-      ? "Embedding model mismatch: the knowledge base uses a different embedding model than the current settings.\n\n" + msg
+      ? t("error.embeddingMismatch")
       : msg;
   }
   uploadingRef.value = false;
@@ -289,12 +306,12 @@ async function handleReindexAll() {
   if (!kbId.value) return;
   try {
     await ElMessageBox.confirm(
-      `Re-index all documents in "${kb.value?.name}"? This will recreate all embeddings.`,
-      "Re-index All",
-      { confirmButtonText: "Re-index", cancelButtonText: "Cancel", type: "info" }
+      t("kb.reindexConfirm", { name: kb.value?.name || "" }),
+      t("docs.reindexAll"),
+      { confirmButtonText: t("docs.reindex"), cancelButtonText: t("kb.cancel"), type: "info" }
     );
     await store.reindexAll(kbId.value);
-    ElMessage.success("Re-indexing started for all documents");
+    ElMessage.success(t("kb.reindexStarted"));
   } catch {
     /* cancelled */
   }
@@ -303,12 +320,8 @@ async function handleReindexAll() {
 // ── Open file / explorer ──
 async function handleOpenFile(doc: Document) {
   if (!kbId.value) return;
-  try {
-    const { openDocumentFile } = await import("@/services/tauriBridge");
-    await openDocumentFile(kbId.value, doc.id);
-  } catch (e) {
-    console.error("Failed to open file:", e);
-  }
+  const viewParam = doc.file_type === "pdf" ? "?view=pdf" : "";
+  router.push(`/kb/${kbId.value}/documents/${doc.id}${viewParam}`);
 }
 
 async function handleOpenInExplorer(doc: Document) {
@@ -410,19 +423,19 @@ function formatFileSize(bytes: number): string {
 }
 
 function formatProgress(p: { percent: number; stage: string; current: number; total: number } | undefined): string {
-  if (!p) return "Idx 0%";
-  if (p.stage === "vlm" && p.total > 0) return `VLM ${p.current}/${p.total}`;
-  return `Idx ${p.percent}%`;
+  if (!p) return t("kb.indexingProgress", { percent: 0 });
+  if (p.stage === "vlm" && p.total > 0) return t("kb.progressVlm", { cur: p.current, total: p.total });
+  return t("kb.indexingProgress", { percent: p.percent });
 }
 
 function statusLabel(status: string): string {
   const map: Record<string, string> = {
-    pending: "Pending",
-    parsing: "Parsing...",
-    done: "Done",
-    failed: "Failed",
+    pending: "kb.statusPending",
+    parsing: "kb.statusParsing",
+    done: "kb.statusDone",
+    failed: "kb.statusFailed",
   };
-  return map[status] || status;
+  return t(map[status] || status);
 }
 
 // ── Sub-folders ──
@@ -444,7 +457,7 @@ const docsInPath = computed(() =>
 async function handleCopyKB() {
   if (kbId.value) {
     await store.copyKB(kbId.value);
-    ElMessage.success("Knowledge base copied");
+    ElMessage.success(t("kb.copyKb"));
   }
 }
 
@@ -485,7 +498,7 @@ async function handleRefresh() {
           <template v-else>
             <h2 class="kb-title">
               {{ kb.name }}
-              <button class="icon-btn-sm" @click="startRename" title="Rename">
+              <button class="icon-btn-sm" @click="startRename" :title="t('kb.rename')">
                 <Pencil :size="14" />
               </button>
             </h2>
@@ -498,7 +511,7 @@ async function handleRefresh() {
                 class="inline-edit-textarea"
                 rows="2"
                 autofocus
-                placeholder="Add description..."
+                :placeholder="t('kb.addDescription')"
                 @keydown.enter.exact.prevent="commitDesc"
                 @keydown.escape="editingDesc = false"
                 @blur="commitDesc"
@@ -514,11 +527,11 @@ async function handleRefresh() {
                 class="kb-description"
                 :class="{ 'cursor-pointer hover:text-foreground': kb.description }"
                 @click="kb.description && (showDescDialog = true)"
-                :title="kb.description ? 'Click to read full description' : undefined"
+                :title="kb.description ? t('kb.readFullDesc') : undefined"
               >
-                {{ kb.description || "No description" }}
+                {{ kb.description || t("kb.noDescription") }}
               </p>
-              <button class="icon-btn-sm shrink-0" @click="startEditDesc" title="Edit description">
+              <button class="icon-btn-sm shrink-0" @click="startEditDesc" :title="t('kb.editDescription')">
                 <Pencil :size="12" />
               </button>
             </div>
@@ -526,7 +539,7 @@ async function handleRefresh() {
 
           <p v-if="kb.embedding_model" class="embedding-badge">
             <span class="model-chip">{{ kb.embedding_model }}</span>
-            <span v-if="kb.embedding_dim > 0" class="dim-text">dim: {{ kb.embedding_dim }}</span>
+            <span v-if="kb.embedding_dim > 0" class="dim-text">{{ t("kb.embeddingDim", { dim: kb.embedding_dim }) }}</span>
           </p>
         </div>
         <div class="flex items-center gap-2">
@@ -534,21 +547,21 @@ async function handleRefresh() {
             v-if="hasIndexedDocs"
             class="action-btn action-btn-warning"
             @click="handleReindexAll"
-            title="Re-index All"
+            :title="t('kb.reindexAllAction')"
           >
             <RefreshCw :size="14" />
-            <span class="hidden sm:inline">Re-index All</span>
+            <span class="hidden sm:inline">{{ t("kb.reindexAllAction") }}</span>
           </button>
-          <button class="action-btn action-btn-ghost" @click="handleRefresh" title="Refresh">
+          <button class="action-btn action-btn-ghost" @click="handleRefresh" :title="t('kb.refresh')">
             <RefreshCw :size="14" />
           </button>
-          <button class="action-btn action-btn-ghost" @click="handleCopyKB" title="Copy KB">
+          <button class="action-btn action-btn-ghost" @click="handleCopyKB" :title="t('kb.copyKb')">
             <Copy :size="14" />
           </button>
           <button
             class="action-btn action-btn-danger"
             @click="deleteKBTarget = true"
-            title="Delete KB"
+            :title="t('kb.deleteKBTooltip')"
           >
             <Trash2 :size="14" />
           </button>
@@ -557,7 +570,7 @@ async function handleRefresh() {
             @click="router.push(`/kb/${kb.id}/search`)"
           >
             <Search :size="14" />
-            <span class="hidden sm:inline">Search</span>
+            <span class="hidden sm:inline">{{ t("kb.searchBtn") }}</span>
           </button>
         </div>
       </div>
@@ -566,17 +579,17 @@ async function handleRefresh() {
       <div class="stats-row">
         <div class="stat-chip">
           <FileText :size="14" />
-          <span class="stat-label">Documents</span>
+          <span class="stat-label">{{ t("overview.documents") }}</span>
           <span class="stat-value">{{ kb.document_count }}</span>
         </div>
         <div class="stat-chip">
           <CheckCircle :size="14" />
-          <span class="stat-label">Done</span>
+          <span class="stat-label">{{ t("kb.statDone") }}</span>
           <span class="stat-value">{{ doneCount }}</span>
         </div>
         <div class="stat-chip">
           <Layers :size="14" />
-          <span class="stat-label">Chunks</span>
+          <span class="stat-label">{{ t("overview.chunks") }}</span>
           <span class="stat-value">{{ totalChunks }}</span>
         </div>
       </div>
@@ -587,7 +600,7 @@ async function handleRefresh() {
       <!-- Toolbar -->
       <div class="toolbar">
         <button class="toolbar-btn toolbar-btn-primary" @click="handleUploadClick">
-          <Upload :size="14" /> Upload
+          <Upload :size="14" /> {{ t("kb.upload") }}
         </button>
         <button
           class="toolbar-btn toolbar-btn-ghost"
@@ -596,14 +609,14 @@ async function handleRefresh() {
             newFolderParent = selectedPath;
           "
         >
-          <Plus :size="14" /> New Folder
+          <Plus :size="14" /> {{ t("kb.newFolder") }}
         </button>
-        <button class="toolbar-btn toolbar-btn-icon" @click="handleRefresh" title="Refresh">
+        <button class="toolbar-btn toolbar-btn-icon" @click="handleRefresh" :title="t('kb.refresh')">
           <RefreshCw :size="14" />
         </button>
         <!-- Breadcrumb -->
         <div class="breadcrumb">
-          <span class="breadcrumb-seg" @click="setSelectedPath(null)">Root</span>
+          <span class="breadcrumb-seg" @click="setSelectedPath(null)">{{ t("kb.rootBreadcrumb") }}</span>
           <template v-if="selectedPath">
             <template v-for="(seg, i) in selectedPath.split('/')" :key="i">
               <span class="breadcrumb-slash">/</span>
@@ -618,7 +631,7 @@ async function handleRefresh() {
           </template>
         </div>
         <span class="toolbar-count">
-          {{ docsInPath.length }} items
+          {{ t("kb.itemsCount", { count: docsInPath.length }) }}
         </span>
       </div>
 
@@ -629,14 +642,14 @@ async function handleRefresh() {
           v-model="newFolderName"
           class="new-folder-input"
           autofocus
-          placeholder="Folder name"
+          :placeholder="t('kb.folderNamePlaceholder')"
           @keydown.enter="handleCreateFolder"
           @keydown.escape="
             showNewFolder = false;
             newFolderParent = null;
           "
         />
-        <button class="toolbar-btn toolbar-btn-primary" @click="handleCreateFolder">Create</button>
+        <button class="toolbar-btn toolbar-btn-primary" @click="handleCreateFolder">{{ t("kb.createBtnLabel") }}</button>
         <button
           class="toolbar-btn toolbar-btn-ghost"
           @click="
@@ -644,7 +657,7 @@ async function handleRefresh() {
             newFolderParent = null;
           "
         >
-          Cancel
+          {{ t("kb.cancel") }}
         </button>
       </div>
 
@@ -663,11 +676,11 @@ async function handleRefresh() {
         >
           <template v-if="uploadingRef || loadingDocs">
             <Loader2 :size="32" class="spin" />
-            <p>Loading documents...</p>
+            <p>{{ t("kb.loadingDocuments") }}</p>
           </template>
           <template v-else>
             <FolderOpen :size="40" class="empty-icon" />
-            <p>Drop files here or click Upload to add documents</p>
+            <p>{{ t("kb.dropHint") }}</p>
           </template>
         </div>
 
@@ -701,7 +714,7 @@ async function handleRefresh() {
               <div class="explorer-item-main" @click="setSelectedPath(fullPath)">
                 <FolderOpen :size="16" class="text-amber-500 shrink-0" />
                 <span class="font-medium truncate">{{ fullPath.split('/').pop() }}</span>
-                <span class="type-badge">Folder</span>
+                <span class="type-badge">{{ t("kb.folderBadge") }}</span>
               </div>
               <div class="explorer-item-actions">
                 <button
@@ -710,7 +723,7 @@ async function handleRefresh() {
                     deletePathTarget = fullPath;
                     disbandOnly = false;
                   "
-                  title="Delete folder"
+                  :title="t('kb.deleteFolder')"
                 >
                   <Trash2 :size="14" />
                 </button>
@@ -778,7 +791,7 @@ async function handleRefresh() {
 
                     <!-- Part count badge -->
                     <span v-if="doc.parts && doc.parts.length > 0" class="part-badge">
-                      {{ doc.parts.length }} parts
+                      {{ t("kb.partsCount", { count: doc.parts.length }) }}
                     </span>
 
                     <span class="file-meta">
@@ -807,7 +820,7 @@ async function handleRefresh() {
                           class="text-red-500 cursor-pointer hover:underline"
                           @click.stop="errorDetailTarget = doc.parse_error ?? null"
                         >
-                          Failed
+                          {{ t("kb.statusFailed") }}
                         </span>
                       </template>
                       <template v-else-if="doc.chunk_count > 0">
@@ -828,7 +841,7 @@ async function handleRefresh() {
                       <button
                         class="icon-btn-xs hover:text-amber-600"
                         @click.stop="doc.parts!.forEach((p) => handleReindexDoc(p))"
-                        title="Re-index all parts"
+                        :title="t('kb.reindexAllPartsTooltip')"
                       >
                         <RefreshCw :size="12" />
                       </button>
@@ -837,7 +850,7 @@ async function handleRefresh() {
                       <button
                         class="icon-btn-xs hover:text-amber-600"
                         @click.stop="handleReindexDoc(doc)"
-                        title="Re-index"
+                        :title="t('kb.reindexTooltip')"
                       >
                         <RefreshCw :size="12" />
                       </button>
@@ -847,7 +860,7 @@ async function handleRefresh() {
                       v-if="!doc.parent_doc_id"
                       class="icon-btn-xs"
                       @click.stop="openMoveCopy(doc)"
-                      title="Move/Copy"
+                      :title="t('kb.moveCopy')"
                     >
                       <GripHorizontal :size="12" />
                     </button>
@@ -855,7 +868,7 @@ async function handleRefresh() {
                     <button
                       class="icon-btn-xs"
                       @click.stop="startDocRename(doc)"
-                      title="Rename"
+                      :title="t('kb.rename')"
                     >
                       <Pencil :size="12" />
                     </button>
@@ -863,7 +876,7 @@ async function handleRefresh() {
                     <button
                       class="icon-btn-xs"
                       @click.stop="handleOpenInExplorer(doc)"
-                      title="Open location"
+                      :title="t('kb.openLocationTooltip')"
                     >
                       <FolderSearch :size="12" />
                     </button>
@@ -871,7 +884,7 @@ async function handleRefresh() {
                     <button
                       class="icon-btn-xs"
                       @click.stop="handleOpenFile(doc)"
-                      title="Open file"
+                      :title="t('kb.openFileTooltip')"
                     >
                       <ExternalLink :size="12" />
                     </button>
@@ -879,7 +892,7 @@ async function handleRefresh() {
                     <button
                       class="icon-btn-xs hover:text-red-500"
                       @click.stop="deleteTarget = { docId: doc.id, docName: doc.name }"
-                      title="Delete"
+                      :title="t('kb.deleteTooltip')"
                     >
                       <Trash2 :size="12" />
                     </button>
@@ -918,7 +931,7 @@ async function handleRefresh() {
                             class="text-red-500 cursor-pointer hover:underline"
                             @click.stop="errorDetailTarget = part.parse_error ?? null"
                           >
-                            Failed
+                            {{ t("kb.statusFailed") }}
                           </span>
                         </template>
                         <template v-else-if="part.chunk_count > 0">
@@ -941,35 +954,35 @@ async function handleRefresh() {
                         v-if="part.chunk_count > 0"
                         class="icon-btn-xs hover:text-amber-600"
                         @click.stop="handleReindexDoc(part)"
-                        title="Re-index"
+                        :title="t('kb.reindexTooltip')"
                       >
                         <RefreshCw :size="12" />
                       </button>
                       <button
                         class="icon-btn-xs"
                         @click.stop="startDocRename(part)"
-                        title="Rename"
+                        :title="t('kb.rename')"
                       >
                         <Pencil :size="12" />
                       </button>
                       <button
                         class="icon-btn-xs"
                         @click.stop="handleOpenInExplorer(part)"
-                        title="Open location"
+                        :title="t('kb.openLocationTooltip')"
                       >
                         <FolderSearch :size="12" />
                       </button>
                       <button
                         class="icon-btn-xs"
                         @click.stop="handleOpenFile(part)"
-                        title="Open file"
+                        :title="t('kb.openFileTooltip')"
                       >
                         <ExternalLink :size="12" />
                       </button>
                       <button
                         class="icon-btn-xs hover:text-red-500"
                         @click.stop="deleteTarget = { docId: part.id, docName: part.name }"
-                        title="Delete"
+                        :title="t('kb.deleteTooltip')"
                       >
                         <Trash2 :size="12" />
                       </button>
@@ -986,8 +999,8 @@ async function handleRefresh() {
     <!-- Delete doc confirm -->
     <ConfirmDialog
       :visible="deleteTarget !== null"
-      title="Delete Document"
-      :message="deleteTarget ? `Delete: ${deleteTarget.docName}` : ''"
+      :title="t('kb.deleteDocTitle')"
+      :message="deleteTarget ? t('kb.deleteDocMsg', { name: deleteTarget.docName }) : ''"
       danger
       @confirm="handleDeleteConfirm"
       @cancel="deleteTarget = null"
@@ -996,8 +1009,8 @@ async function handleRefresh() {
     <!-- Delete KB confirm -->
     <ConfirmDialog
       :visible="deleteKBTarget"
-      title="Delete Knowledge Base"
-      :message="`Are you sure you want to delete &quot;${kb.name}&quot;? This action cannot be undone.`"
+      :title="t('kb.deleteKBTitle')"
+      :message="kb ? t('kb.deleteKBMsg', { name: kb.name }) : ''"
       danger
       @confirm="handleDeleteKB"
       @cancel="deleteKBTarget = false"
@@ -1006,7 +1019,7 @@ async function handleRefresh() {
     <!-- Delete folder confirm -->
     <el-dialog
       v-model="deletePathTarget"
-      :title="'Delete Folder'"
+      :title="t('kb.deleteFolderTitle')"
       width="420px"
       :close-on-click-modal="false"
       @update:model-value="
@@ -1016,22 +1029,20 @@ async function handleRefresh() {
       "
     >
       <p style="margin: 0 0 16px; line-height: 1.6">
-        Delete folder
-        <strong>{{ deletePathTarget }}</strong
-        >?
+        {{ t("kb.deleteFolderMsg", { path: deletePathTarget || "" }) }}
       </p>
       <label class="flex items-center gap-2 cursor-pointer">
         <input v-model="disbandOnly" type="checkbox" class="w-4 h-4 rounded" />
-        <span style="font-size: 13px">Disband only (keep documents, clear paths)</span>
+        <span style="font-size: 13px">{{ t("kb.disbandOnlyLabel") }}</span>
       </label>
       <template #footer>
-        <el-button size="small" @click="deletePathTarget = null">Cancel</el-button>
+        <el-button size="small" @click="deletePathTarget = null">{{ t("kb.cancel") }}</el-button>
         <el-button
           size="small"
           :type="disbandOnly ? 'warning' : 'danger'"
           @click="handleDeleteFolderConfirm"
         >
-          {{ disbandOnly ? "Disband" : "Delete" }}
+          {{ disbandOnly ? t("kb.disbandBtn") : t("kb.deleteFolderBtn") }}
         </el-button>
       </template>
     </el-dialog>
@@ -1051,7 +1062,7 @@ async function handleRefresh() {
     <!-- Error detail dialog -->
     <el-dialog
       v-model="errorDetailTarget"
-      title="MinerU Parse Error"
+      :title="t('kb.mineruParseError')"
       width="500px"
       :close-on-click-modal="true"
       @update:model-value="
@@ -1062,11 +1073,11 @@ async function handleRefresh() {
     >
       <template #header>
         <div class="flex items-center justify-between w-full">
-          <span style="color: var(--el-color-danger); font-weight: 600">MinerU Parse Error</span>
+          <span style="color: var(--el-color-danger); font-weight: 600">{{ t("kb.mineruParseError") }}</span>
           <button
             class="icon-btn-sm"
             @click="copyErrorDetail"
-            title="Copy error"
+            :title="t('app.copyError')"
           >
             <Check v-if="errorCopied" :size="14" class="text-green-500" />
             <Copy v-else :size="14" />
@@ -1091,7 +1102,7 @@ async function handleRefresh() {
     <!-- Upload error -->
     <ErrorDialog
       :visible="!!uploadError"
-      title="Upload Error"
+      :title="t('kb.uploadError')"
       :message="uploadError"
       @update:visible="uploadError = ''"
     />
@@ -1112,8 +1123,8 @@ async function handleRefresh() {
   <!-- KB not found -->
   <div v-else class="kb-not-found">
     <Database :size="48" class="not-found-icon" />
-    <p>Knowledge base not found</p>
-    <el-button size="small" @click="router.push('/')">Back to Dashboard</el-button>
+    <p>{{ t("kb.notFound") }}</p>
+    <el-button size="small" @click="router.push('/')">{{ t("kb.backToDashboard") }}</el-button>
   </div>
 </template>
 

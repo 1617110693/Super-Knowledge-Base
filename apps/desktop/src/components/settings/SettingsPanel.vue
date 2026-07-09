@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from "@/i18n/index";
 import { ref, watch, onMounted, onUnmounted, computed } from "vue";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useKBStore } from "@/stores/kbStore";
@@ -24,6 +25,7 @@ import {
   RefreshCw,
 } from "lucide-vue-next";
 
+const { t } = useI18n();
 const store = useSettingsStore();
 const kbStore = useKBStore();
 
@@ -31,6 +33,9 @@ const kbStore = useKBStore();
 const local = ref<AppSettings>({ ...store.settings });
 const saveStatus = ref<"saved" | "saving" | "idle">("idle");
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+// ── Active tab ──
+const activeTab = ref("general");
 
 // ── Test connection states ──
 const embeddingTesting = ref(false);
@@ -52,7 +57,6 @@ function startLocalStatusPolling() {
   const poll = async () => {
     try {
       const s: any = await checkLlamaStatus();
-      // The API may return per-model status or a flat object
       const embInfo = s.embedding || s;
       const rnkInfo = s.rerank || s;
       if (embInfo.running) embeddingLocalStatus.value = "running";
@@ -100,12 +104,6 @@ const dataResult = ref<string | null>(null);
 
 // ── Config Export / Import ──
 const configResult = ref<string | null>(null);
-
-// ── Collapse sections ──
-const activeSections = ref<string[]>([
-  "general", "mineru", "embedding", "rerank", "llm", "web-search",
-  "vlm", "chunk", "python", "mcp", "export", "config-io", "cleanup",
-]);
 
 // ── Debounced save ──
 function debouncedSave() {
@@ -413,39 +411,6 @@ async function browseGGUF(field: "local_embedding_model" | "local_rerank_model")
     if (f) local.value[field] = f as string;
   } catch { /* ignore */ }
 }
-
-// ── Computed helpers ──
-const sectionTitles = {
-  general: "General",
-  mineru: "MinerU Document Parsing",
-  embedding: "Embedding Model",
-  rerank: "Rerank Model",
-  llm: "LLM for Chat",
-  "web-search": "Web Search",
-  vlm: "VLM for Image Description",
-  chunk: "Chunking Configuration",
-  python: "Python Backend",
-  mcp: "Claude Code Integration",
-  export: "Export / Import KBs",
-  "config-io": "Settings Config",
-  cleanup: "Data Cleanup",
-} as const;
-
-const sectionHints = computed(() => ({
-  general: local.value.data_dir || "~/.super-knowledge-base",
-  mineru: local.value.mineru_token ? "Token configured" : "",
-  embedding: local.value.use_local_embedding ? "Local" : local.value.embedding_model,
-  rerank: local.value.use_local_rerank ? "Local" : local.value.rerank_model,
-  llm: local.value.llm_model,
-  "web-search": local.value.web_search_provider || "duckduckgo",
-  vlm: local.value.vlm_model || "VLM for image captioning",
-  chunk: undefined,
-  python: store.pythonRunning ? "Running" : "Stopped",
-  mcp: undefined,
-  export: `${selectedKBs.value.size} selected`,
-  "config-io": undefined,
-  cleanup: undefined,
-}));
 </script>
 
 <template>
@@ -454,31 +419,25 @@ const sectionHints = computed(() => ({
     <div class="settings-header">
       <div class="flex items-center gap-2">
         <Settings :size="20" />
-        <h2>Settings</h2>
+        <h2>{{ t("settings.title") }}</h2>
       </div>
       <div class="flex items-center gap-2">
-        <el-tag v-if="saveStatus === 'saved'" type="success" size="small" effect="plain">Saved</el-tag>
-        <el-tag v-else-if="saveStatus === 'saving'" type="info" size="small" effect="plain">Saving...</el-tag>
+        <el-tag v-if="saveStatus === 'saved'" type="success" size="small" effect="plain">{{ t("settings.saved") }}</el-tag>
+        <el-tag v-else-if="saveStatus === 'saving'" type="info" size="small" effect="plain">{{ t("settings.testing") }}</el-tag>
       </div>
     </div>
 
-    <el-collapse v-model="activeSections" class="settings-collapse">
+    <el-tabs v-model="activeTab" class="settings-tabs" tab-position="top">
       <!-- ═══════ General ═══════ -->
-      <el-collapse-item name="general">
-        <template #title>
-          <div class="panel-title">
-            <Settings :size="16" />
-            <span>General</span>
-            <span v-if="!activeSections.includes('general')" class="hint-text">{{ sectionHints.general }}</span>
-          </div>
-        </template>
-        <div class="section-body">
-          <div class="field-row">
-            <div class="field-label">Data Directory</div>
-            <div class="field-input-group">
+      <el-tab-pane :label="t('settings.navGeneral')" name="general">
+        <div class="tab-body">
+          <!-- Data Directory -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.dataDir") }}</h3>
+            <div class="field-row">
               <el-input
                 v-model="local.data_dir"
-                placeholder="Default: ~/.super-knowledge-base"
+                :placeholder="t('settings.dataDir')"
                 size="small"
                 style="flex: 1"
               />
@@ -489,117 +448,319 @@ const sectionHints = computed(() => ({
                 <RotateCcw :size="14" />
               </el-button>
             </div>
-          </div>
-          <div class="field-hint">
-            Where documents and indexes are stored. Restart required after changing.
+            <div class="field-hint">{{ t("settings.dataDirHint") }}</div>
           </div>
 
-          <div class="field-row">
-            <div class="field-label">Theme</div>
-            <el-radio-group v-model="local.theme" size="small">
-              <el-radio-button value="light">Light</el-radio-button>
-              <el-radio-button value="dark">Dark</el-radio-button>
-              <el-radio-button value="system">System</el-radio-button>
-            </el-radio-group>
-          </div>
-        </div>
-      </el-collapse-item>
-
-      <!-- ═══════ MinerU ═══════ -->
-      <el-collapse-item name="mineru">
-        <template #title>
-          <div class="panel-title">
-            <Terminal :size="16" />
-            <span>MinerU Document Parsing</span>
-            <span v-if="!activeSections.includes('mineru')" class="hint-text">{{ sectionHints.mineru }}</span>
-          </div>
-        </template>
-        <div class="section-body">
-          <div class="field-row">
-            <div class="field-label">MinerU Token</div>
-            <el-input
-              v-model="local.mineru_token"
-              type="password"
-              show-password
-              placeholder="Enter MinerU API token"
-              size="small"
-              style="flex: 1"
-            />
-          </div>
-          <div class="field-hint">
-            Get your token from
-            <a href="https://mineru.net/apiManage/docs" target="_blank" class="link">MinerU API</a>.
-          </div>
-        </div>
-      </el-collapse-item>
-
-      <!-- ═══════ Embedding ═══════ -->
-      <el-collapse-item name="embedding">
-        <template #title>
-          <div class="panel-title">
-            <FlaskConical :size="16" />
-            <span>Embedding Model</span>
-            <span v-if="!activeSections.includes('embedding')" class="hint-text">{{ sectionHints.embedding }}</span>
-          </div>
-        </template>
-        <div class="section-body">
-          <div class="field-row">
-            <div class="field-label">Use Local Model</div>
-            <el-switch v-model="local.use_local_embedding" size="small" />
+          <!-- MinerU -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.mineru") }}</h3>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.mineruToken") }}</div>
+              <el-input
+                v-model="local.mineru_token"
+                type="password"
+                show-password
+                :placeholder="t('settings.mineruToken')"
+                size="small"
+                style="flex: 1"
+              />
+            </div>
+            <div class="field-hint">
+              {{ t("settings.mineruHint") }}
+              <a href="https://mineru.net/apiManage/docs" target="_blank" class="link">MinerU API</a>.
+            </div>
           </div>
 
-          <template v-if="local.use_local_embedding">
-            <div class="local-model-box">
-              <!-- Local status -->
-              <div class="status-row">
-                <span
-                  class="status-dot"
-                  :class="{
-                    'status-green': embeddingLocalStatus === 'running',
-                    'status-yellow': embeddingLocalStatus === 'starting',
-                    'status-gray': embeddingLocalStatus === 'stopped',
-                  }"
-                />
-                <span class="status-text">
-                  {{
-                    embeddingLocalStatus === "running"
-                      ? "Running"
-                      : embeddingLocalStatus === "starting"
-                        ? "Starting..."
-                        : "Stopped"
-                  }}
+          <!-- Python Backend -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.python") }}</h3>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.port") }}</div>
+              <el-input-number v-model="local.python_port" :min="1024" :max="65535" size="small" />
+            </div>
+            <div class="field-row">
+              <div class="field-label">Status</div>
+              <el-tag :type="store.pythonRunning ? 'success' : 'danger'" size="small" effect="dark">
+                <span class="status-row-inline">
+                  <Wifi v-if="store.pythonRunning" :size="12" />
+                  <WifiOff v-else :size="12" />
+                  {{ store.pythonRunning ? t("settings.running") : t("settings.stopped") }}
                 </span>
-              </div>
-              <div class="field-row">
-                <div class="field-label">Model File</div>
-                <div class="field-input-group">
-                  <el-input
-                    v-model="local.local_embedding_model"
-                    placeholder="Qwen3-Embedding-0.6B-Q8_0.gguf"
-                    size="small"
-                    style="flex: 1"
+              </el-tag>
+            </div>
+            <div v-if="store.pythonUrl" class="field-row">
+              <div class="field-label">URL</div>
+              <code class="url-display">{{ store.pythonUrl }}</code>
+            </div>
+            <div v-if="store.pythonError" class="field-row">
+              <el-alert :title="store.pythonError" type="error" show-icon :closable="false" />
+            </div>
+            <div class="field-row">
+              <el-button
+                size="small"
+                type="primary"
+                :disabled="store.pythonRunning"
+                @click="store.startPython()"
+              >
+                {{ t("settings.startBackend") }}
+              </el-button>
+              <el-button
+                size="small"
+                type="warning"
+                plain
+                :disabled="!store.pythonRunning"
+                @click="store.restartPython()"
+              >
+                {{ t("settings.restartBackend") }}
+              </el-button>
+            </div>
+          </div>
+
+          <!-- Claude MCP -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.claudeMCP") }}</h3>
+            <div class="field-desc">{{ t("settings.claudeMCPDesc") }}</div>
+            <div class="field-row">
+              <el-button
+                size="small"
+                type="primary"
+                :loading="mcpConfiguring"
+                @click="configureMcp"
+              >
+                {{ mcpConfiguring ? t("settings.testing") : t("settings.configureClaude") }}
+              </el-button>
+              <el-button size="small" plain @click="copyMcpConfig">
+                <Copy v-if="!mcpCopied" :size="14" style="margin-right: 4px" />
+                <Check v-else :size="14" style="margin-right: 4px; color: var(--accent-color)" />
+                {{ mcpCopied ? t("settings.saved") : t("settings.copyMCPConfig") }}
+              </el-button>
+            </div>
+            <div v-if="mcpResult" class="field-row">
+              <el-alert
+                :title="mcpResult.message"
+                :type="mcpResult.success ? 'success' : 'error'"
+                :closable="false"
+                show-icon
+              />
+            </div>
+            <div class="field-row">
+              <el-input
+                :model-value="mcpConfigText"
+                type="textarea"
+                :rows="6"
+                readonly
+                size="small"
+              />
+            </div>
+          </div>
+        </div>
+      </el-tab-pane>
+
+      <!-- ═══════ Models ═══════ -->
+      <el-tab-pane :label="t('settings.navModels')" name="models">
+        <div class="tab-body">
+          <!-- Embedding -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.embedding") }}</h3>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.useLocal") }}</div>
+              <el-switch v-model="local.use_local_embedding" size="small" />
+            </div>
+
+            <template v-if="local.use_local_embedding">
+              <div class="local-model-box">
+                <div class="status-row">
+                  <span
+                    class="status-dot"
+                    :class="{
+                      'status-green': embeddingLocalStatus === 'running',
+                      'status-yellow': embeddingLocalStatus === 'starting',
+                      'status-gray': embeddingLocalStatus === 'stopped',
+                    }"
                   />
-                  <el-button size="small" @click="browseGGUF('local_embedding_model')">
-                    <FolderOpen :size="14" />
-                  </el-button>
+                  <span class="status-text">
+                    {{ embeddingLocalStatus === "running" ? t("settings.llamaRunning") : embeddingLocalStatus === "starting" ? t("settings.llamaStarting") : t("settings.llamaStopped") }}
+                  </span>
+                </div>
+                <div class="field-row">
+                  <div class="field-label">{{ t("settings.modelFile") }}</div>
+                  <div class="field-input-group">
+                    <el-input
+                      v-model="local.local_embedding_model"
+                      :placeholder="t('settings.modelFile')"
+                      size="small"
+                      style="flex: 1"
+                    />
+                    <el-button size="small" @click="browseGGUF('local_embedding_model')">
+                      <FolderOpen :size="14" />
+                    </el-button>
+                  </div>
                 </div>
               </div>
-            </div>
-          </template>
-          <template v-else>
+            </template>
+            <template v-else>
+              <div class="field-row">
+                <div class="field-label">{{ t("settings.apiBase") }}</div>
+                <el-input
+                  v-model="local.embedding_api_base"
+                  placeholder="https://api.openai.com/v1"
+                  size="small"
+                  style="flex: 1"
+                />
+              </div>
+              <div class="field-row">
+                <div class="field-label">{{ t("settings.apiKey") }}</div>
+                <el-input
+                  v-model="local.embedding_api_key"
+                  type="password"
+                  show-password
+                  placeholder="sk-..."
+                  size="small"
+                  style="flex: 1"
+                />
+              </div>
+              <div class="field-row">
+                <div class="field-label">{{ t("settings.model") }}</div>
+                <el-input
+                  v-model="local.embedding_model"
+                  placeholder="text-embedding-3-small"
+                  size="small"
+                  style="flex: 1"
+                />
+              </div>
+            </template>
+
             <div class="field-row">
-              <div class="field-label">API Base URL</div>
+              <el-button
+                size="small"
+                type="primary"
+                plain
+                :loading="embeddingTesting"
+                :disabled="!store.pythonRunning"
+                @click="testEmbeddingConnection"
+              >
+                {{ embeddingTesting ? t("settings.testing") : t("settings.testConnection") }}
+              </el-button>
+              <el-tag
+                v-if="embeddingTestResult"
+                :type="embeddingTestResult.ok ? 'success' : 'danger'"
+                size="small"
+                effect="plain"
+              >
+                {{ embeddingTestResult.msg }}
+              </el-tag>
+            </div>
+          </div>
+
+          <!-- Rerank -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.rerank") }}</h3>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.useLocal") }}</div>
+              <el-switch v-model="local.use_local_rerank" size="small" />
+            </div>
+
+            <template v-if="local.use_local_rerank">
+              <div class="local-model-box">
+                <div class="status-row">
+                  <span
+                    class="status-dot"
+                    :class="{
+                      'status-green': rerankLocalStatus === 'running',
+                      'status-yellow': rerankLocalStatus === 'starting',
+                      'status-gray': rerankLocalStatus === 'stopped',
+                    }"
+                  />
+                  <span class="status-text">
+                    {{ rerankLocalStatus === "running" ? t("settings.llamaRunning") : rerankLocalStatus === "starting" ? t("settings.llamaStarting") : t("settings.llamaStopped") }}
+                  </span>
+                </div>
+                <div class="field-row">
+                  <div class="field-label">{{ t("settings.modelFile") }}</div>
+                  <div class="field-input-group">
+                    <el-input
+                      v-model="local.local_rerank_model"
+                      :placeholder="t('settings.modelFile')"
+                      size="small"
+                      style="flex: 1"
+                    />
+                    <el-button size="small" @click="browseGGUF('local_rerank_model')">
+                      <FolderOpen :size="14" />
+                    </el-button>
+                  </div>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <div class="field-row">
+                <div class="field-label">{{ t("settings.apiBase") }}</div>
+                <el-input
+                  v-model="local.rerank_api_base"
+                  placeholder="https://api.jina.ai/v1"
+                  size="small"
+                  style="flex: 1"
+                />
+              </div>
+              <div class="field-row">
+                <div class="field-label">{{ t("settings.apiKey") }}</div>
+                <el-input
+                  v-model="local.rerank_api_key"
+                  type="password"
+                  show-password
+                  placeholder="Enter API key"
+                  size="small"
+                  style="flex: 1"
+                />
+              </div>
+              <div class="field-row">
+                <div class="field-label">{{ t("settings.model") }}</div>
+                <el-input
+                  v-model="local.rerank_model"
+                  placeholder="jina-reranker-v2-base-multilingual"
+                  size="small"
+                  style="flex: 1"
+                />
+              </div>
+            </template>
+
+            <div class="field-row">
+              <el-button
+                size="small"
+                type="primary"
+                plain
+                :loading="rerankTesting"
+                :disabled="!store.pythonRunning"
+                @click="testRerankConnection"
+              >
+                {{ rerankTesting ? t("settings.testing") : t("settings.testConnection") }}
+              </el-button>
+              <el-tag
+                v-if="rerankTestResult"
+                :type="rerankTestResult.ok ? 'success' : 'danger'"
+                size="small"
+                effect="plain"
+              >
+                {{ rerankTestResult.msg }}
+              </el-tag>
+            </div>
+          </div>
+
+          <!-- LLM -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.llm") }}</h3>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.apiBase") }}</div>
               <el-input
-                v-model="local.embedding_api_base"
+                v-model="local.llm_api_base"
                 placeholder="https://api.openai.com/v1"
                 size="small"
                 style="flex: 1"
               />
             </div>
             <div class="field-row">
-              <div class="field-label">API Key</div>
+              <div class="field-label">{{ t("settings.apiKey") }}</div>
               <el-input
-                v-model="local.embedding_api_key"
+                v-model="local.llm_api_key"
                 type="password"
                 show-password
                 placeholder="sk-..."
@@ -608,691 +769,370 @@ const sectionHints = computed(() => ({
               />
             </div>
             <div class="field-row">
-              <div class="field-label">Model</div>
+              <div class="field-label">{{ t("settings.model") }}</div>
               <el-input
-                v-model="local.embedding_model"
-                placeholder="text-embedding-3-small"
+                v-model="local.llm_model"
+                placeholder="gpt-4o-mini"
                 size="small"
                 style="flex: 1"
               />
             </div>
-          </template>
 
-          <div class="field-row">
-            <el-button
-              size="small"
-              type="primary"
-              plain
-              :loading="embeddingTesting"
-              :disabled="!store.pythonRunning"
-              @click="testEmbeddingConnection"
-            >
-              {{ embeddingTesting ? "Testing..." : "Test Connection" }}
-            </el-button>
-            <el-tag
-              v-if="embeddingTestResult"
-              :type="embeddingTestResult.ok ? 'success' : 'danger'"
-              size="small"
-              effect="plain"
-            >
-              {{ embeddingTestResult.msg }}
-            </el-tag>
-          </div>
-        </div>
-      </el-collapse-item>
-
-      <!-- ═══════ Rerank ═══════ -->
-      <el-collapse-item name="rerank">
-        <template #title>
-          <div class="panel-title">
-            <FlaskConical :size="16" />
-            <span>Rerank Model</span>
-            <span v-if="!activeSections.includes('rerank')" class="hint-text">{{ sectionHints.rerank }}</span>
-          </div>
-        </template>
-        <div class="section-body">
-          <div class="field-row">
-            <div class="field-label">Use Local Model</div>
-            <el-switch v-model="local.use_local_rerank" size="small" />
-          </div>
-
-          <template v-if="local.use_local_rerank">
-            <div class="local-model-box">
-              <div class="status-row">
-                <span
-                  class="status-dot"
-                  :class="{
-                    'status-green': rerankLocalStatus === 'running',
-                    'status-yellow': rerankLocalStatus === 'starting',
-                    'status-gray': rerankLocalStatus === 'stopped',
-                  }"
-                />
-                <span class="status-text">
-                  {{
-                    rerankLocalStatus === "running"
-                      ? "Running"
-                      : rerankLocalStatus === "starting"
-                        ? "Starting..."
-                        : "Stopped"
-                  }}
-                </span>
-              </div>
-              <div class="field-row">
-                <div class="field-label">Model File</div>
-                <div class="field-input-group">
-                  <el-input
-                    v-model="local.local_rerank_model"
-                    placeholder="qwen3-reranker-0.6b-q8_0.gguf"
-                    size="small"
-                    style="flex: 1"
-                  />
-                  <el-button size="small" @click="browseGGUF('local_rerank_model')">
-                    <FolderOpen :size="14" />
-                  </el-button>
-                </div>
-              </div>
-            </div>
-          </template>
-          <template v-else>
             <div class="field-row">
-              <div class="field-label">API Base URL</div>
-              <el-input
-                v-model="local.rerank_api_base"
-                placeholder="https://api.jina.ai/v1"
+              <el-button
                 size="small"
-                style="flex: 1"
-              />
-            </div>
-            <div class="field-row">
-              <div class="field-label">API Key</div>
-              <el-input
-                v-model="local.rerank_api_key"
-                type="password"
-                show-password
-                placeholder="Enter API key"
-                size="small"
-                style="flex: 1"
-              />
-            </div>
-            <div class="field-row">
-              <div class="field-label">Model</div>
-              <el-input
-                v-model="local.rerank_model"
-                placeholder="jina-reranker-v2-base-multilingual"
-                size="small"
-                style="flex: 1"
-              />
-            </div>
-          </template>
-
-          <div class="field-row">
-            <el-button
-              size="small"
-              type="primary"
-              plain
-              :loading="rerankTesting"
-              :disabled="!store.pythonRunning"
-              @click="testRerankConnection"
-            >
-              {{ rerankTesting ? "Testing..." : "Test Connection" }}
-            </el-button>
-            <el-tag
-              v-if="rerankTestResult"
-              :type="rerankTestResult.ok ? 'success' : 'danger'"
-              size="small"
-              effect="plain"
-            >
-              {{ rerankTestResult.msg }}
-            </el-tag>
-          </div>
-        </div>
-      </el-collapse-item>
-
-      <!-- ═══════ LLM ═══════ -->
-      <el-collapse-item name="llm">
-        <template #title>
-          <div class="panel-title">
-            <Terminal :size="16" />
-            <span>LLM for Chat</span>
-            <span v-if="!activeSections.includes('llm')" class="hint-text">{{ sectionHints.llm }}</span>
-          </div>
-        </template>
-        <div class="section-body">
-          <div class="field-row">
-            <div class="field-label">API Base URL</div>
-            <el-input
-              v-model="local.llm_api_base"
-              placeholder="https://api.openai.com/v1"
-              size="small"
-              style="flex: 1"
-            />
-          </div>
-          <div class="field-row">
-            <div class="field-label">API Key</div>
-            <el-input
-              v-model="local.llm_api_key"
-              type="password"
-              show-password
-              placeholder="sk-..."
-              size="small"
-              style="flex: 1"
-            />
-          </div>
-          <div class="field-row">
-            <div class="field-label">Model</div>
-            <el-input
-              v-model="local.llm_model"
-              placeholder="gpt-4o-mini"
-              size="small"
-              style="flex: 1"
-            />
-          </div>
-
-          <div class="field-row">
-            <el-button
-              size="small"
-              type="primary"
-              plain
-              :loading="llmTesting"
-              :disabled="!local.llm_api_base || !local.llm_model"
-              @click="testLlmConnection"
-            >
-              {{ llmTesting ? "Testing..." : "Test Connection" }}
-            </el-button>
-            <el-tag
-              v-if="llmTestResult"
-              :type="llmTestResult.ok ? 'success' : 'danger'"
-              size="small"
-              effect="plain"
-            >
-              {{ llmTestResult.msg }}
-            </el-tag>
-          </div>
-
-          <div class="section-divider" />
-          <div class="tool-limits-title">Tool Limits</div>
-          <div class="num-grid">
-            <div class="field-row-vert">
-              <div class="field-label">Max Tool Rounds</div>
-              <el-input-number v-model="local.max_tool_rounds" :min="1" :max="500" size="small" />
-            </div>
-            <div class="field-row-vert">
-              <div class="field-label">Max History Messages</div>
-              <el-input-number v-model="local.max_history_messages" :min="1" :max="500" size="small" />
-            </div>
-            <div class="field-row-vert">
-              <div class="field-label">Max Search Result Chars</div>
-              <el-input-number v-model="local.max_search_result_chars" :min="100" :max="50000" size="small" />
-            </div>
-            <div class="field-row-vert">
-              <div class="field-label">Max Document Chars</div>
-              <el-input-number v-model="local.max_document_chars" :min="100" :max="100000" size="small" />
-            </div>
-            <div class="field-row-vert">
-              <div class="field-label">Max Chunk Chars</div>
-              <el-input-number v-model="local.max_chunk_chars" :min="100" :max="10000" size="small" />
-            </div>
-          </div>
-        </div>
-      </el-collapse-item>
-
-      <!-- ═══════ Web Search ═══════ -->
-      <el-collapse-item name="web-search">
-        <template #title>
-          <div class="panel-title">
-            <Terminal :size="16" />
-            <span>Web Search</span>
-            <span v-if="!activeSections.includes('web-search')" class="hint-text">{{ sectionHints["web-search"] }}</span>
-          </div>
-        </template>
-        <div class="section-body">
-          <div class="field-hint">
-            Configure web search for the LLM to use when answering questions.
-          </div>
-          <div class="field-row">
-            <div class="field-label">Provider</div>
-            <el-select v-model="local.web_search_provider" size="small" style="width: 200px">
-              <el-option label="DuckDuckGo (free)" value="duckduckgo" />
-              <el-option label="Tavily" value="tavily" />
-              <el-option label="SearXNG" value="searxng" />
-            </el-select>
-          </div>
-
-          <template v-if="local.web_search_provider === 'duckduckgo'">
-            <div class="field-hint">
-              DuckDuckGo is free and requires no configuration.
-            </div>
-          </template>
-          <template v-else-if="local.web_search_provider === 'tavily'">
-            <div class="field-row">
-              <div class="field-label">Tavily API Key</div>
-              <el-input
-                v-model="local.tavily_api_key"
-                type="password"
-                show-password
-                placeholder="tvly-..."
-                size="small"
-                style="flex: 1"
-              />
-            </div>
-            <div class="field-hint">
-              <a href="https://tavily.com" target="_blank" class="link">Tavily</a> -- free tier: 1000 searches/month
-            </div>
-          </template>
-          <template v-else>
-            <div class="field-row">
-              <div class="field-label">SearXNG Base URL</div>
-              <el-input
-                v-model="local.searxng_base_url"
-                placeholder="http://localhost:8080"
-                size="small"
-                style="flex: 1"
-              />
-            </div>
-          </template>
-
-          <div class="field-row">
-            <div class="field-label">Max Results</div>
-            <el-input-number v-model="local.web_search_max_results" :min="1" :max="10" size="small" />
-          </div>
-        </div>
-      </el-collapse-item>
-
-      <!-- ═══════ VLM ═══════ -->
-      <el-collapse-item name="vlm">
-        <template #title>
-          <div class="panel-title">
-            <Terminal :size="16" />
-            <span>VLM for Image Description</span>
-            <span v-if="!activeSections.includes('vlm')" class="hint-text">{{ sectionHints.vlm }}</span>
-          </div>
-        </template>
-        <div class="section-body">
-          <div class="field-hint">
-            Vision Language Model used to generate descriptions for images in documents.
-          </div>
-          <div class="field-row">
-            <div class="field-label">API Base URL</div>
-            <el-input
-              v-model="local.vlm_api_base"
-              placeholder="Same as LLM if empty"
-              size="small"
-              style="flex: 1"
-            />
-          </div>
-          <div class="field-row">
-            <div class="field-label">API Key</div>
-            <el-input
-              v-model="local.vlm_api_key"
-              type="password"
-              show-password
-              placeholder="Same as LLM if empty"
-              size="small"
-              style="flex: 1"
-            />
-          </div>
-          <div class="field-row">
-            <div class="field-label">Model</div>
-            <el-input
-              v-model="local.vlm_model"
-              placeholder="Same as LLM if empty"
-              size="small"
-              style="flex: 1"
-            />
-          </div>
-
-          <div class="field-row">
-            <div class="field-label">Enabled</div>
-            <el-switch v-model="local.vlm_enabled" size="small" />
-          </div>
-          <div class="field-hint">
-            Enable VLM-based image description during document parsing.
-          </div>
-
-          <div class="field-row">
-            <div class="field-label">Concurrency</div>
-            <el-input-number v-model="local.vlm_concurrency" :min="1" :max="20" size="small" />
-          </div>
-          <div class="field-hint">
-            Number of concurrent VLM requests. Higher values are faster but may hit rate limits.
-          </div>
-
-          <div class="field-row">
-            <div class="field-label">Extract Multimodal</div>
-            <el-switch v-model="local.extract_multimodal" size="small" />
-          </div>
-          <div class="field-hint">
-            Extract images, tables, and equations from documents. Requires VLM to be enabled.
-          </div>
-
-          <div class="field-row">
-            <el-button
-              size="small"
-              type="primary"
-              plain
-              :loading="vlmTesting"
-              :disabled="!local.vlm_api_base && !local.llm_api_base"
-              @click="testVlmConnection"
-            >
-              {{ vlmTesting ? "Testing..." : "Test Connection" }}
-            </el-button>
-            <el-tag
-              v-if="vlmTestResult"
-              :type="vlmTestResult.ok ? 'success' : 'danger'"
-              size="small"
-              effect="plain"
-            >
-              {{ vlmTestResult.msg }}
-            </el-tag>
-          </div>
-        </div>
-      </el-collapse-item>
-
-      <!-- ═══════ Chunking ═══════ -->
-      <el-collapse-item name="chunk">
-        <template #title>
-          <div class="panel-title">
-            <Terminal :size="16" />
-            <span>Chunking Configuration</span>
-          </div>
-        </template>
-        <div class="section-body">
-          <div class="field-row">
-            <div class="field-label">Strategy</div>
-            <el-select v-model="local.chunk_strategy" size="small" style="width: 220px">
-              <el-option label="Recursive (recommended)" value="recursive" />
-              <el-option label="Semantic (sentence boundary)" value="semantic" />
-              <el-option label="Fixed Size" value="fixed" />
-            </el-select>
-          </div>
-          <div class="field-row">
-            <div class="field-label">Chunk Size</div>
-            <el-input-number v-model="local.chunk_size" :min="64" :max="4096" :step="64" size="small" />
-          </div>
-          <div class="field-row">
-            <div class="field-label">Chunk Overlap</div>
-            <el-input-number v-model="local.chunk_overlap" :min="0" :max="512" :step="16" size="small" />
-          </div>
-        </div>
-      </el-collapse-item>
-
-      <!-- ═══════ Python Backend ═══════ -->
-      <el-collapse-item name="python">
-        <template #title>
-          <div class="panel-title">
-            <Terminal :size="16" />
-            <span>Python Backend</span>
-            <span class="status-dot-inline" :class="store.pythonRunning ? 'status-green' : 'status-red'" />
-            <span v-if="!activeSections.includes('python')" class="hint-text">{{ sectionHints.python }}</span>
-          </div>
-        </template>
-        <div class="section-body">
-          <div class="field-row">
-            <div class="field-label">Status</div>
-            <el-tag :type="store.pythonRunning ? 'success' : 'danger'" size="small" effect="dark">
-              <span class="status-row-inline">
-                <Wifi v-if="store.pythonRunning" :size="12" />
-                <WifiOff v-else :size="12" />
-                {{ store.pythonRunning ? "Running" : "Stopped" }}
-              </span>
-            </el-tag>
-          </div>
-          <div class="field-row">
-            <div class="field-label">Port</div>
-            <el-input-number v-model="local.python_port" :min="1024" :max="65535" size="small" />
-          </div>
-          <div v-if="store.pythonUrl" class="field-row">
-            <div class="field-label">URL</div>
-            <code class="url-display">{{ store.pythonUrl }}</code>
-          </div>
-          <div v-if="store.pythonError" class="field-row">
-            <el-alert :title="store.pythonError" type="error" show-icon :closable="false" />
-          </div>
-          <div class="field-row">
-            <el-button
-              size="small"
-              type="primary"
-              :disabled="store.pythonRunning"
-              @click="store.startPython()"
-            >
-              Start Backend
-            </el-button>
-            <el-button
-              size="small"
-              type="warning"
-              plain
-              :disabled="!store.pythonRunning"
-              @click="store.restartPython()"
-            >
-              Restart Backend
-            </el-button>
-          </div>
-        </div>
-      </el-collapse-item>
-
-      <!-- ═══════ Claude MCP ═══════ -->
-      <el-collapse-item name="mcp">
-        <template #title>
-          <div class="panel-title">
-            <Terminal :size="16" />
-            <span>Claude Code Integration</span>
-          </div>
-        </template>
-        <div class="section-body">
-          <div class="field-desc">
-            Auto-configure the MCP server for Claude Code. This writes the config to
-            ~/.claude.json so Claude Code can search your knowledge bases.
-          </div>
-          <div class="field-row">
-            <el-button
-              size="small"
-              type="primary"
-              :loading="mcpConfiguring"
-              @click="configureMcp"
-            >
-              {{ mcpConfiguring ? "Configuring..." : "Configure Claude Code MCP" }}
-            </el-button>
-            <el-button size="small" plain @click="copyMcpConfig">
-              <Copy v-if="!mcpCopied" :size="14" style="margin-right: 4px" />
-              <Check v-else :size="14" style="margin-right: 4px; color: var(--el-color-success)" />
-              {{ mcpCopied ? "Copied" : "Copy MCP Config" }}
-            </el-button>
-          </div>
-          <div v-if="mcpResult" class="field-row">
-            <el-alert
-              :title="mcpResult.message"
-              :type="mcpResult.success ? 'success' : 'error'"
-              :closable="false"
-              show-icon
-            />
-          </div>
-          <div class="field-row">
-            <el-input
-              :model-value="mcpConfigText"
-              type="textarea"
-              :rows="6"
-              readonly
-              size="small"
-            />
-          </div>
-        </div>
-      </el-collapse-item>
-
-      <!-- ═══════ Export / Import KBs ═══════ -->
-      <el-collapse-item name="export">
-        <template #title>
-          <div class="panel-title">
-            <Download :size="16" />
-            <span>Export / Import KBs</span>
-            <span v-if="!activeSections.includes('export')" class="hint-text">{{ sectionHints.export }}</span>
-          </div>
-        </template>
-        <div class="section-body">
-          <div class="field-desc">
-            Export knowledge bases as ZIP files or import them from ZIP files.
-          </div>
-
-          <div v-if="kbStore.knowledgeBases.length > 0">
-            <div class="field-row" style="margin-bottom: 4px">
-              <el-button size="small" text type="primary" @click="selectAllKBs">Select All</el-button>
-              <el-button size="small" text type="primary" @click="deselectAllKBs">Deselect All</el-button>
-            </div>
-            <div class="kb-select-list">
-              <label
-                v-for="kb in kbStore.knowledgeBases"
-                :key="kb.id"
-                class="kb-select-item"
+                type="primary"
+                plain
+                :loading="llmTesting"
+                :disabled="!local.llm_api_base || !local.llm_model"
+                @click="testLlmConnection"
               >
-                <el-checkbox
-                  :model-value="selectedKBs.has(kb.id)"
-                  @change="toggleSelectKB(kb.id)"
-                />
-                <span class="kb-select-name">{{ kb.name }}</span>
-                <span class="kb-select-count">{{ kb.document_count }}</span>
-              </label>
+                {{ llmTesting ? t("settings.testing") : t("settings.testConnection") }}
+              </el-button>
+              <el-tag
+                v-if="llmTestResult"
+                :type="llmTestResult.ok ? 'success' : 'danger'"
+                size="small"
+                effect="plain"
+              >
+                {{ llmTestResult.msg }}
+              </el-tag>
             </div>
           </div>
 
-          <div class="field-row">
-            <el-button
-              size="small"
-              type="primary"
-              :loading="exporting"
-              :disabled="selectedKBs.size === 0"
-              @click="handleExportKBs"
-            >
-              <Download :size="14" style="margin-right: 4px" />
-              {{ exporting ? "Exporting..." : `Export (${selectedKBs.size})` }}
-            </el-button>
-          </div>
+          <!-- VLM -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.vlm") }}</h3>
+            <div class="field-desc">{{ t("settings.vlmHint") }}</div>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.apiBase") }}</div>
+              <el-input
+                v-model="local.vlm_api_base"
+                :placeholder="t('settings.apiBase')"
+                size="small"
+                style="flex: 1"
+              />
+            </div>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.apiKey") }}</div>
+              <el-input
+                v-model="local.vlm_api_key"
+                type="password"
+                show-password
+                :placeholder="t('settings.apiKey')"
+                size="small"
+                style="flex: 1"
+              />
+            </div>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.model") }}</div>
+              <el-input
+                v-model="local.vlm_model"
+                :placeholder="t('settings.model')"
+                size="small"
+                style="flex: 1"
+              />
+            </div>
 
-          <div class="section-divider" />
-          <div class="field-row">
-            <el-button
-              size="small"
-              type="primary"
-              plain
-              :loading="importing"
-              @click="handleImportKBs"
-            >
-              <Upload :size="14" style="margin-right: 4px" />
-              {{ importing ? "Importing..." : "Import KBs" }}
-            </el-button>
-          </div>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.vlmEnabled") }}</div>
+              <el-switch v-model="local.vlm_enabled" size="small" />
+            </div>
+            <div class="field-hint">{{ t("settings.vlmEnabledHint") }}</div>
 
-          <div v-if="dataResult" class="field-row">
-            <el-tag
-              :type="dataResult.startsWith('Error') ? 'danger' : 'success'"
-              size="small"
-              effect="plain"
-            >
-              {{ dataResult }}
-            </el-tag>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.vlmConcurrency") }}</div>
+              <el-input-number v-model="local.vlm_concurrency" :min="1" :max="20" size="small" />
+            </div>
+            <div class="field-hint">{{ t("settings.vlmConcurrencyHint") }}</div>
+
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.extractMultimodal") }}</div>
+              <el-switch v-model="local.extract_multimodal" size="small" />
+            </div>
+            <div class="field-hint">{{ t("settings.extractMultimodalHint") }}</div>
+
+            <div class="field-row">
+              <el-button
+                size="small"
+                type="primary"
+                plain
+                :loading="vlmTesting"
+                :disabled="!local.vlm_api_base && !local.llm_api_base"
+                @click="testVlmConnection"
+              >
+                {{ vlmTesting ? t("settings.testing") : t("settings.testConnection") }}
+              </el-button>
+              <el-tag
+                v-if="vlmTestResult"
+                :type="vlmTestResult.ok ? 'success' : 'danger'"
+                size="small"
+                effect="plain"
+              >
+                {{ vlmTestResult.msg }}
+              </el-tag>
+            </div>
           </div>
         </div>
-      </el-collapse-item>
+      </el-tab-pane>
 
-      <!-- ═══════ Settings Config ═══════ -->
-      <el-collapse-item name="config-io">
-        <template #title>
-          <div class="panel-title">
-            <Settings :size="16" />
-            <span>Settings Config</span>
+      <!-- ═══════ Chat & Tools ═══════ -->
+      <el-tab-pane :label="t('settings.navChat')" name="chat">
+        <div class="tab-body">
+          <!-- Tool Limits -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.toolLimits") }}</h3>
+            <div class="num-grid">
+              <div class="field-row-vert">
+                <div class="field-label">{{ t("settings.maxToolRounds") }}</div>
+                <el-input-number v-model="local.max_tool_rounds" :min="1" :max="500" size="small" />
+              </div>
+              <div class="field-row-vert">
+                <div class="field-label">{{ t("settings.maxHistoryMessages") }}</div>
+                <el-input-number v-model="local.max_history_messages" :min="1" :max="500" size="small" />
+              </div>
+              <div class="field-row-vert">
+                <div class="field-label">{{ t("settings.maxSearchResultChars") }}</div>
+                <el-input-number v-model="local.max_search_result_chars" :min="100" :max="50000" size="small" />
+              </div>
+              <div class="field-row-vert">
+                <div class="field-label">{{ t("settings.maxDocumentChars") }}</div>
+                <el-input-number v-model="local.max_document_chars" :min="100" :max="100000" size="small" />
+              </div>
+              <div class="field-row-vert">
+                <div class="field-label">{{ t("settings.maxChunkChars") }}</div>
+                <el-input-number v-model="local.max_chunk_chars" :min="100" :max="10000" size="small" />
+              </div>
+            </div>
           </div>
-        </template>
-        <div class="section-body">
-          <div class="field-desc">
-            Export or import the full settings.json configuration file.
+
+          <!-- Web Search -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.webSearch") }}</h3>
+            <div class="field-desc">{{ t("settings.webSearchDesc") }}</div>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.webSearchProvider") }}</div>
+              <el-select v-model="local.web_search_provider" size="small" style="width: 200px">
+                <el-option label="DuckDuckGo (free)" value="duckduckgo" />
+                <el-option label="Tavily" value="tavily" />
+                <el-option label="SearXNG" value="searxng" />
+              </el-select>
+            </div>
+
+            <template v-if="local.web_search_provider === 'duckduckgo'">
+              <div class="field-hint">{{ t("settings.webSearchDdgDesc") }}</div>
+            </template>
+            <template v-else-if="local.web_search_provider === 'tavily'">
+              <div class="field-row">
+                <div class="field-label">{{ t("settings.tavilyApiKey") }}</div>
+                <el-input
+                  v-model="local.tavily_api_key"
+                  type="password"
+                  show-password
+                  placeholder="tvly-..."
+                  size="small"
+                  style="flex: 1"
+                />
+              </div>
+              <div class="field-hint">
+                <a href="https://tavily.com" target="_blank" class="link">Tavily</a> -- free tier: 1000 searches/month
+              </div>
+            </template>
+            <template v-else>
+              <div class="field-row">
+                <div class="field-label">{{ t("settings.searxngBaseUrl") }}</div>
+                <el-input
+                  v-model="local.searxng_base_url"
+                  placeholder="http://localhost:8080"
+                  size="small"
+                  style="flex: 1"
+                />
+              </div>
+            </template>
+
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.webSearchMaxResults") }}</div>
+              <el-input-number v-model="local.web_search_max_results" :min="1" :max="10" size="small" />
+            </div>
           </div>
-          <div class="field-row">
-            <el-button size="small" type="primary" plain @click="exportSettingsJson">
-              <Download :size="14" style="margin-right: 4px" />
-              Export Config
-            </el-button>
-            <el-button size="small" type="primary" plain @click="importSettingsJson">
-              <Upload :size="14" style="margin-right: 4px" />
-              Import Config
-            </el-button>
-          </div>
-          <div v-if="configResult" class="field-row">
-            <el-tag
-              :type="configResult.startsWith('Error') ? 'danger' : 'success'"
-              size="small"
-              effect="plain"
-            >
-              {{ configResult }}
-            </el-tag>
+
+          <!-- Chunking -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.chunking") }}</h3>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.strategy") }}</div>
+              <el-select v-model="local.chunk_strategy" size="small" style="width: 220px">
+                <el-option :label="t('settings.recursive')" value="recursive" />
+                <el-option :label="t('settings.semantic')" value="semantic" />
+                <el-option :label="t('settings.fixed')" value="fixed" />
+              </el-select>
+            </div>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.chunkSize") }}</div>
+              <el-input-number v-model="local.chunk_size" :min="64" :max="4096" :step="64" size="small" />
+            </div>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.chunkOverlap") }}</div>
+              <el-input-number v-model="local.chunk_overlap" :min="0" :max="512" :step="16" size="small" />
+            </div>
           </div>
         </div>
-      </el-collapse-item>
+      </el-tab-pane>
 
-      <!-- ═══════ Data Cleanup ═══════ -->
-      <el-collapse-item name="cleanup">
-        <template #title>
-          <div class="panel-title">
-            <Trash2 :size="16" />
-            <span>Data Cleanup</span>
+      <!-- ═══════ Data ═══════ -->
+      <el-tab-pane :label="t('settings.navData')" name="data">
+        <div class="tab-body">
+          <!-- Export / Import KBs -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.export") }}</h3>
+            <div class="field-desc">{{ t("settings.exportDesc") }}</div>
+
+            <div v-if="kbStore.knowledgeBases.length > 0">
+              <div class="field-row" style="margin-bottom: 4px">
+                <el-button size="small" text type="primary" @click="selectAllKBs">{{ t("settings.selectAll") }}</el-button>
+                <el-button size="small" text type="primary" @click="deselectAllKBs">{{ t("settings.deselectAll") }}</el-button>
+              </div>
+              <div class="kb-select-list">
+                <label
+                  v-for="kb in kbStore.knowledgeBases"
+                  :key="kb.id"
+                  class="kb-select-item"
+                >
+                  <el-checkbox
+                    :model-value="selectedKBs.has(kb.id)"
+                    @change="toggleSelectKB(kb.id)"
+                  />
+                  <span class="kb-select-name">{{ kb.name }}</span>
+                  <span class="kb-select-count">{{ kb.document_count }}</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="field-row">
+              <el-button
+                size="small"
+                type="primary"
+                :loading="exporting"
+                :disabled="selectedKBs.size === 0"
+                @click="handleExportKBs"
+              >
+                <Download :size="14" style="margin-right: 4px" />
+                {{ exporting ? t("settings.exporting") : `${t("settings.exportBtn")} (${selectedKBs.size})` }}
+              </el-button>
+            </div>
+
+            <div class="section-divider" />
+            <div class="field-desc" style="margin-top: 4px">{{ t("settings.importDesc") }}</div>
+            <div class="field-row">
+              <el-button
+                size="small"
+                type="primary"
+                plain
+                :loading="importing"
+                @click="handleImportKBs"
+              >
+                <Upload :size="14" style="margin-right: 4px" />
+                {{ importing ? t("settings.importing") : t("settings.importBtn") }}
+              </el-button>
+            </div>
+
+            <div v-if="dataResult" class="field-row">
+              <el-tag
+                :type="dataResult.startsWith('Error') ? 'danger' : 'success'"
+                size="small"
+                effect="plain"
+              >
+                {{ dataResult }}
+              </el-tag>
+            </div>
           </div>
-        </template>
-        <div class="section-body">
-          <div class="field-row">
-            <el-button
-              size="small"
-              type="danger"
-              plain
-              :loading="cleaningOrphans"
-              :disabled="!store.pythonRunning"
-              @click="handleCleanOrphans"
-            >
-              <Trash2 :size="14" style="margin-right: 4px" />
-              {{ cleaningOrphans ? "Cleaning..." : "Clean Orphan Data" }}
-            </el-button>
-            <el-button
-              size="small"
-              type="danger"
-              :loading="clearingAll"
-              @click="showClearDialog = true"
-            >
-              <Trash2 :size="14" style="margin-right: 4px" />
-              {{ clearingAll ? "Clearing..." : "Clear All KBs" }}
-            </el-button>
+
+          <!-- Config I/O -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.configIO") }}</h3>
+            <div class="field-desc">{{ t("settings.configIODesc") }}</div>
+            <div class="field-row">
+              <el-button size="small" type="primary" plain @click="exportSettingsJson">
+                <Download :size="14" style="margin-right: 4px" />
+                {{ t("settings.exportConfig") }}
+              </el-button>
+              <el-button size="small" type="primary" plain @click="importSettingsJson">
+                <Upload :size="14" style="margin-right: 4px" />
+                {{ t("settings.importConfig") }}
+              </el-button>
+            </div>
+            <div v-if="configResult" class="field-row">
+              <el-tag
+                :type="configResult.startsWith('Error') ? 'danger' : 'success'"
+                size="small"
+                effect="plain"
+              >
+                {{ configResult }}
+              </el-tag>
+            </div>
           </div>
-          <div v-if="orphansResult" class="field-row">
-            <el-tag
-              :type="orphansResult.startsWith('Error') ? 'danger' : 'success'"
-              size="small"
-              effect="plain"
-            >
-              {{ orphansResult }}
-            </el-tag>
-          </div>
-          <div v-if="clearResult" class="field-row">
-            <el-tag
-              :type="clearResult.startsWith('Error') ? 'danger' : 'success'"
-              size="small"
-              effect="plain"
-            >
-              {{ clearResult }}
-            </el-tag>
+
+          <!-- Cleanup -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.clearAll") }}</h3>
+            <div class="field-row">
+              <el-button
+                size="small"
+                type="danger"
+                plain
+                :loading="cleaningOrphans"
+                :disabled="!store.pythonRunning"
+                @click="handleCleanOrphans"
+              >
+                <Trash2 :size="14" style="margin-right: 4px" />
+                {{ cleaningOrphans ? t("settings.cleaning") : t("settings.cleanOrphans") }}
+              </el-button>
+              <el-button
+                size="small"
+                type="danger"
+                :loading="clearingAll"
+                @click="showClearDialog = true"
+              >
+                <Trash2 :size="14" style="margin-right: 4px" />
+                {{ clearingAll ? t("settings.clearing") : t("settings.clearAllBtn") }}
+              </el-button>
+            </div>
+            <div v-if="orphansResult" class="field-row">
+              <el-tag
+                :type="orphansResult.startsWith('Error') ? 'danger' : 'success'"
+                size="small"
+                effect="plain"
+              >
+                {{ orphansResult }}
+              </el-tag>
+            </div>
+            <div v-if="clearResult" class="field-row">
+              <el-tag
+                :type="clearResult.startsWith('Error') ? 'danger' : 'success'"
+                size="small"
+                effect="plain"
+              >
+                {{ clearResult }}
+              </el-tag>
+            </div>
           </div>
         </div>
-      </el-collapse-item>
-    </el-collapse>
+      </el-tab-pane>
+    </el-tabs>
 
     <!-- Clear All KBs confirmation dialog -->
     <el-dialog
       v-model="showClearDialog"
-      title="Clear All Knowledge Bases"
+      :title="t('settings.clearAll')"
       width="450px"
       :close-on-click-modal="false"
     >
       <p style="margin: 0; line-height: 1.6">
-        Are you sure you want to clear <strong>all</strong> knowledge bases? This action cannot be
-        undone.
+        {{ t("settings.clearAllConfirm") }}
       </p>
       <template #footer>
-        <el-button size="small" @click="showClearDialog = false">Cancel</el-button>
-        <el-button size="small" type="danger" @click="handleClearAll">Clear All</el-button>
+        <el-button size="small" @click="showClearDialog = false">{{ t("kb.cancel") }}</el-button>
+        <el-button size="small" type="danger" @click="handleClearAll">{{ t("settings.clearAllConfirmBtn") }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -1305,7 +1145,7 @@ const sectionHints = computed(() => ({
   gap: 0;
   height: 100%;
   overflow-y: auto;
-  padding: 4px;
+  padding: 16px 20px;
 }
 
 .settings-header {
@@ -1313,11 +1153,13 @@ const sectionHints = computed(() => ({
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 4px 8px;
+  padding: 12px 0 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border-color);
   position: sticky;
   top: 0;
   z-index: 5;
-  background: var(--el-bg-color);
+  background: var(--surface);
 }
 
 .settings-header h2 {
@@ -1326,34 +1168,42 @@ const sectionHints = computed(() => ({
   font-weight: 600;
 }
 
-.settings-collapse {
+.settings-tabs {
   border: none;
+  border-radius: var(--radius);
 }
 
-.panel-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  flex: 1;
-  min-width: 0;
-}
-
-.hint-text {
-  font-size: 12px;
-  color: var(--el-text-color-disabled);
-  margin-left: 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.section-body {
+.tab-body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 20px;
   padding: 8px 4px;
+}
+
+.section-card {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  transition: box-shadow 150ms ease, border-color 150ms ease;
+}
+
+.section-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  border-color: var(--accent-color);
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .field-row {
@@ -1377,16 +1227,16 @@ const sectionHints = computed(() => ({
 }
 
 .field-label {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
-  color: var(--el-text-color-secondary);
-  min-width: 140px;
+  color: var(--text-secondary);
+  min-width: 120px;
   flex-shrink: 0;
 }
 
 .field-hint {
-  font-size: 11px;
-  color: var(--el-text-color-disabled);
+  font-size: 12px;
+  color: var(--text-secondary);
   width: 100%;
   margin-top: -4px;
   line-height: 1.5;
@@ -1394,25 +1244,18 @@ const sectionHints = computed(() => ({
 
 .field-desc {
   font-size: 13px;
-  color: var(--el-text-color-secondary);
+  color: var(--text-secondary);
   line-height: 1.5;
 }
 
 .link {
-  color: var(--el-color-primary);
+  color: var(--accent-color);
   text-decoration: underline;
 }
 
 .section-divider {
-  border-top: 1px solid var(--el-border-color-lighter);
+  border-top: 1px solid var(--border-color);
   padding-top: 4px;
-}
-
-.tool-limits-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--el-text-color-secondary);
-  margin-bottom: -6px;
 }
 
 .num-grid {
@@ -1428,25 +1271,17 @@ const sectionHints = computed(() => ({
   flex-shrink: 0;
 }
 
-.status-dot-inline {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  margin-left: 4px;
-}
-
 .status-green {
-  background: var(--el-color-success);
+  background: #22c55e;
 }
 
 .status-yellow {
-  background: var(--el-color-warning);
+  background: #eab308;
   animation: pulse 1.5s ease-in-out infinite;
 }
 
 .status-gray {
-  background: var(--el-text-color-disabled);
+  background: var(--text-secondary);
 }
 
 @keyframes pulse {
@@ -1463,7 +1298,7 @@ const sectionHints = computed(() => ({
 
 .status-text {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--text-secondary);
 }
 
 .status-row-inline {
@@ -1474,7 +1309,7 @@ const sectionHints = computed(() => ({
 
 .local-model-box {
   padding: 12px;
-  background: var(--el-fill-color-lighter);
+  background: var(--bg-primary);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
@@ -1484,15 +1319,15 @@ const sectionHints = computed(() => ({
 .url-display {
   font-size: 12px;
   padding: 4px 8px;
-  background: var(--el-fill-color-lighter);
-  border-radius: var(--el-border-radius-base);
-  color: var(--el-text-color-regular);
+  background: var(--bg-primary);
+  border-radius: var(--radius);
+  color: var(--text-primary);
 }
 
 .kb-select-list {
   max-height: 200px;
   overflow-y: auto;
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 4px;
   display: flex;
@@ -1511,7 +1346,7 @@ const sectionHints = computed(() => ({
 }
 
 .kb-select-item:hover {
-  background: var(--el-fill-color-lighter);
+  background: var(--bg-primary);
 }
 
 .kb-select-name {
@@ -1524,15 +1359,12 @@ const sectionHints = computed(() => ({
 
 .kb-select-count {
   font-size: 11px;
-  color: var(--el-text-color-disabled);
+  color: var(--text-secondary);
   flex-shrink: 0;
 }
 
-:deep(.el-collapse-item__header) {
-  padding: 0 4px;
-}
-
-:deep(.el-collapse-item__content) {
-  padding-bottom: 8px;
+:deep(.el-dialog) {
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
 }
 </style>

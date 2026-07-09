@@ -71,8 +71,9 @@ const visibleMessages = computed(() =>
 
 const isStreaming = computed(() => props.streaming);
 
+const messageCount = computed(() => visibleMessages.value.length);
 const virtualizer = useVirtualizer({
-  count: visibleMessages.value.length,
+  get count() { return messageCount.value; },
   getScrollElement: () => props.scrollRef || listContainer.value,
   estimateSize: (i: number) => {
     const m = visibleMessages.value[i];
@@ -105,7 +106,11 @@ watch(
 
     const raf = requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        virtualizer.scrollToIndex(visibleMessages.value.length - 1, { align: "end" });
+        try {
+          virtualizer.scrollToIndex(visibleMessages.value.length - 1, { align: "end" });
+        } catch {
+          // scrollToIndex may throw if the virtualizer hasn't initialized yet
+        }
       });
     });
     return () => cancelAnimationFrame(raf);
@@ -116,7 +121,11 @@ watch(
 onMounted(() => {
   if (visibleMessages.value.length > 1) {
     requestAnimationFrame(() => {
-      virtualizer.scrollToIndex(visibleMessages.value.length - 1, { align: "end" });
+      try {
+        virtualizer.scrollToIndex(visibleMessages.value.length - 1, { align: "end" });
+      } catch {
+        // scrollToIndex may throw if the virtualizer hasn't initialized yet
+      }
     });
   }
 });

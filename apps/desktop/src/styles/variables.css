@@ -37,6 +37,12 @@
   --panel-width: 260px;
   --status-bar-height: 28px;
   --titlebar-height: 38px;
+  --bg-color: var(--surface);
+
+  /* Animation tokens */
+  --transition-fast: 150ms ease;
+  --transition-normal: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .dark {
@@ -69,4 +75,5 @@
   --destructive: 0 63% 45%;
   --destructive-foreground: 0 0% 98%;
   --ring: 211 100% 55%;
+  --bg-color: var(--bg-secondary);
 }

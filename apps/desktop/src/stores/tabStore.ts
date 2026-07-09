@@ -18,7 +18,6 @@ export const useTabStore = defineStore("tabs", () => {
   const tabs = ref<TabItem[]>([]);
   const activeTabId = ref<string | null>(null);
   const closedTabs = ref<TabItem[]>([]);
-  const tabBarVisible = ref(true);
 
   const activeTab = computed(() => tabs.value.find((t) => t.id === activeTabId.value) ?? null);
 
@@ -99,10 +98,6 @@ export const useTabStore = defineStore("tabs", () => {
     if (tab) Object.assign(tab, updates);
   }
 
-  function toggleTabBar() {
-    tabBarVisible.value = !tabBarVisible.value;
-  }
-
   function pushClosed(tab: TabItem) {
     closedTabs.value.push(tab);
     if (closedTabs.value.length > MAX_CLOSED) {
@@ -111,8 +106,8 @@ export const useTabStore = defineStore("tabs", () => {
   }
 
   return {
-    tabs, activeTabId, closedTabs, tabBarVisible, activeTab,
+    tabs, activeTabId, closedTabs, activeTab,
     openTab, closeTab, closeOtherTabs, closeRightTabs, reopenClosedTab,
-    setActiveTab, reorderTabs, updateTabCache, toggleTabBar,
+    setActiveTab, reorderTabs, updateTabCache,
   };
 });

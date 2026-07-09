@@ -1,5 +1,5 @@
 <template>
-  <div class="titlebar" @mousedown="onDrag" data-tauri-drag-region>
+  <div class="titlebar" @mousedown="onDrag">
     <div class="titlebar-left">
       <span class="titlebar-app-name">SKB</span>
     </div>
@@ -12,17 +12,6 @@
       <!-- User Guide -->
       <button class="titlebar-icon-btn" title="Guide" @click="showGuide = true">
         <BookOpen :size="14" />
-      </button>
-
-      <!-- Tab Bar Toggle -->
-      <button
-        v-if="tabStore.tabs.length > 0"
-        class="titlebar-icon-btn"
-        :class="{ 'titlebar-icon-btn-active': !tabStore.tabBarVisible }"
-        :title="tabStore.tabBarVisible ? 'Hide tab bar' : 'Show tab bar'"
-        @click="tabStore.toggleTabBar"
-      >
-        <PanelTop :size="14" />
       </button>
 
       <!-- Theme Toggle -->
@@ -59,17 +48,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, watch, onMounted } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, Sun, Moon, Monitor, Globe, BookOpen, PanelTop } from "lucide-vue-next";
+import { Minus, Square, X, Sun, Moon, Monitor, Globe, BookOpen } from "lucide-vue-next";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useTabStore } from "@/stores/tabStore";
 import { useI18n } from "@/i18n/index";
 import UserGuideDialog from "@/components/common/UserGuideDialog.vue";
 
 const win = getCurrentWindow();
 const settingsStore = useSettingsStore();
-const tabStore = useTabStore();
 const { t, locale, toggleLocale } = useI18n();
 
 const theme = ref<"light" | "dark" | "system">("system");
@@ -83,20 +70,38 @@ onMounted(async () => {
   applyTheme();
   updateThemeTitle();
 
+  // Watch for settings theme changes (from SettingsPanel)
+  watch(() => settingsStore.settings.theme, (newTheme) => {
+    theme.value = (newTheme as any) || "system";
+    applyTheme();
+    updateThemeTitle();
+  });
+
   // First-launch detection
   const s = settingsStore.settings;
   const isFresh = !s.embedding_api_key && !s.mineru_token && !s.llm_api_key;
-  if (isFresh) {
+  if (isFresh && !s.has_seen_guide) {
     setTimeout(() => { showGuide.value = true; }, 600);
+  }
+});
+
+// Persist has_seen_guide when the user closes the guide dialog
+watch(() => showGuide.value, (val) => {
+  if (!val) {
+    settingsStore.saveSettings({ ...settingsStore.settings, has_seen_guide: true });
   }
 });
 
 function applyTheme() {
   const root = document.documentElement;
   const media = window.matchMedia("(prefers-color-scheme: dark)");
-  const isDark = theme.value === "dark" || (theme.value === "system" && media.matches);
-  root.classList.toggle("dark", isDark);
+  const resolved = theme.value === "dark" || (theme.value === "system" && media.matches);
+  root.classList.toggle("dark", resolved);
+  root.setAttribute("data-theme", resolved ? "dark" : "light");
 }
+
+// Expose for SettingsPanel
+defineExpose({ applyTheme, theme });
 
 function cycleTheme() {
   const order: Array<"light" | "dark" | "system"> = ["light", "dark", "system"];
@@ -114,7 +119,7 @@ function updateThemeTitle() {
 
 async function onDrag(e: MouseEvent) {
   const target = e.target as HTMLElement;
-  if (target.closest("button, .titlebar-icon-btn, .titlebar-win-btn")) return;
+  if (target.closest("button, [role=\"button\"], .titlebar-icon-btn, .titlebar-win-btn")) return;
   try { await win.startDragging(); } catch {}
 }
 </script>

@@ -52,7 +52,7 @@ defineEmits<{
   sourceClick: [source: SearchResult];
 }>();
 
-const activePanels = ref<string[]>(["sources"]);
+const activePanels = ref<string[]>([]);
 
 function normalizedScore(score: number): number {
   return Math.min(Math.max(Math.round((score || 0) * 100), 0), 100);
@@ -71,6 +71,7 @@ function truncateContent(content: string, maxLen = 150): string {
 
 .sources-panel :deep(.el-collapse-item__header) {
   @apply text-xs font-medium text-gray-500 dark:text-gray-400 px-3 h-8;
+  border-radius: var(--radius);
 }
 
 .sources-panel :deep(.el-collapse-item__wrap) {

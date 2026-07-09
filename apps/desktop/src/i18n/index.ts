@@ -15,10 +15,21 @@ function getInitialLocale(): Lang {
 const locale = ref<Lang>(getInitialLocale());
 
 export function useI18n() {
-  function t(key: string, fallback?: string): string {
+  function t(key: string, params?: Record<string, string | number> | string, fallback?: string): string {
+    // If params is a string, treat it as fallback (backward compat)
+    if (typeof params === "string") {
+      fallback = params;
+      params = undefined;
+    }
     const entry = (translations as any)[key];
     if (!entry) return fallback || key;
-    return entry[locale.value] ?? entry.en ?? key;
+    let text = entry[locale.value] ?? entry.en ?? key;
+    if (params) {
+      for (const [k, v] of Object.entries(params)) {
+        text = text.replace(`{${k}}`, String(v));
+      }
+    }
+    return text;
   }
 
   function setLocale(lang: Lang) {

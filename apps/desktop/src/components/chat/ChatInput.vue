@@ -70,6 +70,7 @@ function handleSend() {
 <style scoped>
 .chat-input-container {
   @apply flex flex-col gap-2 p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900;
+  max-height: 300px;
 }
 
 .chat-textarea {
@@ -81,10 +82,13 @@ function handleSend() {
          text-gray-900 dark:text-gray-100 rounded-xl
          placeholder:text-gray-400 dark:placeholder:text-gray-500
          text-sm leading-relaxed;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .chat-input-actions {
   @apply flex justify-end items-center gap-2;
+  flex-shrink: 0;
 }
 
 .send-btn,

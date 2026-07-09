@@ -3,123 +3,62 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --radius: 0.5rem;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --ring: 240 5.9% 10%;
+  * {
+    @apply border-border;
   }
-
-  .dark {
-    --background: 240 6% 10%;
-    --foreground: 0 0% 90%;
-    --card: 240 5% 14%;
-    --card-foreground: 0 0% 90%;
-    --primary: 220 70% 60%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 240 4% 18%;
-    --secondary-foreground: 0 0% 90%;
-    --muted: 240 4% 18%;
-    --muted-foreground: 240 5% 55%;
-    --accent: 240 4% 22%;
-    --accent-foreground: 0 0% 90%;
-    --border: 240 4% 22%;
-    --input: 240 4% 22%;
-    --destructive: 0 62.8% 45%;
-    --destructive-foreground: 0 0% 98%;
-    --ring: 220 70% 60%;
+  html, body {
+    background: transparent !important;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+                 "Helvetica Neue", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  #app {
+    height: 100vh;
+    width: 100vw;
+    @apply bg-background text-foreground;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 0 0 1px hsl(var(--border) / 0.3), 0 4px 24px rgba(0,0,0,0.12);
+  }
+  ::selection {
+    background: hsl(var(--muted-foreground) / 0.25);
+    color: inherit;
   }
 }
 
-* {
-  @apply border-border;
+.sidebar-glass {
+  background: var(--bg-sidebar);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-right: 1px solid var(--border-color);
 }
 
-html, body {
-  background: transparent !important;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.4); }
+* { scrollbar-width: thin; scrollbar-color: hsl(var(--border)) transparent; }
 
-#root {
-  height: 100vh;
-  width: 100vw;
-  @apply bg-background text-foreground;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 0 0 1px hsl(var(--border) / 0.3), 0 4px 24px rgba(0,0,0,0.12);
-}
-
-/* Text selection — use muted gray instead of native blue */
-::selection {
-  background: hsl(var(--muted-foreground) / 0.25);
-  color: inherit;
-}
-
-/* Scrollbar — match theme */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: hsl(var(--border));
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground) / 0.4);
-}
-
-/* Firefox */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: hsl(var(--border)) transparent;
-}
-
-
-/* ── Focus Mode (Ctrl+Shift+F) ────────────────────────────────── */
 .focus-mode .sidebar { opacity: 0.3; pointer-events: none; transition: opacity 300ms ease; }
 .focus-mode .tab-bar { opacity: 0.3; pointer-events: none; transition: opacity 300ms ease; }
 .focus-mode .title-bar { opacity: 0.5; transition: opacity 300ms ease; }
-.focus-mode .sidebar:hover,
-.focus-mode .tab-bar:hover { opacity: 1; pointer-events: auto; }
+.focus-mode .sidebar:hover, .focus-mode .tab-bar:hover { opacity: 1; pointer-events: auto; }
 
-/* Escape focus mode hint in document area */
-.focus-mode .doc-view:after {
-  content: "Esc to exit focus mode";
-  position: fixed;
-  top: 44px;
-  right: 16px;
-  font-size: 11px;
-  color: hsl(var(--muted-foreground) / 0.5);
-  pointer-events: none;
-  z-index: 100;
-}
+.tab-closing { opacity: 0; transform: scaleX(0); transition: opacity 150ms ease, transform 150ms ease; }
 
-/* ── Tab close animation ──────────────────────────────────────── */
-.tab-closing {
-  opacity: 0;
-  transform: scaleX(0);
-  transition: opacity 150ms ease, transform 150ms ease;
+.skb-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; border-radius: 50%;
+  background: rgba(79,70,229,0.12); color: #4f46e5;
+  font-size: 10px; font-weight: 600; text-decoration: none;
+  cursor: pointer; vertical-align: super; margin: 0 2px; line-height: 1;
 }
+.skb-badge:hover { background: rgba(79,70,229,0.24); }
+.dark .skb-badge { background: rgba(129,140,248,0.15); color: #a5b4fc; }
+.dark .skb-badge:hover { background: rgba(129,140,248,0.28); }

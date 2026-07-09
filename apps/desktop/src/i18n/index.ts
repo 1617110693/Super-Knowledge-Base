@@ -1,35 +1,44 @@
-import { createContext, useContext } from "react";
-import type { Lang, TranslationKey } from "./translations";
-import { translations } from "./translations";
+import { ref } from "vue";
+import type { App } from "vue";
+import { translations, type Lang } from "./translations";
 
-export { translations, type Lang, type TranslationKey } from "./translations";
+const LOCALE_KEY = "skb-locale";
 
-export interface I18nContextType {
-  lang: Lang;
-  setLang: (lang: Lang) => void;
-  t: (key: TranslationKey, vars?: Record<string, string | number>) => string;
+function getInitialLocale(): Lang {
+  try {
+    const saved = localStorage.getItem(LOCALE_KEY);
+    if (saved === "en" || saved === "zh-CN") return saved;
+  } catch {}
+  return navigator.language.startsWith("zh") ? "zh-CN" : "en";
 }
 
-export const I18nContext = createContext<I18nContextType>({
-  lang: "en",
-  setLang: () => {},
-  t: (key) => key,
-});
+const locale = ref<Lang>(getInitialLocale());
 
 export function useI18n() {
-  return useContext(I18nContext);
+  function t(key: string, fallback?: string): string {
+    const entry = (translations as any)[key];
+    if (!entry) return fallback || key;
+    return entry[locale.value] ?? entry.en ?? key;
+  }
+
+  function setLocale(lang: Lang) {
+    locale.value = lang;
+    try { localStorage.setItem(LOCALE_KEY, lang); } catch {}
+    document.documentElement.lang = lang;
+  }
+
+  function toggleLocale() {
+    setLocale(locale.value === "en" ? "zh-CN" : "en");
+  }
+
+  return { t, locale, setLocale, toggleLocale };
 }
 
-export function createT(lang: Lang) {
-  return (key: TranslationKey, vars?: Record<string, string | number>): string => {
-    const entry = translations[key];
-    if (!entry) return key;
-    let text = entry[lang] || entry["en"] || key;
-    if (vars) {
-      for (const [k, v] of Object.entries(vars)) {
-        text = text.replace(`{${k}}`, String(v)) as typeof text;
-      }
-    }
-    return text;
-  };
-}
+// Vue plugin for app.use()
+export default {
+  install(app: App) {
+    const i18n = useI18n();
+    app.provide("i18n", i18n);
+    app.config.globalProperties.$t = i18n.t;
+  },
+};

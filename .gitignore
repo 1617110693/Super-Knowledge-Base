@@ -49,3 +49,4 @@ app_data/
 .codegraph/
 .claude/
 models/
+docs/

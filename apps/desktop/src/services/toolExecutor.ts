@@ -369,8 +369,9 @@ export async function executeToolCall(
     case "web_search": {
       const query = String(parsedArgs.query || "");
       const maxResults = Math.min(Number(parsedArgs.max_results) || 5, 10);
-      const { useSettingsStore } = await import("../stores/useSettingsStore");
-      const appSettings = useSettingsStore.getState().settings;
+      const { useSettingsStore } = await import("@/stores/settingsStore");
+      const settingsStore = useSettingsStore();
+      const appSettings = settingsStore.settings;
       const { searchWeb } = await import("./webSearch");
       // Default to DuckDuckGo (free, no API key) when no provider is configured.
       // Previously defaulted to "tavily" which silently failed without an API key,

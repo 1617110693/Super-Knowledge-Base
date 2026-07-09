@@ -1,0 +1,72 @@
+:root {
+  /* macOS-inspired light theme */
+  --bg-primary: #f5f5f7;
+  --bg-secondary: #ffffff;
+  --bg-sidebar: rgba(245, 245, 247, 0.72);
+  --text-primary: #1d1d1f;
+  --text-secondary: #6e6e73;
+  --accent-color: #0071e3;
+  --accent-muted: rgba(0, 113, 227, 0.08);
+  --border-color: rgba(0, 0, 0, 0.08);
+  --surface: #ffffff;
+  --surface-raised: #f5f5f7;
+  --surface-elevated: #ffffff;
+
+  --background: 240 4% 97%;
+  --foreground: 240 4% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 4% 12%;
+  --primary: 211 100% 45%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 3% 94%;
+  --secondary-foreground: 240 4% 12%;
+  --muted: 240 3% 94%;
+  --muted-foreground: 240 3% 44%;
+  --accent: 240 3% 94%;
+  --accent-foreground: 240 4% 12%;
+  --border: 240 4% 90%;
+  --input: 240 4% 90%;
+  --radius: 0.5rem;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --ring: 211 100% 45%;
+
+  /* PDF reader tokens */
+  --highlight: #f5d78c;
+  --highlight-bg: rgba(245, 215, 140, 0.25);
+  --panel-width: 260px;
+  --status-bar-height: 28px;
+  --titlebar-height: 38px;
+}
+
+.dark {
+  --bg-primary: #1c1c1e;
+  --bg-secondary: #2c2c2e;
+  --bg-sidebar: rgba(28, 28, 30, 0.72);
+  --text-primary: #f5f5f7;
+  --text-secondary: #98989d;
+  --accent-color: #2997ff;
+  --accent-muted: rgba(41, 151, 255, 0.12);
+  --border-color: rgba(255, 255, 255, 0.08);
+  --surface: #2c2c2e;
+  --surface-raised: #3a3a3c;
+  --surface-elevated: #48484a;
+
+  --background: 240 4% 10%;
+  --foreground: 0 0% 90%;
+  --card: 240 4% 14%;
+  --card-foreground: 0 0% 90%;
+  --primary: 211 100% 55%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 3% 18%;
+  --secondary-foreground: 0 0% 90%;
+  --muted: 240 3% 18%;
+  --muted-foreground: 240 4% 55%;
+  --accent: 240 3% 22%;
+  --accent-foreground: 0 0% 90%;
+  --border: 240 3% 22%;
+  --input: 240 3% 22%;
+  --destructive: 0 63% 45%;
+  --destructive-foreground: 0 0% 98%;
+  --ring: 211 100% 55%;
+}

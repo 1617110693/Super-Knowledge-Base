@@ -316,10 +316,17 @@ export async function getChunkRange(params: {
   start: number;
   end: number;
 }): Promise<{ kb_id: string; doc_id: string; chunks: ChunkByIndex[]; start: number; end: number }> {
-  return pythonFetch("/get-chunk-range", {
-    method: "POST",
-    body: JSON.stringify(params),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    return await pythonFetch("/get-chunk-range", {
+      method: "POST",
+      body: JSON.stringify(params),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ── Get Chunks by Page ──

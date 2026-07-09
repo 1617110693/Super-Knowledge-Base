@@ -1,14 +1,39 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import vue from "@vitejs/plugin-vue";
+import AutoImport from "unplugin-auto-import/vite";
+import Components from "unplugin-vue-components/vite";
+import { ElementPlusResolver } from "unplugin-vue-components/resolvers";
+import { resolve } from "path";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    vue(),
+    AutoImport({ resolvers: [ElementPlusResolver()] }),
+    Components({ resolvers: [ElementPlusResolver()] }),
+  ],
+  resolve: {
+    alias: { "@": resolve(__dirname, "src") },
+  },
+  optimizeDeps: {
+    include: ["katex", "markdown-it"],
+  },
+  build: {
+    commonjsOptions: {
+      include: [/node_modules/],
+    },
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          katex: ["katex"],
+          vendor: ["vue", "pinia", "vue-router", "element-plus"],
+        },
+      },
+    },
+  },
   clearScreen: false,
   server: {
     port: 1420,
     strictPort: true,
-    watch: {
-      ignored: ["**/src-tauri/**"],
-    },
+    watch: { ignored: ["**/src-tauri/**"] },
   },
 });

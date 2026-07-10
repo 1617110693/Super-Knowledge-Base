@@ -11,6 +11,10 @@ if TYPE_CHECKING:
 _TABLE_SEP_RE = re.compile(r'^\s*\|[\s\-:|]+\|\s*$', re.MULTILINE)
 # Regex to detect a table row (starts and ends with |)
 _TABLE_ROW_RE = re.compile(r'^\s*\|.+\|\s*$')
+# Regex to detect display math blocks $$...$$
+_DISPLAY_MATH_RE = re.compile(r'\$\$[\s\S]*?\$\$', re.MULTILINE)
+# Regex to detect inline math $...$ (skip $$)
+_INLINE_MATH_RE = re.compile(r'(?<!\$)\$(?!\$)([^$]+?)\$(?!\$)')
 
 
 @dataclass
@@ -36,6 +40,41 @@ class Chunker:
                 return RecursiveChunker(chunk_size, chunk_overlap)
             case _:
                 return RecursiveChunker(chunk_size, chunk_overlap)
+
+    @staticmethod
+    def _protect_math(text: str) -> Tuple[str, Dict[str, str]]:
+        """Replace display math blocks ($$...$$) and inline math ($...$) with
+        placeholders so chunk boundaries never cut through math content.
+        Returns (protected_text, math_map).
+        """
+        math_map: Dict[str, str] = {}
+        counter = 0
+
+        def replace_display(m: re.Match) -> str:
+            nonlocal counter
+            placeholder = f"{{{{MATH_D_{counter}}}}}"
+            math_map[placeholder] = m.group(0)
+            counter += 1
+            return placeholder
+
+        def replace_inline(m: re.Match) -> str:
+            nonlocal counter
+            placeholder = f"{{{{MATH_I_{counter}}}}}"
+            math_map[placeholder] = m.group(0)
+            counter += 1
+            return placeholder
+
+        # Protect display math first ($$...$$), then inline math ($...$)
+        text = _DISPLAY_MATH_RE.sub(replace_display, text)
+        text = _INLINE_MATH_RE.sub(replace_inline, text)
+        return text, math_map
+
+    @staticmethod
+    def _restore_math(text: str, math_map: Dict[str, str]) -> str:
+        """Replace math placeholders with original math content."""
+        for placeholder, original in math_map.items():
+            text = text.replace(placeholder, original)
+        return text
 
     @staticmethod
     def _find_table_regions(text: str) -> List[Tuple[int, int]]:
@@ -242,7 +281,9 @@ class FixedSizeChunker(Chunker):
         page_mapper: "Optional[PageMapper]" = None,
     ) -> List[Chunk]:
         meta = metadata or {}
-        protected, table_map = self._protect_tables(text)
+        # Protect math blocks first, then tables
+        math_protected, math_map = self._protect_math(text)
+        protected, table_map = self._protect_tables(math_protected)
         chunks = []
         start = 0
         chunk_index = 0
@@ -262,6 +303,9 @@ class FixedSizeChunker(Chunker):
             start += self.chunk_size - self.chunk_overlap
             chunk_index += 1
         chunks = self._restore_tables(chunks, table_map, self.chunk_size)
+        # Restore math in each chunk
+        for c in chunks:
+            c.content = self._restore_math(c.content, math_map)
         self._annotate_char_positions(text, chunks, self.chunk_overlap)
         self._annotate_page_info(chunks, page_mapper)
         return chunks
@@ -284,7 +328,8 @@ class SemanticChunker(Chunker):
         page_mapper: "Optional[PageMapper]" = None,
     ) -> List[Chunk]:
         meta = metadata or {}
-        protected, table_map = self._protect_tables(text)
+        math_protected, math_map = self._protect_math(text)
+        protected, table_map = self._protect_tables(math_protected)
         sentences = self.SENTENCE_PATTERN.split(protected)
         sentences = [s.strip() for s in sentences if s.strip()]
 
@@ -318,6 +363,8 @@ class SemanticChunker(Chunker):
                 Chunk(content=current.strip(), metadata=meta, chunk_index=chunk_index)
             )
         chunks = self._restore_tables(chunks, table_map, self.chunk_size)
+        for c in chunks:
+            c.content = self._restore_math(c.content, math_map)
         self._annotate_char_positions(text, chunks, self.chunk_overlap)
         self._annotate_page_info(chunks, page_mapper)
         return chunks
@@ -340,10 +387,13 @@ class RecursiveChunker(Chunker):
         page_mapper: "Optional[PageMapper]" = None,
     ) -> List[Chunk]:
         meta = metadata or {}
-        protected, table_map = self._protect_tables(text)
+        math_protected, math_map = self._protect_math(text)
+        protected, table_map = self._protect_tables(math_protected)
         chunks: List[Chunk] = []
         self._split_text(protected, list(self.SEPARATORS), meta, 0, chunks)
         chunks = self._restore_tables(chunks, table_map, self.chunk_size)
+        for c in chunks:
+            c.content = self._restore_math(c.content, math_map)
         self._annotate_char_positions(text, chunks, self.chunk_overlap)
         self._annotate_page_info(chunks, page_mapper)
         return chunks

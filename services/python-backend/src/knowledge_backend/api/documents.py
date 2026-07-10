@@ -6,7 +6,7 @@ import threading
 import time
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 from typing import Optional
 
@@ -849,6 +849,31 @@ class DescribeImageRequest(BaseModel):
     kb_id: str
     doc_id: str
     filename: str
+
+
+@router.get("/images/serve/{filename:path}")
+def serve_document_image_search(filename: str, kb_id: str = "", doc_id: str = ""):
+    """Serve a document image. If kb_id and doc_id are provided, look there.
+    Otherwise search all KBs/docs for the image file."""
+    config = get_config()
+    data_dir = Path(config.knowledge_base_data_dir)
+
+    if kb_id and doc_id:
+        # Direct path
+        candidates = [data_dir / f"kb_{kb_id}" / "docs" / doc_id / "images" / filename]
+    else:
+        # Search all KBs/docs
+        candidates = []
+        for kb_dir in data_dir.glob("kb_*/docs/*/images/*"):
+            if kb_dir.name == filename:
+                candidates.append(kb_dir)
+
+    for img_path in candidates:
+        if img_path and img_path.exists():
+            fmt = img_path.suffix.lstrip(".") or "png"
+            return Response(img_path.read_bytes(), media_type=f"image/{fmt}")
+
+    raise HTTPException(404, f"Image not found: {filename}")
 
 
 @router.post("/images/describe")

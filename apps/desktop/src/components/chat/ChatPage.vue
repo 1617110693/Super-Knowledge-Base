@@ -161,6 +161,7 @@
       @prev="navigatePreviewChunk(-1)"
       @next="navigatePreviewChunk(1)"
       @openDocument="openDocFromChunk"
+      @openInPdf="openPdfFromChunk"
     />
   </div>
 </template>
@@ -442,7 +443,7 @@ function buildInstr(): string {
   const citeInstr =
     "IMPORTANT: Each search result has an 'index' field (1,2,3...) AND a 'chunk_index' field (document position). Use the INDEX number for citation: write [N] where N is the result index, NOT the chunk_index. Example: if result index=1 has chunk_index=8, cite it as [1], not [8].";
   const imageInstr =
-    "IMPORTANT — IMAGE REFERENCES: When your search results include content_type='image' chunks, ALWAYS include the image in your response using markdown: ![description](images/filename.jpg). Extract the exact filename from the chunk content (look for 'Image: hash.jpg' or 'images/hash.jpg'). The image will render inline as a clickable thumbnail for the user. Never skip images — they are key visual information that supplements your text answer.";
+    "IMPORTANT — YOU MUST INCLUDE IMAGES IN YOUR ANSWER: Before writing your final answer, ALWAYS search for images related to the topic. When search results include content_type='image' chunks, you MUST render them inline using: ![description](images/filename.jpg). Additionally, look at ALL search result content for image filenames (patterns like 'Image: hash.jpg', 'images/hash.jpg', or markdown image syntax). Extract these filenames and include the images. If you reference a diagram, chart, figure, or visual concept but no image chunk was returned, use search_knowledge_base with content_type='image' to specifically find related images. Images are key visual evidence — never skip them, they appear as clickable thumbnails that the user can preview.";
   const webSearchEnabledVal = conv.value?.chatSettings?.webSearchEnabled ?? false;
   const webInstr =
     `WEB SEARCH (ENABLED): You MUST call web_search before answering whenever the question involves (a) recent events, news, or dates after your training cutoff, (b) real-time or live information, (c) specific facts you are not confident about, or (d) anything beyond the selected knowledge bases. Do NOT answer from memory alone if web_search could give a fresher or more accurate answer. After web_search, use web_fetch to read a specific result page if you need full detail. Cite web results by URL or title so the user knows the source.`;
@@ -899,14 +900,23 @@ function openDocFromChunk(docId: string) {
   if (previewChunk.value) {
     const kbId = previewChunk.value.kb_id;
     const ci = previewChunk.value.metadata?.chunk_index;
-    console.log('[chunk] openDocFromChunk', { docId, kbId, ci, meta: previewChunk.value.metadata });
     const url = ci != null
       ? `/kb/${kbId}/documents/${docId}?ci=${ci}`
       : `/kb/${kbId}/documents/${docId}`;
     router.push(url);
     previewChunk.value = null;
-  } else {
-    console.log('[chunk] openDocFromChunk called but previewChunk is null', docId);
+  }
+}
+
+function openPdfFromChunk(docId: string) {
+  if (previewChunk.value) {
+    const kbId = previewChunk.value.kb_id;
+    const ci = previewChunk.value.metadata?.chunk_index;
+    const url = ci != null
+      ? `/kb/${kbId}/documents/${docId}?view=pdf&ci=${ci}`
+      : `/kb/${kbId}/documents/${docId}?view=pdf`;
+    router.push(url);
+    previewChunk.value = null;
   }
 }
 </script>

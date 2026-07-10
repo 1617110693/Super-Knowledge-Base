@@ -92,6 +92,7 @@ export async function executeToolCall(
                 score: Math.round(r.score * 100) / 100,
                 content: r.content.slice(0, maxChars),
                 page: r.metadata?.page,
+                content_type: r.content_type || r.metadata?.content_type || "text",
               };
               // Include neighbor context if present
               if (r.context) {

@@ -5,11 +5,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject } from "vue";
+import { computed, inject, ref } from "vue";
 import MarkdownIt from "markdown-it";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import type { SearchResult } from "@/types";
+import { getBaseUrl } from "@/services/pythonClient";
 
 const props = withDefaults(
   defineProps<{
@@ -26,6 +27,16 @@ const injectedTheme = inject("markdownTheme", "academic");
 const emit = defineEmits<{
   sourceClick: [source: SearchResult];
 }>();
+
+const baseUrl = ref("");
+
+// Lazily resolve baseUrl for images
+async function getApiBase(): Promise<string> {
+  if (!baseUrl.value) {
+    try { baseUrl.value = await getBaseUrl(); } catch { baseUrl.value = ""; }
+  }
+  return baseUrl.value;
+}
 
 const md = new MarkdownIt({
   html: true,
@@ -128,8 +139,23 @@ const renderedHtml = computed(() => {
   html = html.replace(/(<th[^>]*>)([\s\S]*?)(<\/th>)/gi, (_m: string, open: string, inner: string, close: string) => {
     return open + renderInlineMathInHtml(inner) + close;
   });
+  // Convert markdown img tags to clickable thumbnails via backend API
+  // LLM writes ![](images/xxx.jpg) → markdown-it renders <img src="images/xxx.jpg">
+  // We replace the src with backend API URL
+  if (baseUrl.value) {
+    html = html.replace(
+      /<img\s+([^>]*?)src="images\/([^"]+)"([^>]*?)\/?>/gi,
+      (_m: string, before: string, filename: string, after: string) => {
+        const imgUrl = `${baseUrl.value}/api/v1/images/serve/${filename}`;
+        return `<a href="${imgUrl}" target="_blank" class="chat-image-link"><img${before}src="${imgUrl}"${after} class="chat-image" loading="lazy" style="max-width:300px;border-radius:8px;border:1px solid var(--border-color);margin:8px 0;cursor:pointer" /></a>`;
+      }
+    );
+  }
   return html;
 });
+
+// Trigger baseUrl resolution once
+getApiBase();
 
 function onBadgeClick(e: MouseEvent) {
   const el = (e.target as HTMLElement).closest("[data-source], [data-source-start]") as HTMLElement | null;

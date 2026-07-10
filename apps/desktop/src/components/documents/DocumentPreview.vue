@@ -215,6 +215,55 @@ async function openPdf() {
   }
 }
 
+// Determine current page from markdown scroll position
+const currentMarkdownPage = computed(() => {
+  if (!docScrollRef.value) return 0;
+  const st = docScrollRef.value.scrollTop + docScrollRef.value.clientHeight * 0.3;
+  for (let i = sectionEstimatedTops.value.length - 1; i >= 0; i--) {
+    if (st >= sectionEstimatedTops.value[i]) {
+      // Find which page this section belongs to
+      const secStart = sectionOffsets.value[i] ?? 0;
+      for (const { page, startChar } of pageAnchorPositions.value) {
+        if (startChar <= secStart) return page;
+      }
+      return 0;
+    }
+  }
+  return 0;
+});
+
+async function jumpToPdfAtPage() {
+  const page = currentMarkdownPage.value;
+  if (!page) return;
+  if (!pdfOpened) { await openPdf(); await nextTick(); }
+  docStore.setPage(page);
+  viewMode.value = 'pdf';
+  nextTick(() => highlightPdfPage(page));
+}
+
+function jumpToMarkdownAtPage() {
+  const page = docStore.currentPage;
+  // Find the first chunk on this page, then find its section
+  const chunkIndices = pageChunksMap.value.get(page);
+  if (!chunkIndices || chunkIndices.length === 0) return;
+  const ci = chunkIndices[0];
+  const sc = startCharMap.value.get(ci);
+  if (sc == null) return;
+  const si = charToSection.value(sc);
+  viewMode.value = 'markdown';
+  nextTick(() => {
+    rendered.value = new Set([
+      ...rendered.value,
+      ...Array.from({ length: 2 * WINDOW + 1 }, (_, i) =>
+        Math.max(0, si - WINDOW + i)).filter((i) => i < sections.value.length),
+    ]);
+    const sectionEl = docScrollRef.value?.querySelector(`[data-section-idx="${si}"]`) as HTMLElement | null;
+    if (sectionEl) {
+      sectionEl.scrollIntoView({ block: "start", behavior: "instant" });
+    }
+  });
+}
+
 // TOC open state persisted per document
 const tocOpen = ref(false);
 const wrappedSetTocOpen = (v: boolean) => {
@@ -450,36 +499,6 @@ watch([kbId, docId], async ([newKbId, newDocId], [oldKbId, oldDocId]) => {
     mdAvailable.value = docData.md_available !== false;
   } catch { docName.value = newDocId; }
 
-  // Resolve image paths in content BEFORE populating startCharMap so positions match
-  if (content.value && imageNames.value.length > 0) {
-    for (const name of imageNames.value) {
-      const src = imageSrcs.value.get(name);
-      if (src) {
-        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        // Markdown image syntax: ![...](images/xxx.jpg)
-        content.value = content.value.replace(
-          new RegExp(`\\(images/${escaped}\\)`, 'g'),
-          `(${src})`
-        );
-        // HTML img with double quotes
-        content.value = content.value.replace(
-          new RegExp(`src="images/${escaped}"`, 'g'),
-          `src="${src}"`
-        );
-        // HTML img with single quotes
-        content.value = content.value.replace(
-          new RegExp(`src='images/${escaped}'`, 'g'),
-          `src='${src}'`
-        );
-        // HTML img without quotes: src=images/xxx.jpg
-        content.value = content.value.replace(
-          new RegExp(`src=images/${escaped}(?=[\\s>])`, 'g'),
-          `src=${src}`
-        );
-      }
-    }
-  }
-
   try {
     const res = await getChunkRange({ kb_id: newKbId, doc_id: newDocId, start: 0, end: 50000 });
     const map = new Map<number, number>();
@@ -551,6 +570,29 @@ watch([kbId, docId], async ([newKbId, newDocId], [oldKbId, oldDocId]) => {
   } catch { /* ignore */ }
 }, { immediate: true });
 
+// Resolve image paths when both content and image sources are loaded
+watch([content, imageSrcs], () => {
+  if (!content.value || imageSrcs.value.size === 0) return;
+  for (const [name, src] of imageSrcs.value) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Markdown image syntax: ![...](images/xxx.jpg)
+    content.value = content.value.replace(
+      new RegExp(`\\(images/${escaped}\\)`, 'g'),
+      `(${src})`
+    );
+    // HTML img with double quotes
+    content.value = content.value.replace(
+      new RegExp(`src="images/${escaped}"`, 'g'),
+      `src="${src}"`
+    );
+    // HTML img with single quotes
+    content.value = content.value.replace(
+      new RegExp(`src='images/${escaped}'`, 'g'),
+      `src='${src}'`
+    );
+  }
+});
+
 async function refreshContent() {
   if (!kbId.value || !docId.value) return;
   try {
@@ -582,11 +624,9 @@ async function refreshContent() {
 // ── URL chunk index ────────────────────────────────────────────────────────
 
 watch(() => route.query.ci, (ci) => {
-  console.log('[chunk] route.query.ci watch FIRED', { ci, currentChunkIdx: chunkIdx.value });
   if (ci != null) {
     const n = parseInt(ci as string);
     if (!isNaN(n) && n !== chunkIdx.value) {
-      console.log('[chunk] ci from URL', n);
       // Defer to next tick so the scroll watch (defined later in setup) is active
       nextTick(() => { chunkIdx.value = n; });
     }
@@ -1201,11 +1241,9 @@ function waitForSectionRender(si: number, timeoutMs = 3000): Promise<void> {
       const hasMarkdown = el?.querySelector('.markdown-renderer');
       // Must contain actual rendered markdown, not just the placeholder div
       if (el && hasMarkdown) {
-        console.log('[chunk] waitForSectionRender found .markdown-renderer after', Date.now() - start, 'ms');
         resolve(); return;
       }
       if (Date.now() - start > timeoutMs) {
-        console.log('[chunk] waitForSectionRender TIMEOUT after', timeoutMs, 'ms - sectionEl exists?', !!el, 'hasMarkdown?', !!hasMarkdown, 'offsetHeight', el?.offsetHeight);
         resolve(); return;
       }
       requestAnimationFrame(check);
@@ -1216,39 +1254,26 @@ function waitForSectionRender(si: number, timeoutMs = 3000): Promise<void> {
 
 // Scroll to target chunk
 watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
-  console.log('[chunk] watch FIRED', { chunkIdx: chunkIdx.value, jumpTrigger: jumpTrigger.value, scrollTarget: scrollTarget.value });
-  if (chunkIdx.value == null) { console.log('[chunk] chunkIdx is null, returning'); return; }
+  if (chunkIdx.value == null) return;
 
   // Guard: wait for startCharMap to be populated (may still be loading)
   if (startCharMap.value.size === 0) {
-    console.log('[chunk] startCharMap empty, polling until loaded...');
     // Poll up to 10s for content to load
     const deadline = Date.now() + 10000;
     while (startCharMap.value.size === 0 && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 200));
     }
     if (startCharMap.value.size === 0) {
-      console.log('[chunk] startCharMap still empty after 10s, aborting jump');
       return;
     }
-    console.log('[chunk] startCharMap loaded with', startCharMap.value.size, 'entries after', (10000 - (deadline - Date.now())), 'ms');
   }
 
   await nextTick();
 
   const container = docScrollRef.value;
-  if (!container) { console.log('[chunk] no container'); return; }
+  if (!container) return;
 
   const ci = chunkIdx.value;
-  console.log('[chunk] jump triggered', {
-    ci,
-    contentLen: content.value?.length,
-    startCharMapSize: startCharMap.value.size,
-    pageChunksMapSize: pageChunksMap.value.size,
-    sectionsLen: sections.value.length,
-    viewMode: viewMode.value,
-    pdfOpened,
-  });
 
   // ── PDF view: jump to page (MUST run before markdown logic) ──
   if (viewMode.value === 'pdf') {
@@ -1256,10 +1281,8 @@ watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
     for (const [page, chunkIndices] of pageChunksMap.value) {
       if (chunkIndices.includes(ci)) { pageNum = page; break; }
     }
-    console.log('[chunk] PDF mode - pageNum', pageNum);
     if (pageNum != null) {
       if (!pdfOpened) {
-        console.log('[chunk] PDF not opened, calling openPdf');
         await openPdf();
         await nextTick();
         await waitForPageWrapper(pageNum);
@@ -1273,15 +1296,6 @@ watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
 
   // ── Markdown view: scroll to chunk ──
   if (!scrollTarget.value) {
-    // ── Debug: dump startCharMap entries around target ci ──
-    console.log('[chunk] startCharMap lookup', {
-      ci,
-      'startCharMap.get(ci)': startCharMap.value.get(ci),
-      'startCharMap keys (first 10)': [...startCharMap.value.keys()].slice(0, 10),
-      'startCharMap keys (last 10)': [...startCharMap.value.keys()].slice(-10),
-      'startCharMap total entries': startCharMap.value.size,
-    });
-
     let pageNum: number | null = null;
     for (const { page, startChar } of pageAnchorPositions.value) {
       const sc = startCharMap.value.get(ci);
@@ -1292,42 +1306,24 @@ watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
         if (chunkIndices.includes(ci)) { pageNum = page; break; }
       }
     }
-    console.log('[chunk] pageNum from maps', pageNum);
 
     // Scroll to section containing this chunk
     const sc = startCharMap.value.get(ci);
-    console.log('[chunk] sc (startChar for chunk)', { ci, sc, pageNum });
 
     if (sc != null) {
       const si = charToSection.value(sc);
-      console.log('[chunk] section index', {
-        si,
-        'sectionOffsets[si]': sectionOffsets.value[si],
-        'sectionOffsets (first 5)': sectionOffsets.value.slice(0, 5),
-        'sectionOffsets (last 5)': sectionOffsets.value.slice(-5),
-        'sections count': sections.value.length,
-        'section length': sections.value[si]?.length ?? 'N/A',
-        'section first 80 chars': sections.value[si]?.slice(0, 80) ?? 'N/A',
-      });
 
       // Ensure section is rendered
       rendered.value = new Set([
         ...rendered.value,
         ...Array.from({ length: 2 * WINDOW + 1 }, (_, i) => Math.max(0, si - WINDOW + i)).filter((i) => i < sections.value.length),
       ]);
-      console.log('[chunk] rendered set size', rendered.value.size, 'has si?', rendered.value.has(si));
 
       // Wait for section to actually render
       await nextTick();
-      const renderStart = Date.now();
       await waitForSectionRender(si);
-      console.log('[chunk] waitForSectionRender took', Date.now() - renderStart, 'ms');
 
       const sectionEl = container.querySelector(`[data-section-idx="${si}"]`) as HTMLElement | null;
-      console.log('[chunk] sectionEl found?', !!sectionEl, 'data-section-idx', si,
-        'sectionEl.offsetTop', sectionEl?.offsetTop,
-        'sectionEl.offsetHeight', sectionEl?.offsetHeight,
-        'container.scrollTop', container.scrollTop);
       if (sectionEl) {
         // Find the chunk's end position (next chunk's startChar, or end of content)
         const chunkEnd = (() => {
@@ -1367,7 +1363,6 @@ watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
           }
         }
 
-        console.log('[chunk] highlight', { ci, sc, chunkEnd, si, siEnd, highlightCount: highlightEls.length });
 
         // Scroll to the first highlighted element
         const targetEl = highlightEls[0] || sectionEl;
@@ -1566,11 +1561,19 @@ function nextImage() {
             </button>
             <button
               v-if="viewMode === 'pdf'"
-              @click="viewMode = 'markdown'"
+              @click="jumpToMarkdownAtPage"
               class="icon-btn"
-              title="View Markdown"
+              title="Jump to markdown at this page"
             >
-              <X :size="14" />
+              <FileText :size="14" />
+            </button>
+            <button
+              v-if="viewMode === 'markdown' && hasPageData"
+              @click="jumpToPdfAtPage"
+              class="icon-btn"
+              title="Jump to PDF at current page"
+            >
+              <FileText :size="14" />
             </button>
             <button
               @click="wrappedSetTocOpen(!tocOpen)"

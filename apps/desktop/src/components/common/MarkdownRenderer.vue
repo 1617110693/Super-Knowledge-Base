@@ -98,6 +98,31 @@ const renderedHtml = computed(() => {
   processedContent = processedContent.replace(/\$\s*\$?\s*([^\n]*?)\\tag\{([^}]+)\}(?!\s*\$)/g, (_, body, tag) => {
     return `$$\n${body.trim()}\n\\tag{${tag}}\n$$`;
   });
+  // Fix: lines with LaTeX commands but no $ delimiters (orphaned math from chunk boundaries)
+  processedContent = processedContent.replace(/^([^\n$]*\\[a-zA-Z]+[^\n$]*)$/gm, (match, line) => {
+    const latexCount = (line.match(/\\[a-zA-Z]+/g) || []).length;
+    if (latexCount >= 2 || /\\(?:frac|int|sum|prod|sqrt|mathrm|partial|times|cdot|alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|omega|infty|mathbf|begin|end|left|right|overrightarrow|overline|underline|vec|dot|ddot|hat|tilde|bar|boldsymbol|mathbb|mathcal|mathfrak|mathrm|textrm|operatorname|limits|displaystyle|notag|nonumber)\b/.test(line)) {
+      return `$$\n${line.trim()}\n$$`;
+    }
+    return match;
+  });
+  // Fix: lone $ with whitespace acting as MinerU display math delimiter
+  processedContent = processedContent.replace(/([^\n$]{3,})\s+\$\s+([^\n$]{3,})/g, (match, left, right) => {
+    const hasLatex = (s: string) => /\\(?:frac|int|sum|prod|sqrt|mathrm|partial|times|cdot|alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|omega|infty|mathbf|begin|end|left|right|vec|dot|hat|tilde|bar|boldsymbol|mathbb|mathcal|operatorname|overrightarrow|overline|underline|textrm|text|displaystyle|limits|notag|nonumber|mathring|mathfrak|mathit|mathrm)\b/.test(s) || /[_^]\{/.test(s);
+    if (hasLatex(left) || hasLatex(right)) {
+      return `$$\n${left.trim()}\n$$\n$$\n${right.trim()}\n$$`;
+    }
+    return match;
+  });
+  // Fix unbalanced $$ delimiters from chunk boundaries
+  const $$count = (processedContent.match(/\$\$/g) || []).length;
+  if ($$count % 2 !== 0) {
+    if (processedContent.startsWith('$$')) {
+      processedContent = processedContent + '\n$$';
+    } else {
+      processedContent = '$$\n' + processedContent;
+    }
+  }
 
   let html = md.render(processedContent);
 

@@ -99,17 +99,4 @@ kbd {
   box-shadow: 0 1px 0 var(--el-border-color);
 }
 
-:deep(.el-dialog) {
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-}
-:deep(.el-dialog__header) {
-  padding: 16px 20px 0;
-}
-:deep(.el-dialog__body) {
-  padding: 12px 20px;
-}
-:deep(.el-dialog__footer) {
-  padding: 0 20px 16px;
-}
 </style>

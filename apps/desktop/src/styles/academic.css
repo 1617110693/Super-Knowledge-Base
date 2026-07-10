@@ -1,0 +1,274 @@
+/* Academic Markdown Theme — adapted from Typora academic.css */
+/* Applied via .md-theme-academic class */
+
+/* ── Typography ── */
+.md-theme-academic.markdown-renderer,
+.md-theme-academic.chat-markdown {
+  font-family: "STIX2Text", "Georgia", "Times New Roman", serif;
+  line-height: 1.75;
+  font-size: 12pt;
+  color: #222;
+}
+
+/* ── Headings ── */
+.md-theme-academic .markdown-renderer h1,
+.md-theme-academic .markdown-renderer h2,
+.md-theme-academic .markdown-renderer h3,
+.md-theme-academic .markdown-renderer h4,
+.md-theme-academic .markdown-renderer h5,
+.md-theme-academic .markdown-renderer h6,
+.md-theme-academic .chat-markdown h1,
+.md-theme-academic .chat-markdown h2,
+.md-theme-academic .chat-markdown h3,
+.md-theme-academic .chat-markdown h4,
+.md-theme-academic .chat-markdown h5,
+.md-theme-academic .chat-markdown h6 {
+  font-family: inherit;
+  line-height: 1.5;
+  margin-bottom: 0.6em;
+  margin-top: 1.2em;
+  color: #111;
+}
+
+.md-theme-academic .markdown-renderer h1,
+.md-theme-academic .chat-markdown h1 {
+  font-size: 2em;
+  text-align: center;
+}
+.md-theme-academic .markdown-renderer h2,
+.md-theme-academic .chat-markdown h2 {
+  font-size: 1.5em;
+}
+.md-theme-academic .markdown-renderer h3,
+.md-theme-academic .chat-markdown h3 {
+  font-size: 1.25em;
+}
+.md-theme-academic .markdown-renderer h4,
+.md-theme-academic .chat-markdown h4 {
+  font-size: 1.1em;
+}
+.md-theme-academic .markdown-renderer h5,
+.md-theme-academic .chat-markdown h5 {
+  font-size: 1em;
+}
+.md-theme-academic .markdown-renderer h6,
+.md-theme-academic .chat-markdown h6 {
+  font-size: 0.95em;
+}
+
+/* ── Paragraphs ── */
+.md-theme-academic .markdown-renderer p,
+.md-theme-academic .chat-markdown p {
+  margin-top: 0.8em;
+  margin-bottom: 0.8em;
+  text-align: justify;
+}
+
+/* ── Links ── */
+.md-theme-academic .markdown-renderer a,
+.md-theme-academic .markdown-renderer a:visited,
+.md-theme-academic .chat-markdown a,
+.md-theme-academic .chat-markdown a:visited {
+  color: #a00;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-theme-academic .markdown-renderer a:hover,
+.md-theme-academic .chat-markdown a:hover {
+  color: #800;
+}
+
+/* ── Code and pre ── */
+.md-theme-academic .markdown-renderer code,
+.md-theme-academic .markdown-renderer pre,
+.md-theme-academic .chat-markdown code,
+.md-theme-academic .chat-markdown pre {
+  font-family: "Latin Modern Mono Light", "Latin Modern Mono", "Courier New", "Consolas", monospace !important;
+}
+
+.md-theme-academic .markdown-renderer pre,
+.md-theme-academic .chat-markdown pre {
+  border: 1px solid #a2a9b1;
+  background: #f8f9fa;
+  border-radius: 0;
+  padding: 12px 16px;
+  color: #222;
+}
+
+.md-theme-academic .markdown-renderer code,
+.md-theme-academic .chat-markdown code {
+  color: #222;
+  background: #f8f9fa;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.md-theme-academic .markdown-renderer pre code,
+.md-theme-academic .chat-markdown pre code {
+  background: none;
+  padding: 0;
+}
+
+/* ── Blockquotes ── */
+.md-theme-academic .markdown-renderer blockquote,
+.md-theme-academic .chat-markdown blockquote {
+  font-style: italic;
+  padding: 0.25em 24px;
+  position: relative;
+  color: #383838;
+  border-left: 2px solid #a2a9b1;
+  margin: 1em 0;
+  background: none;
+}
+
+/* ── Tables ── */
+.md-theme-academic .markdown-renderer table,
+.md-theme-academic .chat-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+}
+
+.md-theme-academic .markdown-renderer td,
+.md-theme-academic .markdown-renderer th,
+.md-theme-academic .chat-markdown td,
+.md-theme-academic .chat-markdown th {
+  border: 1px solid #a2a9b1;
+  padding: 4px 1ch;
+}
+
+.md-theme-academic .markdown-renderer th,
+.md-theme-academic .chat-markdown th {
+  background: #575c61;
+  border-color: #333;
+  color: #f3f3f3;
+  border-bottom: 0;
+  padding-top: 2px;
+  font-weight: 600;
+}
+
+.md-theme-academic .markdown-renderer tr:nth-child(even),
+.md-theme-academic .chat-markdown tr:nth-child(even) {
+  background: #f8f9fa;
+}
+
+/* ── Lists ── */
+.md-theme-academic .markdown-renderer ul,
+.md-theme-academic .markdown-renderer ol,
+.md-theme-academic .chat-markdown ul,
+.md-theme-academic .chat-markdown ol {
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+
+.md-theme-academic .markdown-renderer li,
+.md-theme-academic .chat-markdown li {
+  margin: 0.2em 0;
+}
+
+/* ── Images ── */
+.md-theme-academic .markdown-renderer img,
+.md-theme-academic .chat-markdown img {
+  max-width: 100%;
+  border-radius: 2px;
+}
+
+/* ── Horizontal rules ── */
+.md-theme-academic .markdown-renderer hr,
+.md-theme-academic .chat-markdown hr {
+  border: none;
+  border-top: 1px solid #a2a9b1;
+  margin: 1.5em 0;
+}
+
+/* ── Mark / highlight ── */
+.md-theme-academic .markdown-renderer mark,
+.md-theme-academic .chat-markdown mark {
+  background: #fff387;
+}
+
+/* ── Footnotes ── */
+.md-theme-academic .markdown-renderer .footnotes,
+.md-theme-academic .chat-markdown .footnotes {
+  margin-left: 1em;
+  font-size: 0.9em;
+  color: #555;
+}
+
+/* ── Dark mode overrides ── */
+.dark .md-theme-academic.markdown-renderer,
+.dark .md-theme-academic.chat-markdown {
+  color: #ddd;
+}
+
+.dark .md-theme-academic .markdown-renderer h1,
+.dark .md-theme-academic .markdown-renderer h2,
+.dark .md-theme-academic .markdown-renderer h3,
+.dark .md-theme-academic .markdown-renderer h4,
+.dark .md-theme-academic .markdown-renderer h5,
+.dark .md-theme-academic .markdown-renderer h6,
+.dark .md-theme-academic .chat-markdown h1,
+.dark .md-theme-academic .chat-markdown h2,
+.dark .md-theme-academic .chat-markdown h3,
+.dark .md-theme-academic .chat-markdown h4,
+.dark .md-theme-academic .chat-markdown h5,
+.dark .md-theme-academic .chat-markdown h6 {
+  color: #eee;
+}
+
+.dark .md-theme-academic .markdown-renderer pre,
+.dark .md-theme-academic .chat-markdown pre {
+  background: #2a2a2a;
+  border-color: #444;
+  color: #ddd;
+}
+
+.dark .md-theme-academic .markdown-renderer code,
+.dark .md-theme-academic .chat-markdown code {
+  background: #2a2a2a;
+  color: #ddd;
+}
+
+.dark .md-theme-academic .markdown-renderer pre code,
+.dark .md-theme-academic .chat-markdown pre code {
+  background: none;
+}
+
+.dark .md-theme-academic .markdown-renderer blockquote,
+.dark .md-theme-academic .chat-markdown blockquote {
+  color: #aaa;
+  border-left-color: #555;
+}
+
+.dark .md-theme-academic .markdown-renderer th,
+.dark .md-theme-academic .chat-markdown th {
+  background: #444;
+  border-color: #555;
+}
+
+.dark .md-theme-academic .markdown-renderer td,
+.dark .md-theme-academic .markdown-renderer th,
+.dark .md-theme-academic .chat-markdown td,
+.dark .md-theme-academic .chat-markdown th {
+  border-color: #444;
+}
+
+.dark .md-theme-academic .markdown-renderer tr:nth-child(even),
+.dark .md-theme-academic .chat-markdown tr:nth-child(even) {
+  background: #1e1e1e;
+}
+
+.dark .md-theme-academic .markdown-renderer a,
+.dark .md-theme-academic .chat-markdown a {
+  color: #ff6b6b;
+}
+
+.dark .md-theme-academic .markdown-renderer a:hover,
+.dark .md-theme-academic .chat-markdown a:hover {
+  color: #ff4444;
+}
+
+.dark .md-theme-academic .markdown-renderer hr,
+.dark .md-theme-academic .chat-markdown hr {
+  border-color: #444;
+}

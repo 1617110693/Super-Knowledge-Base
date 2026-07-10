@@ -25,7 +25,6 @@ const hasNext = computed(() => !!props.chunk?.context?.next?.length);
     :model-value="visible"
     title="Chunk Detail"
     width="640px"
-    top="5vh"
     :close-on-click-modal="false"
     @update:model-value="(v: boolean) => emit('update:visible', v)"
   >

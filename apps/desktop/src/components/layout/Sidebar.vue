@@ -215,6 +215,7 @@ function handleDeleteConversation(convId: string) {
           >
             <MessageSquare :size="16" />
           </button>
+          <Transition name="popover">
           <div
             v-if="chatPopover"
             ref="popoverRef"
@@ -240,6 +241,7 @@ function handleDeleteConversation(convId: string) {
               </div>
             </div>
           </div>
+          </Transition>
         </div>
       </div>
 
@@ -572,8 +574,24 @@ function handleDeleteConversation(convId: string) {
 .sb-popover {
   position: fixed; z-index: 100; width: 280px; max-height: 400px;
   background: var(--surface); border: 1px solid var(--border-color);
-  border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+  border-radius: 14px; box-shadow: 0 8px 40px rgba(0,0,0,0.14), 0 2px 8px rgba(0,0,0,0.06);
   overflow: visible; left: 60px; top: auto; margin-top: -8px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.popover-enter-active {
+  transition: opacity 150ms ease, transform 150ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.popover-leave-active {
+  transition: opacity 100ms ease, transform 100ms ease;
+}
+.popover-enter-from {
+  opacity: 0;
+  transform: scale(0.92) translateY(4px);
+}
+.popover-leave-to {
+  opacity: 0;
+  transform: scale(0.95) translateY(2px);
 }
 .sb-popover::before {
   content: ''; position: absolute; left: -5px; top: 14px;
@@ -584,26 +602,25 @@ function handleDeleteConversation(convId: string) {
 }
 .sb-popover-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 12px; border-bottom: 1px solid var(--el-border-color-lighter);
-  background: var(--el-fill-color-lighter);
+  padding: 10px 14px; border-bottom: 1px solid var(--border-color);
 }
-.sb-popover-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--el-text-color-secondary); }
-.sb-popover-list { max-height: 240px; overflow-y: auto; }
+.sb-popover-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--text-secondary); }
+.sb-popover-list { max-height: 280px; overflow-y: auto; }
 .sb-popover-item { position: relative; display: flex; }
 .sb-popover-link {
   flex: 1; display: flex; align-items: center; gap: 6px;
-  padding: 6px 12px; font-size: 12px; color: var(--el-text-color-secondary);
-  text-decoration: none; transition: all 120ms; overflow: hidden;
+  padding: 7px 14px; font-size: 13px; color: var(--text-primary);
+  text-decoration: none; transition: background 120ms; overflow: hidden;
 }
-.sb-popover-link:hover { background: var(--el-fill-color); }
-.sb-popover-link.active { background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-weight: 500; }
+.sb-popover-link:hover { background: var(--accent-muted); }
+.sb-popover-link.active { background: var(--accent-muted); color: var(--accent-color); font-weight: 500; }
 .sb-popover-delete {
-  display: none; position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
-  width: 20px; height: 20px; border: none; border-radius: 4px;
-  background: transparent; color: var(--el-text-color-disabled); cursor: pointer;
+  display: none; position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 22px; height: 22px; border: none; border-radius: 6px;
+  background: transparent; color: var(--text-secondary); cursor: pointer; opacity: 0.4;
 }
 .group:hover .sb-popover-delete { display: flex; align-items: center; justify-content: center; }
-.sb-popover-delete:hover { background: var(--el-color-danger-light-9); color: var(--el-color-danger); }
+.sb-popover-delete:hover { background: rgba(220, 38, 38, 0.1); color: #dc2626; opacity: 1; }
 
 /* ── Expanded Header ── */
 .sb-header { padding: 12px; border-bottom: 1px solid var(--el-border-color-lighter); flex-shrink: 0; }

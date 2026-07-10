@@ -1,0 +1,178 @@
+/* GitHub Markdown Theme — adapted from Typora github.css */
+/* Applied via .md-theme-github class */
+
+.md-theme-github.markdown-renderer,
+.md-theme-github.chat-markdown {
+  font-family: "Open Sans", "Clear Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: #333;
+  line-height: 1.6;
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.md-theme-github .markdown-renderer h1,
+.md-theme-github .chat-markdown h1 {
+  font-size: 2.25em;
+  line-height: 1.2;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 0.3em;
+  margin: 1rem 0;
+  font-weight: bold;
+  text-align: left;
+}
+
+.md-theme-github .markdown-renderer h2,
+.md-theme-github .chat-markdown h2 {
+  font-size: 1.75em;
+  line-height: 1.225;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 0.3em;
+  margin: 1rem 0;
+  font-weight: bold;
+}
+
+.md-theme-github .markdown-renderer h3,
+.md-theme-github .chat-markdown h3 {
+  font-size: 1.5em;
+  line-height: 1.43;
+  margin: 1rem 0;
+  font-weight: bold;
+}
+
+.md-theme-github .markdown-renderer h4,
+.md-theme-github .chat-markdown h4 { font-size: 1.25em; margin: 1rem 0; font-weight: bold; }
+.md-theme-github .markdown-renderer h5,
+.md-theme-github .chat-markdown h5 { font-size: 1em; margin: 1rem 0; font-weight: bold; }
+.md-theme-github .markdown-renderer h6,
+.md-theme-github .chat-markdown h6 { font-size: 1em; color: #777; margin: 1rem 0; font-weight: bold; }
+
+.md-theme-github .markdown-renderer p,
+.md-theme-github .chat-markdown p { margin: 0.8em 0; text-align: left; }
+
+.md-theme-github .markdown-renderer a,
+.md-theme-github .chat-markdown a { color: #4183C4; text-decoration: none; }
+.md-theme-github .markdown-renderer a:hover,
+.md-theme-github .chat-markdown a:hover { text-decoration: underline; }
+
+.md-theme-github .markdown-renderer pre,
+.md-theme-github .chat-markdown pre {
+  background: #f8f8f8;
+  border: 1px solid #e7eaed;
+  border-radius: 3px;
+  padding: 16px;
+  font-size: 0.9em;
+  color: #333;
+}
+
+.md-theme-github .markdown-renderer code,
+.md-theme-github .chat-markdown code {
+  background: #f3f4f4;
+  border: 1px solid #e7eaed;
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 0.9em;
+  color: #333;
+}
+
+.md-theme-github .markdown-renderer pre code,
+.md-theme-github .chat-markdown pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.md-theme-github .markdown-renderer blockquote,
+.md-theme-github .chat-markdown blockquote {
+  border-left: 4px solid #dfe2e5;
+  padding: 0 15px;
+  color: #777;
+  background: none;
+  font-style: normal;
+  margin: 0.8em 0;
+}
+
+.md-theme-github .markdown-renderer table,
+.md-theme-github .chat-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.8em 0;
+}
+
+.md-theme-github .markdown-renderer td,
+.md-theme-github .markdown-renderer th,
+.md-theme-github .chat-markdown td,
+.md-theme-github .chat-markdown th {
+  border: 1px solid #dfe2e5;
+  padding: 6px 13px;
+}
+
+.md-theme-github .markdown-renderer tr:nth-child(2n),
+.md-theme-github .chat-markdown tr:nth-child(2n) {
+  background: #f8f8f8;
+}
+
+.md-theme-github .markdown-renderer th,
+.md-theme-github .chat-markdown th {
+  font-weight: bold;
+  background: #f8f8f8;
+  color: #333;
+}
+
+.md-theme-github .markdown-renderer hr,
+.md-theme-github .chat-markdown hr {
+  height: 2px;
+  padding: 0;
+  margin: 16px 0;
+  background: #e7e7e7;
+  border: none;
+}
+
+.md-theme-github .markdown-renderer ul,
+.md-theme-github .markdown-renderer ol,
+.md-theme-github .chat-markdown ul,
+.md-theme-github .chat-markdown ol { padding-left: 30px; margin: 0.8em 0; }
+
+.md-theme-github .markdown-renderer img,
+.md-theme-github .chat-markdown img { max-width: 100%; }
+
+/* Dark mode */
+.dark .md-theme-github.markdown-renderer,
+.dark .md-theme-github.chat-markdown { color: #c9d1d9; }
+
+.dark .md-theme-github .markdown-renderer h1,
+.dark .md-theme-github .markdown-renderer h2,
+.dark .md-theme-github .chat-markdown h1,
+.dark .md-theme-github .chat-markdown h2 { border-color: #30363d; }
+.dark .md-theme-github .markdown-renderer h1,
+.dark .md-theme-github .markdown-renderer h2,
+.dark .md-theme-github .markdown-renderer h3,
+.dark .md-theme-github .markdown-renderer h4,
+.dark .md-theme-github .markdown-renderer h5,
+.dark .md-theme-github .markdown-renderer h6,
+.dark .md-theme-github .chat-markdown h1,
+.dark .md-theme-github .chat-markdown h2,
+.dark .md-theme-github .chat-markdown h3,
+.dark .md-theme-github .chat-markdown h4,
+.dark .md-theme-github .chat-markdown h5,
+.dark .md-theme-github .chat-markdown h6 { color: #c9d1d9; }
+
+.dark .md-theme-github .markdown-renderer pre,
+.dark .md-theme-github .chat-markdown pre { background: #161b22; border-color: #30363d; color: #c9d1d9; }
+.dark .md-theme-github .markdown-renderer code,
+.dark .md-theme-github .chat-markdown code { background: #161b22; border-color: #30363d; color: #c9d1d9; }
+.dark .md-theme-github .markdown-renderer pre code,
+.dark .md-theme-github .chat-markdown pre code { background: none; border: none; }
+.dark .md-theme-github .markdown-renderer blockquote,
+.dark .md-theme-github .chat-markdown blockquote { border-color: #30363d; color: #8b949e; }
+.dark .md-theme-github .markdown-renderer a,
+.dark .md-theme-github .chat-markdown a { color: #58a6ff; }
+.dark .md-theme-github .markdown-renderer hr,
+.dark .md-theme-github .chat-markdown hr { background: #30363d; }
+.dark .md-theme-github .markdown-renderer td,
+.dark .md-theme-github .markdown-renderer th,
+.dark .md-theme-github .chat-markdown td,
+.dark .md-theme-github .chat-markdown th { border-color: #30363d; }
+.dark .md-theme-github .markdown-renderer tr:nth-child(2n),
+.dark .md-theme-github .chat-markdown tr:nth-child(2n) { background: #161b22; }
+.dark .md-theme-github .markdown-renderer th,
+.dark .md-theme-github .chat-markdown th { background: #161b22; color: #c9d1d9; }

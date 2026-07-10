@@ -899,11 +899,14 @@ function openDocFromChunk(docId: string) {
   if (previewChunk.value) {
     const kbId = previewChunk.value.kb_id;
     const ci = previewChunk.value.metadata?.chunk_index;
+    console.log('[chunk] openDocFromChunk', { docId, kbId, ci, meta: previewChunk.value.metadata });
     const url = ci != null
       ? `/kb/${kbId}/documents/${docId}?ci=${ci}`
       : `/kb/${kbId}/documents/${docId}`;
     router.push(url);
     previewChunk.value = null;
+  } else {
+    console.log('[chunk] openDocFromChunk called but previewChunk is null', docId);
   }
 }
 </script>

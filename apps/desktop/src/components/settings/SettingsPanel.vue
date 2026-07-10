@@ -516,6 +516,19 @@ async function browseGGUF(field: "local_embedding_model" | "local_rerank_model")
             </div>
           </div>
 
+          <!-- Markdown Theme -->
+          <div class="section-card">
+            <h3 class="section-title">{{ t("settings.markdownTheme") || "Markdown Theme" }}</h3>
+            <div class="field-row">
+              <div class="field-label">{{ t("settings.markdownTheme") || "Theme" }}</div>
+              <el-select v-model="local.markdownTheme" size="small" style="width: 200px">
+                <el-option label="Academic" value="academic" />
+                <el-option label="GitHub" value="github" />
+              </el-select>
+            </div>
+            <div class="field-hint">Choose the rendering style for markdown documents and chat messages.</div>
+          </div>
+
           <!-- Claude MCP -->
           <div class="section-card">
             <h3 class="section-title">{{ t("settings.claudeMCP") }}</h3>
@@ -1357,10 +1370,5 @@ async function browseGGUF(field: "local_embedding_model" | "local_rerank_model")
   font-size: 11px;
   color: var(--text-secondary);
   flex-shrink: 0;
-}
-
-:deep(.el-dialog) {
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
 }
 </style>

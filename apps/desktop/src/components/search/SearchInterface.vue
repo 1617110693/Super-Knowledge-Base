@@ -280,7 +280,6 @@ function scoreColor(score: number): string {
       v-model="showChunkDetail"
       :title="t('search.chunkDetail')"
       width="700px"
-      top="5vh"
       destroy-on-close
     >
       <template v-if="selectedChunk">

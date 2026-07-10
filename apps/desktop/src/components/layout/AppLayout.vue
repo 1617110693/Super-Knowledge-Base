@@ -23,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from "vue";
+import { ref, watch, onMounted, computed } from "vue";
 import TitleBar from "./TitleBar.vue";
 import Sidebar from "./Sidebar.vue";
 import TabBar from "./TabBar.vue";
@@ -47,6 +47,9 @@ function openGlobalSearch() {
 // Provide for child components
 import { provide } from "vue";
 provide("openGlobalSearch", openGlobalSearch);
+
+const markdownTheme = computed(() => settingsStore.settings.markdownTheme || "academic");
+provide("markdownTheme", markdownTheme);
 
 onMounted(async () => {
   try {

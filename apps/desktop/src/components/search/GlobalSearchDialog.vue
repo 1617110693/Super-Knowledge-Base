@@ -119,7 +119,6 @@ defineExpose({ open, close });
     v-model="visible"
     :title="t('search.searchAllTitle')"
     width="700px"
-    top="8vh"
     :close-on-click-modal="true"
     :close-on-press-escape="true"
     destroy-on-close
@@ -406,9 +405,5 @@ defineExpose({ open, close });
 
 .mb-2 {
   margin-bottom: 8px;
-}
-
-:deep(.el-dialog__body) {
-  padding: 12px 20px;
 }
 </style>

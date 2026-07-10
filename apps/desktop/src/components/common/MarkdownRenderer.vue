@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, inject } from "vue";
 import MarkdownIt from "markdown-it";
 import katex from "katex";
 import "katex/dist/katex.min.css";
@@ -7,11 +7,14 @@ import "katex/dist/katex.min.css";
 const props = defineProps<{
   content: string;
   sources?: any[];
+  theme?: string;
 }>();
 
 const emit = defineEmits<{
   sourceClick: [source: any];
 }>();
+
+const injectedTheme = inject("markdownTheme", "academic");
 
 const md = new MarkdownIt({
   html: true,
@@ -154,6 +157,7 @@ function onBadgeClick(e: MouseEvent) {
 <template>
   <div
     class="markdown-renderer prose prose-sm max-w-none dark:prose-invert"
+    :class="'md-theme-' + injectedTheme"
     @click="onBadgeClick"
     v-html="renderedHtml"
   />
@@ -245,4 +249,9 @@ function onBadgeClick(e: MouseEvent) {
 .markdown-renderer :deep(h1) { font-size: 1.5em; }
 .markdown-renderer :deep(h2) { font-size: 1.25em; }
 .markdown-renderer :deep(h3) { font-size: 1.1em; }
+</style>
+
+<style>
+@import "@/styles/academic.css";
+@import "@/styles/github.css";
 </style>

@@ -17,7 +17,6 @@ const emit = defineEmits<{
     :model-value="visible"
     title="Image Preview"
     width="auto"
-    top="5vh"
     :close-on-click-modal="true"
     @update:model-value="(v: boolean) => emit('update:visible', v)"
   >

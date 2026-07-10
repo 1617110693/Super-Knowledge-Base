@@ -558,7 +558,10 @@ async function refreshContent() {
 watch(() => route.query.ci, (ci) => {
   if (ci != null) {
     const n = parseInt(ci as string);
-    if (!isNaN(n) && n !== chunkIdx.value) chunkIdx.value = n;
+    if (!isNaN(n) && n !== chunkIdx.value) {
+      console.debug('[chunk] ci from URL', n);
+      chunkIdx.value = n;
+    }
   }
 }, { immediate: true });
 
@@ -1143,20 +1146,83 @@ function onDocScroll() {
   if (!headingObserverTimer) headingObserverTimer = setTimeout(trackActiveHeading, 80);
 }
 
+// ── PDF jump helpers ──
+function waitForPageWrapper(pageNum: number, timeoutMs = 5000): Promise<void> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const check = () => {
+      if (document.querySelector(`[data-page="${pageNum}"]`)) { resolve(); return; }
+      if (Date.now() - start > timeoutMs) { resolve(); return; }
+      requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  });
+}
+function highlightPdfPage(pageNum: number) {
+  const el = document.querySelector(`[data-page="${pageNum}"]`) as HTMLElement | null;
+  if (!el) return;
+  el.style.boxShadow = '0 0 0 3px #f59e0b';
+  el.style.transition = 'box-shadow 0.5s ease';
+  setTimeout(() => { el.style.boxShadow = ''; }, 2500);
+}
+function waitForSectionRender(si: number, timeoutMs = 3000): Promise<void> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const check = () => {
+      const el = document.querySelector(`[data-section-idx="${si}"]`) as HTMLElement | null;
+      if (el && (el.querySelector('.markdown-body, h1, h2, h3, p, pre, table') || el.offsetHeight > 100)) {
+        resolve(); return;
+      }
+      if (Date.now() - start > timeoutMs) { resolve(); return; }
+      requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  });
+}
+
 // Scroll to target chunk
 watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
   if (chunkIdx.value == null) return;
+
+  // Guard: wait for startCharMap to be populated (may still be loading)
+  if (startCharMap.value.size === 0) {
+    await new Promise(r => setTimeout(r, 300));
+    if (startCharMap.value.size === 0) {
+      console.debug('[chunk] startCharMap still empty, aborting jump');
+      return;
+    }
+  }
+
   await nextTick();
 
   const container = docScrollRef.value;
-  if (!container) return;
+  if (!container) { console.debug('[chunk] no container'); return; }
 
   const ci = chunkIdx.value;
+  console.debug('[chunk] jump triggered', { ci, contentLen: content.value?.length, startCharMapSize: startCharMap.value.size, pageChunksMapSize: pageChunksMap.value.size, sectionsLen: sections.value.length, viewMode: viewMode.value, pdfOpened });
 
-  // ── Page-bar jump: use HTML anchor ──
+  // ── PDF view: jump to page (MUST run before markdown logic) ──
+  if (viewMode.value === 'pdf') {
+    let pageNum: number | null = null;
+    for (const [page, chunkIndices] of pageChunksMap.value) {
+      if (chunkIndices.includes(ci)) { pageNum = page; break; }
+    }
+    if (pageNum != null) {
+      if (!pdfOpened) {
+        await openPdf();
+        await nextTick();
+        await waitForPageWrapper(pageNum);
+      }
+      docStore.setPage(pageNum);
+      highlightPdfPage(pageNum);
+      return;
+    }
+    return; // page not found in PDF
+  }
+
+  // ── Markdown view: scroll to chunk ──
   if (!scrollTarget.value) {
     let pageNum: number | null = null;
-    // Find page from chunkPageMap
     for (const { page, startChar } of pageAnchorPositions.value) {
       const sc = startCharMap.value.get(ci);
       if (sc != null && sc === startChar) { pageNum = page; break; }
@@ -1167,127 +1233,44 @@ watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
       }
     }
 
-    if (pageNum != null) {
-      const sc = startCharMap.value.get(ci);
-      if (sc != null) {
-        const si = charToSection.value(sc);
-        if (container && sectionEstimatedTops.value[si] != null) {
-          container.scrollTop = sectionEstimatedTops.value[si];
-        }
-        rendered.value = new Set([
-          ...rendered.value,
-          ...Array.from({ length: 2 * WINDOW + 1 }, (_, i) => Math.max(0, si - WINDOW + i)).filter((i) => i < sections.value.length),
-        ]);
-      }
-
-      let waitFrames = 0;
-      let anchorFound = false;
-      const tryAnchor = () => {
-        const cont = docScrollRef.value;
-        if (!cont) return;
-
-        const anchor = cont.querySelector(`#page-${pageNum}`) as HTMLElement | null;
-        if (!anchor) {
-          if (++waitFrames < 50) { requestAnimationFrame(tryAnchor); }
-          return;
-        }
-
-        if (!anchorFound) {
-          anchorFound = true;
-          waitFrames = 0;
-          requestAnimationFrame(tryAnchor);
-          return;
-        }
-
-        if (++waitFrames < 3) {
-          requestAnimationFrame(tryAnchor);
-          return;
-        }
-
-        anchor.scrollIntoView({ block: "start", behavior: "instant" });
-
-        // Highlight page content
-        const nextAnchor = cont.querySelector(`#page-${pageNum! + 1}`) as HTMLElement | null;
-        const range = document.createRange();
-        range.setStartAfter(anchor);
-        if (nextAnchor) {
-          range.setEndBefore(nextAnchor);
-        } else {
-          const lastChild = cont.lastElementChild;
-          if (lastChild) range.setEndAfter(lastChild);
-        }
-        const highlightEls: HTMLElement[] = [];
-        const walker = document.createTreeWalker(
-          range.commonAncestorContainer, NodeFilter.SHOW_ELEMENT,
-          {
-            acceptNode: (node) => {
-              if (!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
-              const el = node as HTMLElement;
-              if (el.id && el.id.startsWith("page-")) return NodeFilter.FILTER_SKIP;
-              const tag = el.tagName;
-              if (tag === "H1" || tag === "H2" || tag === "H3" || tag === "H4" || tag === "H5" || tag === "H6" ||
-                  tag === "P" || tag === "LI" || tag === "TD" || tag === "TH" || tag === "PRE" || tag === "BLOCKQUOTE") {
-                const otherPageMarker = el.querySelector(`[id^="page-"]:not([id="page-${pageNum}"])`);
-                if (otherPageMarker) return NodeFilter.FILTER_SKIP;
-                return NodeFilter.FILTER_ACCEPT;
-              }
-              return NodeFilter.FILTER_SKIP;
-            },
-          },
-        );
-        let node: Node | null;
-        while ((node = walker.nextNode())) { highlightEls.push(node as HTMLElement); }
-        for (const el of highlightEls) {
-          el.style.backgroundColor = "#fef3c7";
-          el.style.transition = "background-color 0.5s";
-        }
-        setTimeout(() => {
-          for (const el of highlightEls) { el.style.backgroundColor = ""; }
-        }, 2500);
-      };
-      requestAnimationFrame(tryAnchor);
-      return;
-    }
-
-    // ── Fallback: no page data → scroll by section ──
-    // If in PDF view, jump to the corresponding page instead
-    if (viewMode.value === 'pdf' && pageNum != null) {
-      docStore.setPage(pageNum);
-      return;
-    }
-
+    // Scroll to section containing this chunk
     const sc = startCharMap.value.get(ci);
     if (sc != null) {
       const si = charToSection.value(sc);
+      console.debug('[chunk] scroll to section', { ci, sc, si, pageNum });
+
+      // Ensure section is rendered
+      rendered.value = new Set([
+        ...rendered.value,
+        ...Array.from({ length: 2 * WINDOW + 1 }, (_, i) => Math.max(0, si - WINDOW + i)).filter((i) => i < sections.value.length),
+      ]);
+
+      // Wait for section to actually render
+      await nextTick();
+      await waitForSectionRender(si);
+
       const sectionEl = container.querySelector(`[data-section-idx="${si}"]`) as HTMLElement | null;
       if (sectionEl) {
         sectionEl.scrollIntoView({ block: "start", behavior: "instant" });
         sectionEl.style.backgroundColor = "#fef3c7";
         sectionEl.style.transition = "background-color 0.8s ease";
         setTimeout(() => { sectionEl.style.backgroundColor = ""; }, 2500);
+
+        // Settle: re-scroll after layout stabilizes
+        let settleFrames = 0;
+        const settle = () => {
+          if (++settleFrames <= 3) {
+            sectionEl.scrollIntoView({ block: "start", behavior: "instant" });
+            requestAnimationFrame(settle);
+          }
+        };
+        requestAnimationFrame(settle);
         return;
       }
-      // Fallback: use estimated tops when DOM element not found
+
+      // Fallback: estimated position when DOM element not found
       if (sectionEstimatedTops.value[si] != null) {
         container.scrollTop = sectionEstimatedTops.value[si];
-      }
-    }
-  }
-
-  // ── If in PDF view, try page jump ──
-  if (viewMode.value === 'pdf') {
-    const ci = chunkIdx.value;
-    let pageNum: number | null = null;
-    for (const [page, chunkIndices] of pageChunksMap.value) {
-      if (chunkIndices.includes(ci)) { pageNum = page; break; }
-    }
-    if (pageNum != null) {
-      if (!pdfOpened) {
-        await openPdf();
-        await nextTick();
-        setTimeout(() => docStore.setPage(pageNum), 300);
-      } else {
-        docStore.setPage(pageNum);
       }
       return;
     }
@@ -1826,7 +1809,7 @@ function nextImage() {
             <!-- Info panel -->
             <div class="image-dialog-info-panel">
               <h3 class="image-dialog-panel-title" :title="imageNames[dialogIdx]">{{ imageNames[dialogIdx] }}</h3>
-              <p class="text-xs text-muted-foreground mt-1">{{ dialogIdx + 1 }} / {{ imageNames.length }}</p>
+              <p class="text-xs text-muted-foreground mt-1 text-center">{{ dialogIdx + 1 }} / {{ imageNames.length }}</p>
               <div class="image-desc-section">
                 <div class="image-desc-header">
                   <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Description</span>
@@ -2659,7 +2642,7 @@ function nextImage() {
 
 /* ── Image Dialog Info Panel ── */
 .image-dialog-info-panel {
-  width: 280px;
+  width: 300px;
   flex-shrink: 0;
   background: var(--bg-color, #fff);
   border-radius: 12px;
@@ -2667,6 +2650,7 @@ function nextImage() {
   display: flex;
   flex-direction: column;
   max-height: 85vh;
+  min-height: 0;
 }
 
 .image-dialog-panel-title {
@@ -2681,6 +2665,9 @@ function nextImage() {
 .image-desc-section {
   padding: 12px 16px 16px;
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .image-desc-header {
@@ -2688,6 +2675,7 @@ function nextImage() {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
 .btn-icon {
@@ -2716,14 +2704,15 @@ function nextImage() {
 }
 
 .description-text {
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 13px;
+  line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: break-word;
-  max-height: 200px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  color: var(--text-primary, #222);
+  margin: 0;
 }
 
 .desc-edit-area {

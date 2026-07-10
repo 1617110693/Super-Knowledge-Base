@@ -75,6 +75,12 @@ pub struct AppSettings {
     pub searxng_base_url: String,
     #[serde(default)]
     pub web_search_max_results: u32,
+    #[serde(default)]
+    pub fontSize: u32,
+    #[serde(default)]
+    pub markdownTheme: String,
+    #[serde(default)]
+    pub has_seen_guide: bool,
 }
 
 impl Default for AppSettings {
@@ -117,6 +123,9 @@ impl Default for AppSettings {
             tavily_api_key: String::new(),
             searxng_base_url: String::new(),
             web_search_max_results: 5,
+            fontSize: 15,
+            markdownTheme: "academic".to_string(),
+            has_seen_guide: false,
         }
     }
 }

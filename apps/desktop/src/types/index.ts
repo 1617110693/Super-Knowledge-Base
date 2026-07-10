@@ -178,6 +178,7 @@ export interface AppSettings {
   searxng_base_url: string;
   web_search_max_results: number;
   fontSize: number;
+  markdownTheme?: string;
   has_seen_guide?: boolean;
 }
 
@@ -220,5 +221,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   searxng_base_url: "",
   web_search_max_results: 5,
   fontSize: 15,
+  markdownTheme: "academic",
   has_seen_guide: false,
 };

@@ -1,11 +1,11 @@
 <template>
-  <div v-memo="[content]" class="chat-markdown" @click="onBadgeClick">
+  <div v-memo="[content]" class="chat-markdown" :class="'md-theme-' + injectedTheme" @click="onBadgeClick">
     <div class="prose prose-sm max-w-none dark:prose-invert" v-html="renderedHtml" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, inject } from "vue";
 import MarkdownIt from "markdown-it";
 import katex from "katex";
 import "katex/dist/katex.min.css";
@@ -16,9 +16,12 @@ const props = withDefaults(
     content: string;
     sources?: SearchResult[];
     isStreaming?: boolean;
+    theme?: string;
   }>(),
-  { sources: () => [], isStreaming: false }
+  { sources: () => [], isStreaming: false, theme: "academic" }
 );
+
+const injectedTheme = inject("markdownTheme", "academic");
 
 const emit = defineEmits<{
   sourceClick: [source: SearchResult];
@@ -153,4 +156,9 @@ function onBadgeClick(e: MouseEvent) {
 .chat-markdown :deep(blockquote) { border-left: 3px solid var(--accent-color); margin: 0.5em 0; padding: 4px 12px; color: var(--text-secondary); background: var(--accent-muted); border-radius: 0 4px 4px 0; }
 .chat-markdown :deep(ul), .chat-markdown :deep(ol) { padding-left: 1.5em; }
 .chat-markdown :deep(h1), .chat-markdown :deep(h2), .chat-markdown :deep(h3), .chat-markdown :deep(h4) { color: var(--text-primary); font-weight: 600; margin: 1em 0 0.5em; }
+</style>
+
+<style>
+@import "@/styles/academic.css";
+@import "@/styles/github.css";
 </style>

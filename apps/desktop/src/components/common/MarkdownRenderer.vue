@@ -93,6 +93,11 @@ const renderedHtml = computed(() => {
   processedContent = processedContent.replace(/^\$\n([\s\S]*?)\\tag\{([^}]+)\}\n\s*\$$/gm, (_, body, tag) => {
     return `$$\n${body.trim()}\n\\tag{${tag}}\n$$`;
   });
+  // Catch: orphaned \tag{...} in truncated chunks where closing $ is missing
+  // Matches patterns like: $ content \tag{N}  or  $ $ content \tag{N}
+  processedContent = processedContent.replace(/\$\s*\$?\s*([^\n]*?)\\tag\{([^}]+)\}(?!\s*\$)/g, (_, body, tag) => {
+    return `$$\n${body.trim()}\n\\tag{${tag}}\n$$`;
+  });
 
   let html = md.render(processedContent);
 

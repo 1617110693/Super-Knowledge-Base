@@ -450,6 +450,36 @@ watch([kbId, docId], async ([newKbId, newDocId], [oldKbId, oldDocId]) => {
     mdAvailable.value = docData.md_available !== false;
   } catch { docName.value = newDocId; }
 
+  // Resolve image paths in content BEFORE populating startCharMap so positions match
+  if (content.value && imageNames.value.length > 0) {
+    for (const name of imageNames.value) {
+      const src = imageSrcs.value.get(name);
+      if (src) {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Markdown image syntax: ![...](images/xxx.jpg)
+        content.value = content.value.replace(
+          new RegExp(`\\(images/${escaped}\\)`, 'g'),
+          `(${src})`
+        );
+        // HTML img with double quotes
+        content.value = content.value.replace(
+          new RegExp(`src="images/${escaped}"`, 'g'),
+          `src="${src}"`
+        );
+        // HTML img with single quotes
+        content.value = content.value.replace(
+          new RegExp(`src='images/${escaped}'`, 'g'),
+          `src='${src}'`
+        );
+        // HTML img without quotes: src=images/xxx.jpg
+        content.value = content.value.replace(
+          new RegExp(`src=images/${escaped}(?=[\\s>])`, 'g'),
+          `src=${src}`
+        );
+      }
+    }
+  }
+
   try {
     const res = await getChunkRange({ kb_id: newKbId, doc_id: newDocId, start: 0, end: 50000 });
     const map = new Map<number, number>();
@@ -491,23 +521,6 @@ watch([kbId, docId], async ([newKbId, newDocId], [oldKbId, oldDocId]) => {
     };
   } catch { /* ignore */ }
 
-  // Resolve image paths in content
-  if (content.value && imageNames.value.length > 0) {
-    for (const name of imageNames.value) {
-      const src = imageSrcs.value.get(name);
-      if (src) {
-        content.value = content.value.replace(
-          new RegExp(`\\(images/${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g'),
-          `(${src})`
-        );
-        content.value = content.value.replace(
-          new RegExp(`src="images/${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'g'),
-          `src="${src}"`
-        );
-      }
-    }
-  }
-
   loading.value = false;
 
   // Restore previous scroll position
@@ -518,7 +531,20 @@ watch([kbId, docId], async ([newKbId, newDocId], [oldKbId, oldDocId]) => {
       const top = parseInt(saved);
       if (!isNaN(top) && top > 0) {
         nextTick(() => {
-          if (docScrollRef.value) docScrollRef.value.scrollTop = top;
+          if (docScrollRef.value) {
+            docScrollRef.value.scrollTop = top;
+            // Ensure sections at the scroll position are rendered
+            const estTops = sectionEstimatedTops.value;
+            let targetSi = 0;
+            for (let i = estTops.length - 1; i >= 0; i--) {
+              if (top >= estTops[i]) { targetSi = i; break; }
+            }
+            rendered.value = new Set([
+              ...rendered.value,
+              ...Array.from({ length: 2 * WINDOW + 1 }, (_, i) =>
+                Math.max(0, targetSi - WINDOW + i)).filter((i) => i < sections.value.length),
+            ]);
+          }
         });
       }
     }
@@ -556,11 +582,13 @@ async function refreshContent() {
 // ── URL chunk index ────────────────────────────────────────────────────────
 
 watch(() => route.query.ci, (ci) => {
+  console.log('[chunk] route.query.ci watch FIRED', { ci, currentChunkIdx: chunkIdx.value });
   if (ci != null) {
     const n = parseInt(ci as string);
     if (!isNaN(n) && n !== chunkIdx.value) {
-      console.debug('[chunk] ci from URL', n);
-      chunkIdx.value = n;
+      console.log('[chunk] ci from URL', n);
+      // Defer to next tick so the scroll watch (defined later in setup) is active
+      nextTick(() => { chunkIdx.value = n; });
     }
   }
 }, { immediate: true });
@@ -1056,8 +1084,8 @@ const chunkSection = computed(() => {
   return map;
 });
 
-const EAGER = 2;
-const WINDOW = 8;
+const EAGER = 3;
+const WINDOW = 12;
 
 const targetSecIdx = computed(() =>
   chunkIdx.value != null ? (chunkSection.value.get(chunkIdx.value) ?? null) : null,
@@ -1097,7 +1125,7 @@ function setupObserver() {
       }
     }
     if (changed) rendered.value = next;
-  }, { root: docScrollRef.value, rootMargin: "2500px" });
+  }, { root: docScrollRef.value, rootMargin: "5000px" });
   sentinelRefs.forEach((el) => observer?.observe(el));
 }
 
@@ -1170,10 +1198,16 @@ function waitForSectionRender(si: number, timeoutMs = 3000): Promise<void> {
     const start = Date.now();
     const check = () => {
       const el = document.querySelector(`[data-section-idx="${si}"]`) as HTMLElement | null;
-      if (el && (el.querySelector('.markdown-body, h1, h2, h3, p, pre, table') || el.offsetHeight > 100)) {
+      const hasMarkdown = el?.querySelector('.markdown-renderer');
+      // Must contain actual rendered markdown, not just the placeholder div
+      if (el && hasMarkdown) {
+        console.log('[chunk] waitForSectionRender found .markdown-renderer after', Date.now() - start, 'ms');
         resolve(); return;
       }
-      if (Date.now() - start > timeoutMs) { resolve(); return; }
+      if (Date.now() - start > timeoutMs) {
+        console.log('[chunk] waitForSectionRender TIMEOUT after', timeoutMs, 'ms - sectionEl exists?', !!el, 'hasMarkdown?', !!hasMarkdown, 'offsetHeight', el?.offsetHeight);
+        resolve(); return;
+      }
       requestAnimationFrame(check);
     };
     requestAnimationFrame(check);
@@ -1182,24 +1216,39 @@ function waitForSectionRender(si: number, timeoutMs = 3000): Promise<void> {
 
 // Scroll to target chunk
 watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
-  if (chunkIdx.value == null) return;
+  console.log('[chunk] watch FIRED', { chunkIdx: chunkIdx.value, jumpTrigger: jumpTrigger.value, scrollTarget: scrollTarget.value });
+  if (chunkIdx.value == null) { console.log('[chunk] chunkIdx is null, returning'); return; }
 
   // Guard: wait for startCharMap to be populated (may still be loading)
   if (startCharMap.value.size === 0) {
-    await new Promise(r => setTimeout(r, 300));
+    console.log('[chunk] startCharMap empty, polling until loaded...');
+    // Poll up to 10s for content to load
+    const deadline = Date.now() + 10000;
+    while (startCharMap.value.size === 0 && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 200));
+    }
     if (startCharMap.value.size === 0) {
-      console.debug('[chunk] startCharMap still empty, aborting jump');
+      console.log('[chunk] startCharMap still empty after 10s, aborting jump');
       return;
     }
+    console.log('[chunk] startCharMap loaded with', startCharMap.value.size, 'entries after', (10000 - (deadline - Date.now())), 'ms');
   }
 
   await nextTick();
 
   const container = docScrollRef.value;
-  if (!container) { console.debug('[chunk] no container'); return; }
+  if (!container) { console.log('[chunk] no container'); return; }
 
   const ci = chunkIdx.value;
-  console.debug('[chunk] jump triggered', { ci, contentLen: content.value?.length, startCharMapSize: startCharMap.value.size, pageChunksMapSize: pageChunksMap.value.size, sectionsLen: sections.value.length, viewMode: viewMode.value, pdfOpened });
+  console.log('[chunk] jump triggered', {
+    ci,
+    contentLen: content.value?.length,
+    startCharMapSize: startCharMap.value.size,
+    pageChunksMapSize: pageChunksMap.value.size,
+    sectionsLen: sections.value.length,
+    viewMode: viewMode.value,
+    pdfOpened,
+  });
 
   // ── PDF view: jump to page (MUST run before markdown logic) ──
   if (viewMode.value === 'pdf') {
@@ -1207,8 +1256,10 @@ watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
     for (const [page, chunkIndices] of pageChunksMap.value) {
       if (chunkIndices.includes(ci)) { pageNum = page; break; }
     }
+    console.log('[chunk] PDF mode - pageNum', pageNum);
     if (pageNum != null) {
       if (!pdfOpened) {
+        console.log('[chunk] PDF not opened, calling openPdf');
         await openPdf();
         await nextTick();
         await waitForPageWrapper(pageNum);
@@ -1222,6 +1273,15 @@ watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
 
   // ── Markdown view: scroll to chunk ──
   if (!scrollTarget.value) {
+    // ── Debug: dump startCharMap entries around target ci ──
+    console.log('[chunk] startCharMap lookup', {
+      ci,
+      'startCharMap.get(ci)': startCharMap.value.get(ci),
+      'startCharMap keys (first 10)': [...startCharMap.value.keys()].slice(0, 10),
+      'startCharMap keys (last 10)': [...startCharMap.value.keys()].slice(-10),
+      'startCharMap total entries': startCharMap.value.size,
+    });
+
     let pageNum: number | null = null;
     for (const { page, startChar } of pageAnchorPositions.value) {
       const sc = startCharMap.value.get(ci);
@@ -1232,35 +1292,102 @@ watch([chunkIdx, jumpTrigger, scrollTarget], async () => {
         if (chunkIndices.includes(ci)) { pageNum = page; break; }
       }
     }
+    console.log('[chunk] pageNum from maps', pageNum);
 
     // Scroll to section containing this chunk
     const sc = startCharMap.value.get(ci);
+    console.log('[chunk] sc (startChar for chunk)', { ci, sc, pageNum });
+
     if (sc != null) {
       const si = charToSection.value(sc);
-      console.debug('[chunk] scroll to section', { ci, sc, si, pageNum });
+      console.log('[chunk] section index', {
+        si,
+        'sectionOffsets[si]': sectionOffsets.value[si],
+        'sectionOffsets (first 5)': sectionOffsets.value.slice(0, 5),
+        'sectionOffsets (last 5)': sectionOffsets.value.slice(-5),
+        'sections count': sections.value.length,
+        'section length': sections.value[si]?.length ?? 'N/A',
+        'section first 80 chars': sections.value[si]?.slice(0, 80) ?? 'N/A',
+      });
 
       // Ensure section is rendered
       rendered.value = new Set([
         ...rendered.value,
         ...Array.from({ length: 2 * WINDOW + 1 }, (_, i) => Math.max(0, si - WINDOW + i)).filter((i) => i < sections.value.length),
       ]);
+      console.log('[chunk] rendered set size', rendered.value.size, 'has si?', rendered.value.has(si));
 
       // Wait for section to actually render
       await nextTick();
+      const renderStart = Date.now();
       await waitForSectionRender(si);
+      console.log('[chunk] waitForSectionRender took', Date.now() - renderStart, 'ms');
 
       const sectionEl = container.querySelector(`[data-section-idx="${si}"]`) as HTMLElement | null;
+      console.log('[chunk] sectionEl found?', !!sectionEl, 'data-section-idx', si,
+        'sectionEl.offsetTop', sectionEl?.offsetTop,
+        'sectionEl.offsetHeight', sectionEl?.offsetHeight,
+        'container.scrollTop', container.scrollTop);
       if (sectionEl) {
-        sectionEl.scrollIntoView({ block: "start", behavior: "instant" });
-        sectionEl.style.backgroundColor = "#fef3c7";
-        sectionEl.style.transition = "background-color 0.8s ease";
-        setTimeout(() => { sectionEl.style.backgroundColor = ""; }, 2500);
+        // Find the chunk's end position (next chunk's startChar, or end of content)
+        const chunkEnd = (() => {
+          const sorted = [...startCharMap.value.entries()].sort((a, b) => a[1] - b[1]);
+          for (let i = 0; i < sorted.length - 1; i++) {
+            if (sorted[i][0] === ci) return sorted[i + 1][1];
+          }
+          return content.value.length;
+        })();
+        const siEnd = charToSection.value(chunkEnd);
+
+        // Find block-level elements within the chunk's character range
+        const selector = '.markdown-renderer > h1, .markdown-renderer > h2, .markdown-renderer > h3, .markdown-renderer > h4, .markdown-renderer > p, .markdown-renderer > pre, .markdown-renderer > blockquote, .markdown-renderer > ul, .markdown-renderer > ol, .markdown-renderer > table';
+        const allBlocks = sectionEl.querySelectorAll(selector);
+        const highlightEls: HTMLElement[] = [];
+
+        // If chunk spans multiple sections, also gather blocks from subsequent sections
+        const gatherBlocks = (secIdx: number) => {
+          const sel = container.querySelector(`[data-section-idx="${secIdx}"]`) as HTMLElement | null;
+          if (sel) {
+            sel.querySelectorAll(selector).forEach(b => highlightEls.push(b as HTMLElement));
+          }
+        };
+
+        for (let s = si; s <= siEnd; s++) {
+          if (s === si) {
+            // Start section: highlight blocks from the target block onward
+            const blocks = Array.from(sectionEl.querySelectorAll(selector));
+            const secStart = sectionOffsets.value[si] ?? 0;
+            const relPos = sc - secStart;
+            const secLen = (sections.value[si] || '').length;
+            const ratio = secLen > 0 ? relPos / secLen : 0;
+            const startIdx = blocks.length > 0 ? Math.min(Math.floor(ratio * blocks.length), blocks.length - 1) : 0;
+            for (let i = startIdx; i < blocks.length; i++) highlightEls.push(blocks[i] as HTMLElement);
+          } else {
+            gatherBlocks(s);
+          }
+        }
+
+        console.log('[chunk] highlight', { ci, sc, chunkEnd, si, siEnd, highlightCount: highlightEls.length });
+
+        // Scroll to the first highlighted element
+        const targetEl = highlightEls[0] || sectionEl;
+        targetEl.scrollIntoView({ block: "start", behavior: "instant" });
+
+        // Highlight all blocks in the chunk range
+        for (const el of highlightEls) {
+          el.style.backgroundColor = "#fef3c7";
+          el.style.transition = "background-color 0.8s ease";
+        }
+        setTimeout(() => {
+          for (const el of highlightEls) { el.style.backgroundColor = ""; }
+        }, 2500);
 
         // Settle: re-scroll after layout stabilizes
         let settleFrames = 0;
+        const settleTarget = highlightEls[0] || sectionEl;
         const settle = () => {
           if (++settleFrames <= 3) {
-            sectionEl.scrollIntoView({ block: "start", behavior: "instant" });
+            settleTarget.scrollIntoView({ block: "start", behavior: "instant" });
             requestAnimationFrame(settle);
           }
         };
@@ -2044,6 +2171,11 @@ function nextImage() {
 .prose-container {
   padding: 24px 32px;
   max-width: 800px;
+}
+
+/* Optimize: skip paint/layout for off-screen rendered sections */
+.prose-container > [data-section-idx] {
+  content-visibility: auto;
 }
 
 /* ── Search Dialog ── */

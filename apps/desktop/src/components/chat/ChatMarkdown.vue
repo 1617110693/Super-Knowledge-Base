@@ -11,6 +11,7 @@ import katex from "katex";
 import "katex/dist/katex.min.css";
 import type { SearchResult } from "@/types";
 import { getBaseUrl } from "@/services/pythonClient";
+import { latexNormalize } from "@/utils/latexNormalize";
 
 const props = withDefaults(
   defineProps<{
@@ -121,16 +122,8 @@ function renderInlineMathInHtml(inner: string): string {
 
 const renderedHtml = computed(() => {
   const prepared = embedBadges(props.content);
-  // Pre-process \tag in inline math: convert $...\tag{N}...$ to display math
-  let processedContent = prepared.replace(/\$([^$]+?)\\tag\{([^}]+)\}([^$]*?)\$/g, (_, before, tag, after) => {
-    return `$$\n${before}${after}\n\\tag{${tag}}\n$$`;
-  });
-  // Normalize $$$...$$$ to $$...$$
-  processedContent = processedContent.replace(/\$\$\$(.+?)\$\$\$/gs, '$$\n$1\n$$');
-  // Catch: $ on its own line with \tag{N} before closing $ (MinerU multi-line format)
-  processedContent = processedContent.replace(/^\$\n([\s\S]*?)\\tag\{([^}]+)\}\n\s*\$$/gm, (_, body, tag) => {
-    return `$$\n${body.trim()}\n\\tag{${tag}}\n$$`;
-  });
+  // Normalize LaTeX delimiters, wrap bare environments, fix \tag, etc.
+  const processedContent = latexNormalize(prepared);
   let html = md.render(processedContent);
   // Post-process: render $...$ inside HTML tables (td/th)
   html = html.replace(/(<td[^>]*>)([\s\S]*?)(<\/td>)/gi, (_m: string, open: string, inner: string, close: string) => {

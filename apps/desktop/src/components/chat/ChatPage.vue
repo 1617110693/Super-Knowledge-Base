@@ -189,16 +189,12 @@ import ChatMessageList from "./ChatMessageList.vue";
 import ChatInput from "./ChatInput.vue";
 import SourcesPanel from "./SourcesPanel.vue";
 import ChunkDetailDialog from "@/components/common/ChunkDetailDialog.vue";
+import { latexNormalize } from "@/utils/latexNormalize";
 
 const { t } = useI18n();
 
-// ── Normalize LaTeX math delimiters so remark-math can process them ──
-function normalizeMath(text: string): string {
-  text = text.replace(/\\\((.+?)\\\)/gs, (_: string, m: string) => `$${m}$`);
-  text = text.replace(/\\\[(.+?)\\\]/gs, (_: string, m: string) => `$$\n${m}\n$$`);
-  text = text.replace(/\$\$\$\$/g, "$$");
-  return text;
-}
+// ── Normalize LaTeX math delimiters using shared utility ──
+const normalizeMath = latexNormalize;
 
 // ── Route & Stores ──
 const route = useRoute();

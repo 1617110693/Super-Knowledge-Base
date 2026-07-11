@@ -15,6 +15,43 @@ _TABLE_ROW_RE = re.compile(r'^\s*\|.+\|\s*$')
 _DISPLAY_MATH_RE = re.compile(r'\$\$[\s\S]*?\$\$', re.MULTILINE)
 # Regex to detect inline math $...$ (skip $$)
 _INLINE_MATH_RE = re.compile(r'(?<!\$)\$(?!\$)([^$]+?)\$(?!\$)')
+# Regex to detect bare LaTeX environments that should be display math
+# but are missing $$...$$ delimiters (safety net for chunker edge cases)
+_BARE_LATEX_ENVS = (
+    "array", "matrix", "pmatrix", "bmatrix", "vmatrix", "Vmatrix",
+    "cases", "aligned", "split", "gathered", "equation", "equation*",
+)
+_BARE_LATEX_RE = re.compile(
+    r'(?<!\$\$\n)'                       # not preceded by $$\n (already display math)
+    r'\\begin\{(' + '|'.join(_BARE_LATEX_ENVS) + r')\}'
+    r'[\s\S]*?'
+    r'\\end{\1}'
+    r'(?!\n\$\$)',                        # not followed by \n$$ (already display math)
+    re.MULTILINE,
+)
+
+
+def _wrap_bare_latex(text: str) -> str:
+    """Wrap bare LaTeX environments not inside ``$$...$$`` with display math.
+
+    This is a safety-net called after ``_restore_math`` to catch edge cases
+    where the original content_list text carried raw LaTeX without delimiters.
+    """
+    # Temporarily protect all display math blocks so _BARE_LATEX_RE cannot
+    # accidentally match environments that are already inside $$...$$.
+    display_store: list[str] = []
+    protected = re.sub(r'\$\$[\s\S]*?\$\$', lambda m: (
+        display_store.append(m.group(0)) or f"\x00DM{len(display_store)-1}\x00"
+    ), text)
+
+    def _replacer(m: re.Match) -> str:
+        return f"\n$$\n{m.group(0).strip()}\n$$\n"
+    wrapped = _BARE_LATEX_RE.sub(_replacer, protected)
+
+    # Restore protected display math
+    for i, orig in enumerate(display_store):
+        wrapped = wrapped.replace(f"\x00DM{i}\x00", orig)
+    return wrapped
 
 
 @dataclass
@@ -71,10 +108,11 @@ class Chunker:
 
     @staticmethod
     def _restore_math(text: str, math_map: Dict[str, str]) -> str:
-        """Replace math placeholders with original math content."""
+        """Replace math placeholders with original math content,
+        then wrap any bare LaTeX environments that slipped through."""
         for placeholder, original in math_map.items():
             text = text.replace(placeholder, original)
-        return text
+        return _wrap_bare_latex(text)
 
     @staticmethod
     def _find_table_regions(text: str) -> List[Tuple[int, int]]:
@@ -464,21 +502,24 @@ def multimodal_chunks_from_content_list(
             if image_descriptions and img_name in image_descriptions:
                 desc, entity = image_descriptions[img_name]
                 desc_text = desc
-            content = f"[Image: {img_name}]\n{desc_text or mi.get('text', '')}"
+            content = f"[Image: {img_name}]\n\n{desc_text or mi.get('text', '')}"
             if page:
-                content += f"\nPage: {page}"
+                content += f"\n\nPage: {page}"
 
         elif mtype == "table":
             txt = mi.get("text", "")
-            content = f"[Table]\n{txt}"
+            content = f"[Table]\n\n{txt}"
             if page:
-                content += f"\nPage: {page}"
+                content += f"\n\nPage: {page}"
 
         elif mtype == "equation":
-            txt = mi.get("text", "")
-            content = f"[Equation]\n{txt}"
+            txt = mi.get("text", "").strip()
+            # Ensure LaTeX is wrapped in $$...$$ for proper display rendering
+            if txt and not txt.startswith("$$"):
+                txt = f"$$\n{txt}\n$$"
+            content = f"[Equation]\n\n{txt}"
             if page:
-                content += f"\nPage: {page}"
+                content += f"\n\nPage: {page}"
 
         else:
             content = mi.get("text", "")

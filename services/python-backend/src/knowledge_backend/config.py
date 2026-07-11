@@ -46,6 +46,9 @@ class BackendConfig(BaseSettings):
     # Dev mode: enable developer endpoints (ZIP save/load for testing)
     dev_mode: bool = False
 
+    # MinerU API
+    mineru_token: str = ""
+
     # VLM (Vision Language Model) for image descriptions
     vlm_api_base: str = ""
     vlm_api_key: str = ""

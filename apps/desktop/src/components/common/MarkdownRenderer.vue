@@ -3,6 +3,7 @@ import { computed, inject } from "vue";
 import MarkdownIt from "markdown-it";
 import katex from "katex";
 import "katex/dist/katex.min.css";
+import { latexNormalize } from "@/utils/latexNormalize";
 
 const props = defineProps<{
   content: string;
@@ -82,47 +83,8 @@ function renderInlineMathInHtml(inner: string): string {
 }
 
 const renderedHtml = computed(() => {
-  // Pre-process \tag in inline math: convert $...\tag{N}...$ to display math
-  let processedContent = props.content;
-  processedContent = processedContent.replace(/\$([^$]+?)\\tag\{([^}]+)\}([^$]*?)\$/g, (_, before, tag, after) => {
-    return `$$\n${before}${after}\n\\tag{${tag}}\n$$`;
-  });
-  // Normalize $$$...$$$ to $$...$$
-  processedContent = processedContent.replace(/\$\$\$(.+?)\$\$\$/gs, '$$\n$1\n$$');
-  // Catch: $ on its own line with \tag{N} before closing $ (MinerU multi-line format)
-  processedContent = processedContent.replace(/^\$\n([\s\S]*?)\\tag\{([^}]+)\}\n\s*\$$/gm, (_, body, tag) => {
-    return `$$\n${body.trim()}\n\\tag{${tag}}\n$$`;
-  });
-  // Catch: orphaned \tag{...} in truncated chunks where closing $ is missing
-  // Matches patterns like: $ content \tag{N}  or  $ $ content \tag{N}
-  processedContent = processedContent.replace(/\$\s*\$?\s*([^\n]*?)\\tag\{([^}]+)\}(?!\s*\$)/g, (_, body, tag) => {
-    return `$$\n${body.trim()}\n\\tag{${tag}}\n$$`;
-  });
-  // Fix: lines with LaTeX commands but no $ delimiters (orphaned math from chunk boundaries)
-  processedContent = processedContent.replace(/^([^\n$]*\\[a-zA-Z]+[^\n$]*)$/gm, (match, line) => {
-    const latexCount = (line.match(/\\[a-zA-Z]+/g) || []).length;
-    if (latexCount >= 2 || /\\(?:frac|int|sum|prod|sqrt|mathrm|partial|times|cdot|alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|omega|infty|mathbf|begin|end|left|right|overrightarrow|overline|underline|vec|dot|ddot|hat|tilde|bar|boldsymbol|mathbb|mathcal|mathfrak|mathrm|textrm|operatorname|limits|displaystyle|notag|nonumber)\b/.test(line)) {
-      return `$$\n${line.trim()}\n$$`;
-    }
-    return match;
-  });
-  // Fix: lone $ with whitespace acting as MinerU display math delimiter
-  processedContent = processedContent.replace(/([^\n$]{3,})\s+\$\s+([^\n$]{3,})/g, (match, left, right) => {
-    const hasLatex = (s: string) => /\\(?:frac|int|sum|prod|sqrt|mathrm|partial|times|cdot|alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|omega|infty|mathbf|begin|end|left|right|vec|dot|hat|tilde|bar|boldsymbol|mathbb|mathcal|operatorname|overrightarrow|overline|underline|textrm|text|displaystyle|limits|notag|nonumber|mathring|mathfrak|mathit|mathrm)\b/.test(s) || /[_^]\{/.test(s);
-    if (hasLatex(left) || hasLatex(right)) {
-      return `$$\n${left.trim()}\n$$\n$$\n${right.trim()}\n$$`;
-    }
-    return match;
-  });
-  // Fix unbalanced $$ delimiters from chunk boundaries
-  const $$count = (processedContent.match(/\$\$/g) || []).length;
-  if ($$count % 2 !== 0) {
-    if (processedContent.startsWith('$$')) {
-      processedContent = processedContent + '\n$$';
-    } else {
-      processedContent = '$$\n' + processedContent;
-    }
-  }
+  // Normalize LaTeX delimiters, wrap bare environments, fix \tag, etc.
+  const processedContent = latexNormalize(props.content);
 
   let html = md.render(processedContent);
 

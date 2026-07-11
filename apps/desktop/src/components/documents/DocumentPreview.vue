@@ -11,6 +11,7 @@ import PdfViewport from "@/components/reader/PdfViewport.vue";
 import { useDocumentStore } from "@/stores/document";
 import { useAnnotationStore } from "@/stores/annotations";
 import { openDocumentFile } from "@/services/tauriBridge";
+import { latexNormalize } from "@/utils/latexNormalize";
 
 // ── PDF.js legacy worker (avoids private-field issues in Tauri webview) ──
 let pdfjsWorker: Worker | null = null;
@@ -492,8 +493,8 @@ watch([kbId, docId], async ([newKbId, newDocId], [oldKbId, oldDocId]) => {
     doc.value = docData;
     curDocName = docData.name || docData.id;
     curContent = docData.markdown;
-    // Pre-process MinerU multi-line $...\tag{}...$ into $$...$$ before section splitting
-    curContent = curContent.replace(/^\$\n([\s\S]*?)\\tag\{([^}]+)\}\n\s*\$$/gm, '$$\n$1\n\\tag{$2}\n$$');
+    // Normalize LaTeX delimiters before section splitting (uses shared utility)
+    curContent = latexNormalize(curContent);
     docName.value = curDocName;
     content.value = curContent;
     mdAvailable.value = docData.md_available !== false;

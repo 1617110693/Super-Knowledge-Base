@@ -245,17 +245,26 @@ def _find_math_ranges(text: str) -> list[tuple[int, int]]:
     return merged
 
 
+def _math_end_at(pos: int, math_ranges: list[tuple[int, int]]) -> int:
+    """If *pos* is inside a math range, return the end of that range.
+    Otherwise return *pos* unchanged.
+    """
+    for start, end in math_ranges:
+        if start <= pos < end:
+            return end
+    return pos
+
+
 def _inject_page_markers(_markdown_text: str, doc_dir: Path) -> str:
-    """Build tagged text from content_list.json blocks.
+    """Insert ``[PAGE:N|POS]`` markers into the **original markdown**.
 
-    Every text-carrying block gets a ``[PAGE:N]`` prefix so its page
-    identity survives chunking.  Uses content_list order directly —
-    NO substring matching against the markdown (which has a different
-    block order than content_list).  Aligns with how RAGFlow's
-    ``separate_content`` works.
+    Previous implementation rebuilt text from content_list blocks, which
+    lost ``$$...$$`` delimiters on display math and caused the chunker to
+    split LaTeX formulas.  This version walks the original markdown, using
+    content_list only to map block positions to page numbers.
 
-    Returns the tagged plain text.  The original markdown is NOT used
-    because its block order differs from content_list.
+    Returns the annotated markdown with all original content — including
+    math delimiters — preserved verbatim.
     """
     cl_path = doc_dir / "content_list.json"
     if not cl_path.exists():
@@ -269,7 +278,7 @@ def _inject_page_markers(_markdown_text: str, doc_dir: Path) -> str:
 
     from ..page_mapper import _extract_content_list_text
 
-    # Group blocks by page_idx, preserving content_list order
+    # ── Step 1: group blocks by page_idx, preserving content_list order ──
     page_blocks: dict[int, list[str]] = {}
     min_pi: int | None = None
     max_pi: int | None = None
@@ -290,59 +299,80 @@ def _inject_page_markers(_markdown_text: str, doc_dir: Path) -> str:
     if min_pi is None:
         return _markdown_text
 
-    # Build tagged text: for every page in the full range [min_pi, max_pi],
-    # emit its blocks.  Pages with no blocks in content_list get a
-    # placeholder [PAGE:N] so every page is reachable.
-    # Also embed each block's character position in the ORIGINAL markdown
-    # so start_char can be recovered after chunking without fragile
-    # substring search.
-    #
-    # IMPORTANT: skip positions inside LaTeX math blocks ($$...$$ and $...$)
-    # to avoid inserting [PAGE:N] markers that break math rendering.
+    # ── Step 2: locate each block in the original markdown ──
+    # Forward-search preserves document order so that later blocks are
+    # always found *after* earlier ones.
     _math_ranges = _find_math_ranges(_markdown_text)
+    _entries: list[tuple[int, int]] = []      # (position_in_md, page_1based)
+    _md_cursor = 0
+    _matched = 0
+    _total = sum(len(v) for v in page_blocks.values())
 
-    def _inside_math(pos: int) -> bool:
-        for start, end in _math_ranges:
-            if start <= pos < end:
-                return True
-        return False
-
-    parts: list[str] = []
-    inserted = 0
-    blank_pages = 0
-    _md_search = 0
     for pi in range(min_pi, max_pi + 1):
-        blocks = page_blocks.get(pi, [])
-        if blocks:
-            for text in blocks:
-                pos = _markdown_text.find(text, _md_search)
-                if pos < 0:
-                    pos = _markdown_text.find(text[:max(15, len(text)//3)], _md_search)
-                if pos < 0:
-                    pos = _markdown_text.find(text, 0)
-                # If the found position is inside a math block, search again
-                # from after that math block to find the correct occurrence.
-                if pos >= 0 and _inside_math(pos):
-                    # Find the math range containing pos and search after it
-                    for start, end in _math_ranges:
-                        if start <= pos < end:
-                            alt = _markdown_text.find(text, end)
-                            if alt >= 0:
-                                pos = alt
-                            break
-                if pos >= 0:
-                    _md_search = pos + len(text)
-                parts.append(f"[PAGE:{pi + 1}|{pos}]{text}")
-                inserted += 1
-        else:
-            parts.append(f"[PAGE:{pi + 1}|-1]")
-            inserted += 1
-            blank_pages += 1
+        for text in page_blocks.get(pi, []):
+            pos = _markdown_text.find(text, _md_cursor)
+            if pos < 0:
+                # Retry with shorter prefix (whitespace may differ)
+                short = text[:max(20, len(text) // 3)]
+                pos = _markdown_text.find(short, _md_cursor)
+            if pos < 0:
+                # Last resort: search from beginning
+                pos = _markdown_text.find(text, 0)
+            if pos >= 0:
+                _md_cursor = pos + len(text)
+                _entries.append((pos, pi + 1))
+                _matched += 1
 
-    total_pages = max_pi - min_pi + 1
-    print(f"[index] Built tagged text with {inserted} PAGE markers "
-          f"({total_pages} pages, {len(page_blocks)} with content, {blank_pages} blank)", flush=True)
-    return "\n\n".join(parts)
+    print(f"[index] Matched {_matched}/{_total} content_list blocks in markdown",
+          flush=True)
+
+    # ── Step 3: sort by position & remove duplicates ──
+    _entries.sort(key=lambda e: e[0])
+    seen: set[int] = set()
+    _entries = [(p, pg) for p, pg in _entries if not (p in seen or seen.add(p))]
+
+    # ── Step 4: build tagged text by inserting markers into original md ──
+    parts: list[str] = []
+    cursor = 0
+
+    for pos, page in _entries:
+        # If position is inside a math block, defer marker to after $$ close
+        safe = _math_end_at(pos, _math_ranges)
+        parts.append(_markdown_text[cursor:safe])
+        parts.append(f"[PAGE:{page}|{pos}]")
+        cursor = safe
+
+    # Remaining text after the last matched block
+    parts.append(_markdown_text[cursor:])
+
+    # ── Step 5: blank-page markers (pages with no matched blocks) ──
+    # Place them right before the *next* content marker so they ride in
+    # the same chunk and the page number is reachable.
+    matched_pages = {pg for _, pg in _entries}
+    blank_pages = [
+        pi + 1 for pi in range(min_pi, max_pi + 1)
+        if (pi + 1) not in matched_pages
+    ]
+    if blank_pages:
+        # Group consecutive blanks and attach each to the nearest following
+        # content position (or append at the very end).
+        result = "".join(parts)
+        for bp in blank_pages:
+            # Find the first [PAGE:N|...] marker whose page > bp
+            insert_before = None
+            for m in _PAGE_MARKER_RE.finditer(result):
+                if int(m.group(1)) > bp:
+                    insert_before = m.start()
+                    break
+            marker = f"[PAGE:{bp}|-1]"
+            if insert_before is not None:
+                result = result[:insert_before] + marker + "\n\n" + result[insert_before:]
+            else:
+                result += "\n\n" + marker
+        print(f"[index] Inserted {len(blank_pages)} blank-page markers", flush=True)
+        return result
+
+    return "".join(parts)
 
 
 def _extract_page_range(chunk_text: str) -> tuple[int, int, int]:

@@ -637,11 +637,6 @@ def _extract_content_list_text(item: dict) -> str:
                     elif isinstance(row, str):
                         parts.append(row.strip())
 
-    if item_type == "equation":
-        latex = item.get("latex") or item.get("text") or ""
-        if isinstance(latex, str) and latex.strip():
-            parts.append(latex.strip())
-
     return " ".join(parts)
 
 

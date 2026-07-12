@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-input-container">
+  <div class="chat-input-wrapper">
     <el-input
       v-model="inputText"
       type="textarea"
@@ -9,31 +9,29 @@
       :disabled="streaming"
       @keydown.enter.exact.prevent="handleSend"
     />
-    <div class="chat-input-actions">
-      <el-button
-        v-if="streaming"
-        type="danger"
-        size="small"
-        round
-        class="stop-btn"
-        @click="emit('stop')"
-      >
-        <Ban class="w-4 h-4 mr-1" />
-        Stop
-      </el-button>
-      <el-button
-        v-else
-        type="primary"
-        size="small"
-        round
-        class="send-btn"
-        :disabled="!canSend"
-        @click="handleSend"
-      >
-        <SendHorizontal class="w-4 h-4 mr-1" />
-        Send
-      </el-button>
-    </div>
+    <el-button
+      v-if="streaming"
+      type="danger"
+      size="small"
+      round
+      class="stop-btn"
+      @click="emit('stop')"
+    >
+      <Ban class="w-4 h-4 mr-1" />
+      Stop
+    </el-button>
+    <el-button
+      v-else
+      type="primary"
+      size="small"
+      round
+      class="send-btn"
+      :disabled="!canSend"
+      @click="handleSend"
+    >
+      <SendHorizontal class="w-4 h-4 mr-1" />
+      Send
+    </el-button>
   </div>
 </template>
 
@@ -68,13 +66,12 @@ function handleSend() {
 </script>
 
 <style scoped>
-.chat-input-container {
-  @apply flex flex-col gap-2 p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900;
-  max-height: 300px;
+.chat-input-wrapper {
+  @apply flex items-end gap-2 p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900;
 }
 
 .chat-textarea {
-  @apply resize-none;
+  flex: 1;
 }
 
 .chat-textarea :deep(.el-textarea__inner) {
@@ -86,13 +83,9 @@ function handleSend() {
   overflow-y: auto;
 }
 
-.chat-input-actions {
-  @apply flex justify-end items-center gap-2;
-  flex-shrink: 0;
-}
-
 .send-btn,
 .stop-btn {
-  @apply flex items-center;
+  @apply flex items-center shrink-0;
+  height: fit-content;
 }
 </style>

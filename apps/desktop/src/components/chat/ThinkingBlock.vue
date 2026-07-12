@@ -1,7 +1,7 @@
 <template>
-  <div class="mb-2 border rounded-lg overflow-hidden bg-amber-50/30 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800">
+  <div class="mb-2 border rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-800/40 border-gray-200 dark:border-gray-700">
     <button
-      class="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 dark:text-amber-400 hover:bg-amber-100/50 dark:hover:bg-amber-900/30 transition-colors"
+      class="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors"
       @click="open = !open"
     >
       <Loader2 v-if="isStreaming" class="w-3 h-3 animate-spin shrink-0" />
@@ -9,7 +9,7 @@
       <span v-if="isStreaming">Thinking...</span>
       <span v-else>Thought process</span>
     </button>
-    <div v-if="open" ref="scrollRef" class="max-h-48 overflow-y-auto px-3 py-2 border-t border-amber-200 dark:border-amber-800">
+    <div v-if="open" ref="scrollRef" class="max-h-48 overflow-y-auto px-3 py-2 border-t border-gray-200 dark:border-gray-700">
       <div class="text-xs text-muted-foreground whitespace-pre-wrap break-words leading-relaxed">{{ reasoning }}</div>
     </div>
   </div>

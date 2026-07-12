@@ -7,22 +7,36 @@
         {{ conv?.title || conv?.messages?.[0]?.content?.slice(0, 30) || t("chat.new") }}
       </h2>
 
-      <!-- Context window toggle -->
-      <label
-        class="flex items-center gap-1 text-[11px] text-muted-foreground"
-        :title="t('chat.contextWindowHelp') || 'Include neighboring chunks in search results for more context'"
-      >
-        <span class="hidden sm:inline">{{ t("chat.contextWindow") || "Ctx" }}</span>
-        <select
-          :value="contextWindow"
-          class="px-1.5 py-0.5 border rounded bg-background text-[11px]"
-          @change="handleContextWindowChange"
+      <!-- Context window button + dropdown -->
+      <div class="relative" ref="ctxRef">
+        <button
+          class="flex items-center gap-1 text-[11px] text-muted-foreground border rounded-md px-2 py-1 bg-background hover:bg-muted transition-colors"
+          :title="t('chat.contextWindowHelp') || 'Include neighboring chunks in search results for more context'"
+          @click="ctxOpen = !ctxOpen"
         >
-          <option :value="0">±0</option>
-          <option :value="1">±1</option>
-          <option :value="2">±2</option>
-        </select>
-      </label>
+          <span class="hidden sm:inline">{{ t("chat.contextWindow") || "Ctx" }}</span>
+          <span class="font-medium">{{ contextWindow > 0 ? `±${contextWindow}` : '±0' }}</span>
+          <ChevronDown class="w-3 h-3 transition-transform duration-200" :class="{ '-rotate-180': ctxOpen }" />
+        </button>
+        <div v-if="ctxOpen" class="fixed inset-0 z-40" @click="ctxOpen = false" />
+        <transition name="dropdown">
+          <div
+            v-if="ctxOpen"
+            class="absolute top-full left-0 mt-2 z-50 bg-card border rounded-lg shadow-xl py-1 min-w-[100px]"
+          >
+            <div class="absolute -top-[6px] left-4 w-3 h-3 bg-card border-l border-t rotate-45" />
+            <button
+              v-for="val in [0, 1, 2]"
+              :key="val"
+              class="block w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors"
+              :class="contextWindow === val ? 'text-primary font-medium' : 'text-muted-foreground'"
+              @click="contextWindow = val; ctxOpen = false"
+            >
+              ±{{ val }}
+            </button>
+          </div>
+        </transition>
+      </div>
 
       <!-- Web search toggle: Off / Smart / On (click to cycle) -->
       <button
@@ -175,7 +189,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   MessageSquare, Plus, ArrowDownToLine, ArrowDown,
-  RefreshCw, Trash2, X, Earth,
+  RefreshCw, Trash2, X, Earth, ChevronDown,
 } from "lucide-vue-next";
 import type { ChatMessage, SearchResult, ToolCall } from "@/types";
 import { useChatStore } from "@/stores/chatStore";
@@ -222,6 +236,8 @@ const abortCtrl = ref<AbortController | null>(null);
 const scrollRef = ref<HTMLElement | null>(null);
 const previewChunk = ref<SearchResult | null>(null);
 const lastScrollSave = ref(0);
+const ctxOpen = ref(false);
+const ctxRef = ref<HTMLElement | null>(null);
 
 // ── Computed ──
 const convId = computed(() => route.params.convId as string | undefined);
@@ -933,5 +949,14 @@ function openPdfFromChunk(docId: string) {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+.dropdown-enter-active,
+.dropdown-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.dropdown-enter-from,
+.dropdown-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 </style>

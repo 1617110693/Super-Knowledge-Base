@@ -3,6 +3,9 @@ import { computed, ref, watch, onUnmounted } from "vue";
 import type { Document } from "@/types";
 import { pollIndexProgress, pollVlmStatus } from "@/services/pythonClient";
 import { RefreshCw, AlertCircle, CheckCircle2, Loader2 } from "lucide-vue-next";
+import { useI18n } from "@/i18n/index";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   visible: boolean;
@@ -191,7 +194,7 @@ function handleRetry() {
           <span class="metric-value">{{ progress.current }}/{{ progress.total }}</span>
         </div>
         <div class="metric-item">
-          <span class="metric-label">Chunks</span>
+          <span class="metric-label">{{ t("overview.chunks") }}</span>
           <span class="metric-value">{{ doc?.chunk_count ?? 0 }}</span>
         </div>
         <div class="metric-item">

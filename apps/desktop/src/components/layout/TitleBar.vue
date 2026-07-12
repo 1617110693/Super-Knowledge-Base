@@ -19,20 +19,20 @@
       <!-- Language Toggle -->
       <button
         class="titlebar-icon-btn titlebar-lang-btn"
-        :title="locale === 'en' ? '切换到中文' : 'Switch to English'"
+        :title="locale === 'en' ? t('title.langToggle') : t('title.langToggle')"
         @click="toggleLocale"
       >
         <Globe :size="14" />
       </button>
 
       <!-- Window Controls -->
-      <button class="titlebar-win-btn" title="Minimize" @click="win.minimize()">
+      <button class="titlebar-win-btn" :title="t('title.minimize')" @click="win.minimize()">
         <Minus :size="14" />
       </button>
-      <button class="titlebar-win-btn" title="Maximize" @click="win.toggleMaximize()">
+      <button class="titlebar-win-btn" :title="t('title.maximize')" @click="win.toggleMaximize()">
         <Square :size="12" />
       </button>
-      <button class="titlebar-win-btn titlebar-win-btn-close" title="Close" @click="win.close()">
+      <button class="titlebar-win-btn titlebar-win-btn-close" :title="t('title.close')" @click="win.close()">
         <X :size="14" />
       </button>
     </div>

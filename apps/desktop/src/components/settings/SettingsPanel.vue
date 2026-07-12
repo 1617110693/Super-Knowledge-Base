@@ -479,7 +479,7 @@ async function browseGGUF(field: "local_embedding_model" | "local_rerank_model")
               <el-input-number v-model="local.python_port" :min="1024" :max="65535" size="small" />
             </div>
             <div class="field-row">
-              <div class="field-label">Status</div>
+              <div class="field-label">{{ t("settings.status") || "Status" }}</div>
               <el-tag :type="store.pythonRunning ? 'success' : 'danger'" size="small" effect="dark">
                 <span class="status-row-inline">
                   <Wifi v-if="store.pythonRunning" :size="12" />
@@ -526,7 +526,7 @@ async function browseGGUF(field: "local_embedding_model" | "local_rerank_model")
                 <el-option label="GitHub" value="github" />
               </el-select>
             </div>
-            <div class="field-hint">Choose the rendering style for markdown documents and chat messages.</div>
+            <div class="field-hint">{{ t("settings.markdownThemeHint") }}</div>
           </div>
 
           <!-- Claude MCP -->
@@ -962,7 +962,7 @@ async function browseGGUF(field: "local_embedding_model" | "local_rerank_model")
                 />
               </div>
               <div class="field-hint">
-                <a href="https://tavily.com" target="_blank" class="link">Tavily</a> -- free tier: 1000 searches/month
+                <a href="https://tavily.com" target="_blank" class="link">Tavily</a> {{ t("settings.tavilyFreeTier") }}
               </div>
             </template>
             <template v-else>

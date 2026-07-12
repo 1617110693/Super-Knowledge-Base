@@ -77,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed } from "vue";
 import { Globe } from "lucide-vue-next";
 import type { SearchResult, WebSearchSource } from "@/types";
 
@@ -105,7 +105,7 @@ function truncateContent(content: string, maxLen = 150): string {
 }
 
 // Ensure webSources has a default
-const webSources = props.webSources || [];
+const webSources = computed(() => props.webSources || []);
 </script>
 
 <style scoped>

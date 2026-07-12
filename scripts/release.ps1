@@ -3,7 +3,7 @@
 # Prerequisites: python, uv, node, rust
 # Usage: .\scripts\release.ps1 [version]
 
-param([string]$Version = "4.0.0")
+param([string]$Version = "5.0.0")
 
 $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot + "\.."
@@ -92,6 +92,7 @@ Invoke-Native {
         --copy-metadata fastmcp `
         --copy-metadata fastmcp-slim `
         --copy-metadata mcp `
+        --add-data "src/knowledge_backend/bing_search.js;knowledge_backend" `
         --name knowledge-backend build_backend.py
 }
 $backendExe = "$Root\services\python-backend\dist\knowledge-backend.exe"

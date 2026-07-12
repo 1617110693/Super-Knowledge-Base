@@ -10,12 +10,12 @@
         <div class="tool-call-details">
           <!-- Arguments -->
           <div class="tool-section">
-            <div class="tool-section-label text-xs font-medium text-gray-500 mb-1">Arguments</div>
+            <div class="tool-section-label text-xs font-medium text-gray-500 mb-1">{{ t("tool.args") }}</div>
             <pre class="tool-json">{{ prettyArgs(tc) }}</pre>
           </div>
           <!-- Result -->
           <div v-if="tc.id && toolResults[tc.id]" class="tool-section">
-            <div class="tool-section-label text-xs font-medium text-gray-500 mb-1">Result</div>
+            <div class="tool-section-label text-xs font-medium text-gray-500 mb-1">{{ t("tool.result") }}</div>
             <pre class="tool-json tool-result">{{ toolResults[tc.id] }}</pre>
           </div>
           <!-- Loading state -->
@@ -34,6 +34,9 @@ import { ref } from "vue";
 import { Loader2 as LoadingIcon } from "lucide-vue-next";
 import type { ToolCall } from "@/types";
 import { toolLabel } from "@/services/toolDefinitions";
+import { useI18n } from "@/i18n/index";
+
+const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{

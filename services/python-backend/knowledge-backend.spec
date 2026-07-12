@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import copy_metadata
 
-datas = []
+datas = [('src/knowledge_backend/bing_search.js', 'knowledge_backend')]
 datas += copy_metadata('fastmcp')
 datas += copy_metadata('fastmcp-slim')
 datas += copy_metadata('mcp')

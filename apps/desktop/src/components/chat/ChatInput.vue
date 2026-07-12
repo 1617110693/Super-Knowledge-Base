@@ -18,7 +18,7 @@
       @click="emit('stop')"
     >
       <Ban class="w-4 h-4 mr-1" />
-      Stop
+      {{ t("chat.stopBtn") }}
     </el-button>
     <el-button
       v-else
@@ -30,7 +30,7 @@
       @click="handleSend"
     >
       <SendHorizontal class="w-4 h-4 mr-1" />
-      Send
+      {{ t("chat.sendBtn") }}
     </el-button>
   </div>
 </template>
@@ -38,6 +38,9 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { Ban, SendHorizontal } from "lucide-vue-next";
+import { useI18n } from "@/i18n/index";
+
+const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{

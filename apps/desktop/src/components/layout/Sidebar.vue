@@ -817,7 +817,7 @@ function showChatCtxMenu(conv: { id: string; title: string }, e: MouseEvent) {
   overflow-x: hidden;
   min-height: 0;
   flex: 1 1 0;
-  padding-left: 8px;
+  padding-left: 11px;
   padding-right: 4px;
 }
 /* Scrollbar for collapsed sidebar — shown on hover only */

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, markRaw } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { useI18n } from "@/i18n/index";
 import {
   ArrowLeft, Search, X, ChevronRight, FileText, Pencil, Check, XCircle,
   List, Image as ImageIcon, LayoutGrid, Rows3, Settings,
@@ -159,6 +160,8 @@ function extractHeadings(
 
 const route = useRoute();
 const router = useRouter();
+
+const { t } = useI18n();
 
 const kbId = computed(() => route.params.kbId as string);
 const docId = computed(() => route.params.docId as string);
@@ -726,7 +729,7 @@ function handlePageJump() {
     pageJumpError.value = "";
     jumpToChunk(targetCi);
   } else if (hasPageData.value) {
-    pageJumpError.value = `No chunks on page ${realPage}`;
+    pageJumpError.value = t("docs.noChunksOnPage", { page: realPage });
   }
 }
 
@@ -931,7 +934,7 @@ async function handleFillClick() {
     const r = await fillMissingImages(kbId.value, docId.value);
     if (r.done) {
       fillProgress.value = {
-        current: 0, total: 0, currentName: "", message: r.message || "All images have valid descriptions",
+        current: 0, total: 0, currentName: "", message: r.message || t("docs.fillImageAllValid"),
         done: true,
       };
       fillTaskId.value = null;
@@ -1493,7 +1496,7 @@ function nextImage() {
     <!-- Loading -->
     <div v-if="loading" class="center-state">
       <div class="spinner" />
-      <p class="muted-text">Loading document...</p>
+      <p class="muted-text">{{ t("docs.loadingDocument") }}</p>
     </div>
 
     <!-- No markdown -->
@@ -1518,15 +1521,15 @@ function nextImage() {
       <div class="doc-header">
         <!-- Left: back + search + edit -->
         <div class="header-actions-left">
-          <button @click="router.back()" class="icon-btn" title="Back">
+          <button @click="router.back()" class="icon-btn" :title="t('nav.overview')">
             <ArrowLeft :size="14" />
           </button>
           <template v-if="editing">
-            <button @click="handleSave" :disabled="saving" class="icon-btn text-green-600" title="Save">
+            <button @click="handleSave" :disabled="saving" class="icon-btn text-green-600" :title="t('docs.saveTooltip')">
               <div v-if="saving" class="spinner-sm" />
               <Check v-else :size="14" />
             </button>
-            <button @click="handleCancelEdit" :disabled="saving" class="icon-btn text-red-500" title="Cancel">
+            <button @click="handleCancelEdit" :disabled="saving" class="icon-btn text-red-500" :title="t('docs.cancelTooltip')">
               <X :size="14" />
             </button>
           </template>
@@ -1534,11 +1537,11 @@ function nextImage() {
             <button
               @click="searchOpen = !searchOpen"
               :class="['icon-btn', searchOpen ? 'active' : '']"
-              title="Search"
+              :title="t('docs.searchTooltip')"
             >
               <Search :size="14" />
             </button>
-            <button @click="handleStartEdit" class="icon-btn" title="Edit markdown">
+            <button @click="handleStartEdit" class="icon-btn" :title="t('docs.editTooltip')">
               <Pencil :size="14" />
             </button>
           </template>
@@ -1556,7 +1559,7 @@ function nextImage() {
             <button
               @click="openPdf"
               :class="['icon-btn', viewMode === 'pdf' ? 'active' : '']"
-              title="View PDF"
+              :title="t('docs.viewPdfTooltip')"
             >
               <FileText :size="14" />
             </button>
@@ -1564,7 +1567,7 @@ function nextImage() {
               v-if="viewMode === 'pdf'"
               @click="jumpToMarkdownAtPage"
               class="icon-btn"
-              title="Jump to markdown at this page"
+              :title="t('docs.jumpToMarkdown')"
             >
               <FileText :size="14" />
             </button>
@@ -1572,14 +1575,14 @@ function nextImage() {
               v-if="viewMode === 'markdown' && hasPageData"
               @click="jumpToPdfAtPage"
               class="icon-btn"
-              title="Jump to PDF at current page"
+              :title="t('docs.jumpToPdf')"
             >
               <FileText :size="14" />
             </button>
             <button
               @click="wrappedSetTocOpen(!tocOpen)"
               :class="['icon-btn', tocOpen ? 'active' : '']"
-              title="Table of contents"
+              :title="t('docs.tocTooltip')"
             >
               <List :size="14" />
             </button>
@@ -1587,7 +1590,7 @@ function nextImage() {
               v-if="imageNames.length > 0"
               @click="imagesOpen = !imagesOpen"
               :class="['icon-btn', imagesOpen ? 'active' : '']"
-              title="Images"
+              :title="t('docs.imagesTooltip')"
             >
               <ImageIcon :size="14" />
             </button>
@@ -1597,7 +1600,7 @@ function nextImage() {
 
       <!-- Edit error -->
       <div v-if="editError" class="error-banner">{{ editError }}</div>
-      <p v-if="editing" class="edit-hint">Edit the markdown content below. Save to re-index.</p>
+      <p v-if="editing" class="edit-hint">{{ t("docs.editHint") }}</p>
 
       <!-- Edit textarea -->
       <textarea
@@ -1657,7 +1660,7 @@ function nextImage() {
               type="text"
               autofocus
               @keydown="handleSearch"
-              placeholder="Search in document..."
+              placeholder="{{ t('docs.searchPlaceholder') }}"
               class="search-input"
             />
             <button v-if="searchQuery" @click="searchQuery = ''; searchResults = null" class="icon-btn">
@@ -1672,7 +1675,7 @@ function nextImage() {
           </div>
           <p v-if="searchError" class="search-error">{{ searchError }}</p>
           <div v-if="searchResults" class="search-results">
-            <p v-if="searchResults.length === 0" class="no-results">No results found.</p>
+            <p v-if="searchResults.length === 0" class="no-results">{{ t("search.noResultsFound") }}</p>
             <button
               v-for="(r, i) in searchResults"
               :key="i"
@@ -1698,9 +1701,9 @@ function nextImage() {
     <Teleport to="body">
       <div v-if="!editing && tocOpen" class="toc-panel">
         <div class="toc-header">
-          <span class="toc-title">Contents</span>
+          <span class="toc-title">{{ t("docs.tocTitle") }}</span>
           <div class="toc-header-actions">
-            <button @click="pageSettingsOpen = true" class="icon-btn" title="Page settings">
+            <button @click="pageSettingsOpen = true" class="icon-btn" :title="t('docs.pageSettingsTooltip')">
               <Settings :size="12" />
             </button>
             <button @click="wrappedSetTocOpen(false)" class="icon-btn">
@@ -1710,7 +1713,7 @@ function nextImage() {
         </div>
         <div class="toc-body">
           <div class="toc-headings">
-            <p v-if="headings.length === 0" class="text-xs muted-text p-2">No headings found.</p>
+            <p v-if="headings.length === 0" class="text-xs muted-text p-2">{{ t("docs.tocEmpty") }}</p>
             <button
               v-for="(h, i) in headings"
               :key="i"
@@ -1742,7 +1745,7 @@ function nextImage() {
               :max="maxPage"
               @keydown.enter="handlePageJump"
               :disabled="!hasPageData"
-              :placeholder="hasPageData ? 'Page #' : '-'"
+              :placeholder="hasPageData ? t('docs.pageJump') : '-'"
               class="page-input"
             />
             <button
@@ -1762,18 +1765,18 @@ function nextImage() {
     <Teleport to="body">
       <div v-if="!editing && imagesOpen" class="images-panel">
         <div class="images-header">
-          <span class="images-title">Images ({{ imageNames.length }})</span>
+          <span class="images-title">{{ t("docs.imagesTitle", { count: imageNames.length }) }}</span>
           <div class="images-header-actions">
             <!-- Fill missing button -->
             <button
               @click="handleFillClick"
               :class="['icon-btn', { 'text-amber-500': fillTaskId && fillProgress && !fillProgress.done }]"
-              :title="fillTaskId && fillProgress && !fillProgress.done ? `Filling... ${fillProgress.current}/${fillProgress.total}` : 'Fill missing image descriptions with VLM'"
+              :title="fillTaskId && fillProgress && !fillProgress.done ? `Filling... ${fillProgress.current}/${fillProgress.total}` : t('docs.fillVlmTooltip')"
             >
               <div v-if="fillTaskId && fillProgress && !fillProgress.done" class="spinner-sm" />
               <RefreshCw v-else :size="14" />
             </button>
-            <button @click="galleryMode = galleryMode === 'grid' ? 'list' : 'grid'" class="icon-btn" title="Toggle view">
+            <button @click="galleryMode = galleryMode === 'grid' ? 'list' : 'grid'" class="icon-btn" :title="t('docs.toggleViewTooltip')">
               <Rows3 v-if="galleryMode === 'grid'" :size="12" />
               <LayoutGrid v-else :size="12" />
             </button>
@@ -1791,7 +1794,7 @@ function nextImage() {
               class="image-thumb-grid"
             >
               <img v-if="imageSrcs.has(name)" :src="imageSrcs.get(name)" :alt="name" class="image-thumb-img" />
-              <span v-else class="image-thumb-placeholder">Load</span>
+              <span v-else class="image-thumb-placeholder">{{ t("docs.loadingDocument") }}</span>
             </button>
             <!-- List mode -->
             <button
@@ -1814,22 +1817,22 @@ function nextImage() {
     <Teleport to="body">
       <div v-if="pageSettingsOpen" class="dialog-overlay" @click="pageSettingsOpen = false">
         <div class="dialog-box" @click.stop>
-          <h3 class="dialog-title">Page Settings</h3>
+          <h3 class="dialog-title">{{ t("docs.pageSettings") }}</h3>
           <div class="dialog-body">
             <div class="flex items-center justify-between">
-              <span class="text-xs">Page Numbering</span>
+              <span class="text-xs">{{ t("docs.pageNumbering") }}</span>
               <button
                 @click="pageMode = pageMode === 'real' ? 'virtual' : 'real'"
                 :class="['toggle-btn', { active: pageMode === 'real' }]"
               >
-                {{ pageMode === 'real' ? 'Real' : 'Virtual' }}
+                {{ pageMode === 'real' ? t("docs.pageModeReal") : t("docs.pageModeVirtual") }}
               </button>
             </div>
             <p class="text-[10px] muted-text">
-              {{ pageMode === 'real' ? 'Show actual page numbers from the PDF' : 'Show virtual page numbers starting from 1' }}
+              {{ pageMode === 'real' ? t("docs.pageModeRealHint") : t("docs.pageModeVirtualHint") }}
             </p>
             <div class="flex items-center gap-2">
-              <span class="text-xs shrink-0">Virtual page</span>
+              <span class="text-xs shrink-0">{{ t("docs.virtualPage") }}</span>
               <input
                 type="number"
                 :min="0"
@@ -1838,12 +1841,12 @@ function nextImage() {
                 @input="onPageOffsetInput"
                 class="page-offset-input"
               />
-              <span class="text-xs">= Real page 1</span>
+              <span class="text-xs">{{ t("docs.realPage1") }}</span>
             </div>
           </div>
           <div class="dialog-footer">
-            <button @click="pageSettingsOpen = false" class="btn-secondary">Cancel</button>
-            <button @click="pageSettingsOpen = false" class="btn-primary">Done</button>
+            <button @click="pageSettingsOpen = false" class="btn-secondary">{{ t("docs.cancel") }}</button>
+            <button @click="pageSettingsOpen = false" class="btn-primary">{{ t("docs.done") }}</button>
           </div>
         </div>
       </div>
@@ -1853,10 +1856,10 @@ function nextImage() {
     <Teleport to="body">
       <div v-if="fillDialogOpen" class="dialog-overlay" @click="closeFillDialog">
         <div class="dialog-box fill-dialog" @click.stop>
-          <h3 class="dialog-title">Fill Missing Image Descriptions</h3>
+          <h3 class="dialog-title">{{ t("docs.fillImageTitle") }}</h3>
           <div v-if="fillError" class="dialog-body">
-            <p class="text-sm text-red-500">Error: {{ fillError }}</p>
-            <button @click="fillDialogOpen = false; fillError = null" class="btn-primary w-full mt-2">Close</button>
+            <p class="text-sm text-red-500">{{ t("error.search") }}: {{ fillError }}</p>
+            <button @click="fillDialogOpen = false; fillError = null" class="btn-primary w-full mt-2">{{ t("docs.fillImageClose") }}</button>
           </div>
           <div v-else-if="fillProgress?.done" class="dialog-body">
             <div class="flex items-center gap-2 text-sm text-green-600">
@@ -1864,7 +1867,7 @@ function nextImage() {
               <span>{{ fillProgress.message }}</span>
             </div>
             <p v-if="fillProgress.filled != null" class="text-xs muted-text mt-1">
-              {{ fillProgress.filled }} filled{{ fillProgress.failed ? `, ${fillProgress.failed} failed` : "" }}
+              {{ fillProgress.failed ? t("docs.fillStatusFailed", { filled: fillProgress.filled, failed: fillProgress.failed }) : t("docs.fillStatus", { filled: fillProgress.filled }) }}
             </p>
             <div v-if="fillProgress.failed_details?.length" class="failed-details">
               <div v-for="(fd, i) in fillProgress.failed_details" :key="i" class="failed-item">
@@ -1872,7 +1875,7 @@ function nextImage() {
                 <p class="muted-text truncate text-xs">{{ fd.error }}</p>
               </div>
             </div>
-            <button @click="fillDialogOpen = false; fillTaskId = null; fillProgress = null" class="btn-primary w-full mt-2">Done</button>
+            <button @click="fillDialogOpen = false; fillTaskId = null; fillProgress = null" class="btn-primary w-full mt-2">{{ t("docs.fillImageDone") }}</button>
           </div>
           <div v-else-if="fillProgress" class="dialog-body">
             <div class="progress-bar">
@@ -1882,18 +1885,18 @@ function nextImage() {
               {{ fillProgress.current }}/{{ fillProgress.total }} — {{ fillProgress.currentName || "..." }}
             </p>
             <p v-if="fillProgress.message" class="text-xs muted-text text-center">{{ fillProgress.message }}</p>
-            <p class="text-xs muted-text text-center italic mt-1">You can close this dialog — the task continues in background.</p>
+            <p class="text-xs muted-text text-center italic mt-1">{{ t("docs.fillImageBg") }}</p>
           </div>
           <div v-else class="dialog-body center-state py-4">
             <div class="spinner" />
-            <span class="text-sm muted-text">Starting...</span>
+            <span class="text-sm muted-text">{{ t("docs.fillImageStarting") }}</span>
           </div>
           <button
             v-if="!fillProgress?.done && fillProgress"
             @click="closeFillDialog"
             class="btn-secondary w-full mt-2"
           >
-            Close (continue in background)
+            {{ t("docs.fillImageCloseBg") }}
           </button>
         </div>
       </div>
@@ -1943,13 +1946,13 @@ function nextImage() {
               <p class="text-xs text-muted-foreground mt-1 text-center">{{ dialogIdx + 1 }} / {{ imageNames.length }}</p>
               <div class="image-desc-section">
                 <div class="image-desc-header">
-                  <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Description</span>
+                  <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ t("docs.imageDesc") }}</span>
                   <div class="flex gap-1">
                     <button
                       @click="handleReAnalyze"
                       :disabled="vlmLoading"
                       class="btn-icon"
-                      title="Re-analyze with VLM"
+                      :title="t('docs.reanalyzeTooltip')"
                     >
                       <Loader2 v-if="vlmLoading" :size="14" class="animate-spin" />
                       <RefreshCw v-else :size="14" />
@@ -1958,7 +1961,7 @@ function nextImage() {
                       v-if="!editingDesc"
                       @click="editingDesc = true; descEditText = currentImageDesc"
                       class="btn-icon"
-                      title="Edit description"
+                      :title="t('docs.editDescTooltip')"
                     >
                       <Pencil :size="14" />
                     </button>
@@ -1967,7 +1970,7 @@ function nextImage() {
                       @click="saveDesc"
                       :disabled="descSaving"
                       class="btn-icon text-green-600"
-                      title="Save"
+                      :title="t('docs.saveTooltip')"
                     >
                       <Save v-if="!descSaving" :size="14" />
                       <Loader2 v-else :size="14" class="animate-spin" />
@@ -1975,15 +1978,15 @@ function nextImage() {
                   </div>
                 </div>
                 <div v-if="editingDesc" class="desc-edit-area">
-                  <textarea v-model="descEditText" class="desc-textarea" placeholder="Enter description..." />
+                  <textarea v-model="descEditText" class="desc-textarea" :placeholder="t('docs.descPlaceholder')" />
                   <div class="flex gap-2 mt-1">
-                    <button @click="saveDesc" :disabled="descSaving" class="btn-secondary text-xs">Save</button>
-                    <button @click="editingDesc = false" class="btn-secondary text-xs">Cancel</button>
+                    <button @click="saveDesc" :disabled="descSaving" class="btn-secondary text-xs">{{ t("docs.saveTooltip") }}</button>
+                    <button @click="editingDesc = false" class="btn-secondary text-xs">{{ t("docs.cancelTooltip") }}</button>
                   </div>
                 </div>
                 <p v-else-if="currentImageDesc" class="description-text">{{ currentImageDesc }}</p>
                 <div v-else class="desc-empty-state">
-                  <p class="text-xs muted-text">No description yet.</p>
+                  <p class="text-xs muted-text">{{ t("docs.noDescriptionYet") }}</p>
                 </div>
               </div>
             </div>

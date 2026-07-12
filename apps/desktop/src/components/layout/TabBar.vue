@@ -30,7 +30,7 @@
         <button
           class="tab-close"
           @click.stop="closeTab(tab.id)"
-          :title="'Close'"
+          :title="t('tabs.close')"
         >
           <svg width="10" height="10" viewBox="0 0 10 10">
             <line x1="2" y1="2" x2="8" y2="8" stroke="currentColor" stroke-width="1.2" />
@@ -47,6 +47,9 @@ import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { FileText, MessageSquare, Search, Settings } from "lucide-vue-next";
 import { useTabStore } from "@/stores/tabStore";
+import { useI18n } from "@/i18n/index";
+
+const { t } = useI18n();
 
 const router = useRouter();
 const tabStore = useTabStore();

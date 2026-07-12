@@ -1,6 +1,7 @@
 """Search endpoint."""
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -338,7 +339,9 @@ def bing_search(req: BingSearchRequest):
     """Search via Bing CN using a Node.js child process.
     Node.js is used because Bing's edge-CDN identifies Python/rustls TLS
     fingerprints as non-browser traffic and redirects to the homepage."""
-    script = Path(__file__).parent.parent / "bing_search.js"
+    # PyInstaller onefile: sys._MEIPASS is the temp extraction root
+    base = Path(sys._MEIPASS if getattr(sys, "frozen", False) else __file__).parent.parent
+    script = base / "bing_search.js"
     if not script.exists():
         from fastapi import HTTPException
         raise HTTPException(status_code=500, detail=f"Bing search script not found: {script}")

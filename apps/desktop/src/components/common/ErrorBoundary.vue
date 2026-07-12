@@ -2,14 +2,17 @@
   <slot v-if="!hasError" />
   <div v-else class="error-boundary">
     <div class="error-boundary-content">
-      <p class="error-boundary-text">Something went wrong</p>
-      <el-button size="small" @click="reset">Retry</el-button>
+      <p class="error-boundary-text">{{ t("error.generic") }}</p>
+      <el-button size="small" @click="reset">{{ t("kb.retry") }}</el-button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onErrorCaptured } from 'vue'
+import { useI18n } from "@/i18n/index";
+
+const { t } = useI18n();
 
 const hasError = ref(false)
 

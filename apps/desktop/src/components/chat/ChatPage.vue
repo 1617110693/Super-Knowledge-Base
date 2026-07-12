@@ -24,17 +24,21 @@
         </select>
       </label>
 
-      <!-- Web search toggle -->
+      <!-- Web search toggle: Off / Smart / On (click to cycle) -->
       <button
         class="group flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-200 select-none"
-        :class="webSearchEnabled
-          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800'
-          : 'bg-muted/60 text-muted-foreground border border-transparent hover:bg-muted hover:text-foreground/70'"
+        :class="[
+          webSearchMode !== 'off'
+            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800'
+            : 'bg-muted/60 text-muted-foreground border border-transparent hover:bg-muted hover:text-foreground/70',
+          webSearchMode === 'smart' ? '!bg-amber-50 !text-amber-700 !border-amber-200 dark:!bg-amber-950/40 dark:!text-amber-400 dark:!border-amber-800' : '',
+          webSearchMode === 'on' ? '!bg-sky-50 !text-sky-700 !border-sky-200 dark:!bg-sky-950/40 dark:!text-sky-400 dark:!border-sky-800' : '',
+        ]"
         :title="t('chat.webSearch')"
-        @click="toggleWebSearch"
+        @click="cycleWebSearchMode"
       >
-        <Globe class="w-4 h-4 transition-transform" :class="{ 'opacity-50': !webSearchEnabled }" />
-        <span>{{ webSearchEnabled ? (t('chat.webSearchOn') || 'On') : (t('chat.webSearchOff') || 'Off') }}</span>
+        <Earth class="w-4 h-4" :class="{ 'opacity-50': webSearchMode === 'off' }" />
+        <span>{{ webSearchMode === 'on' ? (t('chat.webSearchOn') || 'On') : webSearchMode === 'smart' ? (t('chat.webSearchSmart') || 'Smart') : (t('chat.webSearchOff') || 'Off') }}</span>
       </button>
 
       <!-- Multi-select KB dropdown -->
@@ -171,7 +175,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   MessageSquare, Plus, ArrowDownToLine, ArrowDown,
-  RefreshCw, Trash2, X, Globe,
+  RefreshCw, Trash2, X, Earth,
 } from "lucide-vue-next";
 import type { ChatMessage, SearchResult, ToolCall } from "@/types";
 import { useChatStore } from "@/stores/chatStore";
@@ -238,9 +242,15 @@ const contextWindow = computed<number>(
   () => conv.value?.chatSettings?.contextWindow ?? 1
 );
 
-const webSearchEnabled = computed<boolean>(
-  () => conv.value?.chatSettings?.webSearchEnabled ?? false
+const webSearchMode = computed<"off" | "smart" | "on">(
+  () => conv.value?.chatSettings?.webSearchMode as "off" | "smart" | "on" | undefined ?? "smart"
 );
+
+function cycleWebSearchMode() {
+  if (!conv.value) return;
+  const next = webSearchMode.value === "off" ? "smart" : webSearchMode.value === "smart" ? "on" : "off";
+  chatStore.updateChatSettings(conv.value.id, { webSearchMode: next });
+}
 
 // Collect all sources from the most recent assistant message
 const lastAssistantSources = computed<SearchResult[]>(() => {
@@ -373,13 +383,6 @@ function handleContextWindowChange(e: Event) {
   chatStore.updateChatSettings(conv.value.id, { contextWindow: val });
 }
 
-function toggleWebSearch() {
-  if (!conv.value) return;
-  chatStore.updateChatSettings(conv.value.id, {
-    webSearchEnabled: !conv.value.chatSettings.webSearchEnabled,
-  });
-}
-
 // ── Conversation actions ──
 function handleNew() {
   const id = chatStore.newConversation();
@@ -440,9 +443,7 @@ function buildInstr(): string {
     "IMPORTANT: Each search result has an 'index' field (1,2,3...) AND a 'chunk_index' field (document position). Use the INDEX number for citation: write [N] where N is the result index, NOT the chunk_index. Example: if result index=1 has chunk_index=8, cite it as [1], not [8].";
   const imageInstr =
     "IMPORTANT — YOU MUST INCLUDE IMAGES IN YOUR ANSWER: Before writing your final answer, ALWAYS search for images related to the topic. When search results include content_type='image' chunks, you MUST render them inline using: ![description](images/filename.jpg). Additionally, look at ALL search result content for image filenames (patterns like 'Image: hash.jpg', 'images/hash.jpg', or markdown image syntax). Extract these filenames and include the images. If you reference a diagram, chart, figure, or visual concept but no image chunk was returned, use search_knowledge_base with content_type='image' to specifically find related images. Images are key visual evidence — never skip them, they appear as clickable thumbnails that the user can preview.";
-  const webSearchEnabledVal = conv.value?.chatSettings?.webSearchEnabled ?? false;
-  const webInstr =
-    `WEB SEARCH (ENABLED): You MUST call web_search before answering whenever the question involves (a) recent events, news, or dates after your training cutoff, (b) real-time or live information, (c) specific facts you are not confident about, or (d) anything beyond the selected knowledge bases. Do NOT answer from memory alone if web_search could give a fresher or more accurate answer. After web_search, use web_fetch to read a specific result page if you need full detail. Cite web results by URL or title so the user knows the source.`;
+  const webSearchModeVal = conv.value?.chatSettings?.webSearchMode ?? "smart";
   const kbNames =
     selectedKbIds.value.length > 0
       ? selectedKbIds.value
@@ -461,7 +462,14 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
   let systemMsg = kbNames
     ? `${ragInstr}\n\n${citeInstr}\n\n${imageInstr}`
     : "You are a helpful assistant.";
-  if (webSearchEnabledVal) systemMsg += `\n\n${webInstr}`;
+  if (webSearchModeVal === "on") {
+    systemMsg += `\n\nWEB SEARCH (ENABLED): You MUST call web_search before answering whenever the question involves (a) recent events, news, or dates after your training cutoff, (b) real-time or live information, (c) specific facts you are not confident about, or (d) anything beyond the selected knowledge bases. Do NOT answer from memory alone if web_search could give a fresher or more accurate answer. After web_search, use web_fetch to read a specific result page if you need full detail. Cite web results by URL or title so the user knows the source.`;
+  } else if (webSearchModeVal === "smart" && !kbNames) {
+    systemMsg += `\n\nYou have web_search and web_fetch tools available. Use web_search to find information when you need up-to-date or external data.`;
+  } else if (webSearchModeVal === "smart" && kbNames) {
+    // KB is primary, web search is available as a supplement
+    systemMsg += `\n\nYou also have web_search and web_fetch tools available. Use them to find supplementary information (e.g. images, recent updates, external context) AFTER searching the knowledge base when the knowledge base results are incomplete or the question specifically asks for web content. Do NOT use web_search as a replacement for search_knowledge_base.`;
+  }
   // Inject memory context
   const memoryPrompt = formatMemoryForPrompt(2000);
   if (memoryPrompt) systemMsg += `\n\n${memoryPrompt}`;
@@ -536,7 +544,7 @@ async function handleSend(text?: string) {
       // Filter tools
       const noKb = selectedKbIds.value.length === 0;
       let activeTools = CHAT_TOOLS;
-      if (!webSearchEnabled.value)
+      if (webSearchMode.value === "off")
         activeTools = activeTools.filter(
           (t) => t.function.name !== "web_search" && t.function.name !== "web_fetch"
         );

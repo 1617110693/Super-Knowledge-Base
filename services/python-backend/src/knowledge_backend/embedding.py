@@ -32,6 +32,10 @@ class OpenAICompatibleEmbedder:
             batch = texts[i : i + batch_size]
             embeddings = self._embed_batch(batch)
             all_embeddings.extend(embeddings)
+            # Yield GIL so other threads (uvicorn event loop, other daemon
+            # threads) can make progress during long indexing runs.
+            import time
+            time.sleep(0)
         return all_embeddings
 
     def embed_single(self, text: str) -> List[float]:

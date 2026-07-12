@@ -1,5 +1,5 @@
 // Web search provider abstraction.
-// Supports DuckDuckGo (free), Tavily, and SearXNG providers.
+// Supports Bing (free), DuckDuckGo (free), Tavily, and SearXNG providers.
 //
 // All HTTP requests go through Tauri's HTTP plugin (`@tauri-apps/plugin-http`)
 // instead of the browser's `fetch`. Reasons:
@@ -13,7 +13,7 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 export interface WebSearchConfig {
-  provider: "duckduckgo" | "tavily" | "searxng";
+  provider: "bing" | "duckduckgo" | "tavily" | "searxng";
   tavilyApiKey?: string;
   searxngBaseUrl?: string;
   maxResults: number;
@@ -32,7 +32,9 @@ const DEFAULT_UA =
 
 /** Search the web using the configured provider */
 export async function searchWeb(query: string, config: WebSearchConfig): Promise<WebSearchResult[]> {
-  if (config.provider === "duckduckgo") {
+  if (config.provider === "bing") {
+    return searchBing(query, config);
+  } else if (config.provider === "duckduckgo") {
     return searchDuckDuckGo(query, config);
   } else if (config.provider === "tavily") {
     return searchTavily(query, config);
@@ -106,6 +108,55 @@ async function searchSearxng(query: string, config: WebSearchConfig): Promise<We
   }));
 }
 
+// ── Bing (free, no API key) ────────────────────────────────────────────────
+
+/** Search Bing CN and parse results from HTML.
+ *  Bing's result structure:
+ *    li.b_algo → h2 a (title + URL), .b_caption p (snippet) */
+const BING_SEARCH_URL = "https://cn.bing.com/search";
+
+async function searchBing(query: string, config: WebSearchConfig): Promise<WebSearchResult[]> {
+  const url = `${BING_SEARCH_URL}?q=${encodeURIComponent(query)}`;
+  let resp;
+  try {
+    resp = await tauriFetch(url, {
+      method: "GET",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+      },
+    });
+  } catch (e) {
+    throw new Error(`Bing request failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (!resp.ok) throw new Error(`Bing search failed: ${resp.status}`);
+  const html = await resp.text();
+
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const results: WebSearchResult[] = [];
+  const items = doc.querySelectorAll(".b_algo");
+  for (const el of items) {
+    try {
+      const link = el.querySelector("h2 a");
+      if (!link) continue;
+      const title = (link.textContent || "").trim();
+      const href = link.getAttribute("href") || "";
+      if (!title) continue;
+      const snippetEl = el.querySelector(".b_caption p");
+      const snippet = (snippetEl?.textContent || "").trim();
+      results.push({
+        title: decodeHtmlEntities(stripTags(title)),
+        url: href,
+        content: decodeHtmlEntities(stripTags(snippet)),
+      });
+      if (results.length >= (config.maxResults || 5)) break;
+    } catch { /* skip bad item */ }
+  }
+  return results;
+}
+
 // ── DuckDuckGo (free, no API key) ───────────────────────────────────────
 
 /** Common browser headers sent on every request. With `unsafe-headers` enabled
@@ -136,7 +187,6 @@ async function searchDuckDuckGo(query: string, config: WebSearchConfig): Promise
   let lastErr: Error | null = null;
 
   for (const { url, useJina } of endpoints) {
-    console.log("[webSearch] DuckDuckGo request (%s): %s", useJina ? "jina" : "direct", url);
 
     // Jina proxy: standard fetch() headers (Accept text/markdown); no Tauri UA needed
     if (useJina) {
@@ -146,19 +196,15 @@ async function searchDuckDuckGo(query: string, config: WebSearchConfig): Promise
           headers: { Accept: "text/markdown", "User-Agent": DEFAULT_UA },
         });
         if (!resp.ok) {
-          console.error("[webSearch] Jina HTTP", resp.status, resp.statusText);
           lastErr = new Error(`Jina DDG proxy failed: ${resp.status}`);
           continue;
         }
         const md = await resp.text();
-        console.log("[webSearch] Jina markdown len:", md.length);
         const results = parseJinaSearchMarkdown(md, config.maxResults || 5);
-        console.log("[webSearch] Jina parsed results:", results.length);
         if (results.length) return results;
         lastErr = new Error("Jina proxy returned no parseable results.");
         continue;
       } catch (e) {
-        console.error("[webSearch] Jina fetch threw:", e);
         lastErr = new Error(`Jina proxy error: ${e instanceof Error ? e.message : String(e)}`);
         continue;
       }
@@ -172,18 +218,14 @@ async function searchDuckDuckGo(query: string, config: WebSearchConfig): Promise
         : browserHeaders();
       resp = await tauriFetch(url, { method: "GET", headers });
     } catch (e) {
-      console.error("[webSearch] DuckDuckGo fetch threw:", e);
       lastErr = new Error(`DuckDuckGo request failed: ${e instanceof Error ? e.message : String(e)}`);
       continue;
     }
     if (!resp.ok) {
-      console.error("[webSearch] DuckDuckGo HTTP", resp.status, resp.statusText);
       lastErr = new Error(`DuckDuckGo search failed: ${resp.status}`);
       continue;
     }
     const html = await resp.text();
-    const title = /<title>([^<]*)<\/title>/i.exec(html)?.[1]?.trim() || "(none)";
-    console.log("[webSearch] DuckDuckGo HTML len:", html.length, "title:", title);
 
     if (/an anomaly|has detected|robot|rate limit|unusual traffic|captcha|are you human/i.test(html)) {
       lastErr = new Error("DuckDuckGo returned an anomaly/rate-limit page.");
@@ -192,15 +234,12 @@ async function searchDuckDuckGo(query: string, config: WebSearchConfig): Promise
     // Homepage redirect
     const hasResultTable = /class="result-(?:links|snippet|a)"/i.test(html) || /class="links"/i.test(html) || /result__a\b/i.test(html);
     if (!hasResultTable && !/at DuckDuckGo/i.test(html)) {
-      console.warn("[webSearch] DuckDuckGo looks like homepage. Trying next endpoint.");
       lastErr = new Error("DuckDuckGo redirected to the homepage.");
       continue;
     }
 
     const results = parseDdgLiteHtml(html, config.maxResults || 5);
-    console.log("[webSearch] DuckDuckGo parsed results:", results.length);
     if (results.length) return results;
-    console.warn("[webSearch] DuckDuckGo result-page parsed 0 results. HTML len:", html.length);
     lastErr = new Error("DuckDuckGo result page parsed 0 results.");
   }
 

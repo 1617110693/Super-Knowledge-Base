@@ -1,17 +1,27 @@
 <template>
-  <div v-memo="[content]" class="chat-markdown" :class="'md-theme-' + injectedTheme" @click="onBadgeClick">
+  <div class="chat-markdown" :class="'md-theme-' + injectedTheme" @click="onContentClick">
     <div class="prose prose-sm max-w-none dark:prose-invert" v-html="renderedHtml" />
+
+    <!-- Image preview dialog -->
+    <Teleport to="body">
+      <div v-if="previewVisible" class="img-preview-overlay" @click="previewVisible = false">
+        <div class="img-preview-container" @click.stop>
+          <img :src="previewUrl" class="img-preview-full" />
+          <button class="img-preview-close" @click="previewVisible = false">✕</button>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, inject, ref } from "vue";
+import { computed, inject, ref, onMounted, watch } from "vue";
 import MarkdownIt from "markdown-it";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import type { SearchResult } from "@/types";
-import { getBaseUrl } from "@/services/pythonClient";
 import { latexNormalize } from "@/utils/latexNormalize";
+import { imageVersion, getImageUrl, ensureImagesLoaded } from "@/utils/resolveImages";
 
 const props = withDefaults(
   defineProps<{
@@ -29,15 +39,15 @@ const emit = defineEmits<{
   sourceClick: [source: SearchResult];
 }>();
 
-const baseUrl = ref("");
-
-// Lazily resolve baseUrl for images
-async function getApiBase(): Promise<string> {
-  if (!baseUrl.value) {
-    try { baseUrl.value = await getBaseUrl(); } catch { baseUrl.value = ""; }
-  }
-  return baseUrl.value;
+// Trigger image loading
+function getCandidates() {
+  return props.sources
+    .filter((s): s is SearchResult & { kb_id: string; doc_id: string } => !!s.kb_id && !!s.doc_id)
+    .map((s) => ({ kb_id: s.kb_id, doc_id: s.doc_id }));
 }
+onMounted(() => ensureImagesLoaded(props.content, getCandidates()));
+watch(() => props.content, () => ensureImagesLoaded(props.content, getCandidates()));
+watch(() => props.sources, () => ensureImagesLoaded(props.content, getCandidates()), { deep: true });
 
 const md = new MarkdownIt({
   html: true,
@@ -121,6 +131,8 @@ function renderInlineMathInHtml(inner: string): string {
 }
 
 const renderedHtml = computed(() => {
+  // Access imageVersion reactively
+  void imageVersion.value;
   const prepared = embedBadges(props.content);
   // Normalize LaTeX delimiters, wrap bare environments, fix \tag, etc.
   const processedContent = latexNormalize(prepared);
@@ -132,23 +144,45 @@ const renderedHtml = computed(() => {
   html = html.replace(/(<th[^>]*>)([\s\S]*?)(<\/th>)/gi, (_m: string, open: string, inner: string, close: string) => {
     return open + renderInlineMathInHtml(inner) + close;
   });
-  // Convert markdown img tags to clickable thumbnails via backend API
-  // LLM writes ![](images/xxx.jpg) → markdown-it renders <img src="images/xxx.jpg">
-  // We replace the src with backend API URL
-  if (baseUrl.value) {
-    html = html.replace(
-      /<img\s+([^>]*?)src="images\/([^"]+)"([^>]*?)\/?>/gi,
-      (_m: string, before: string, filename: string, after: string) => {
-        const imgUrl = `${baseUrl.value}/api/v1/images/serve/${filename}`;
-        return `<a href="${imgUrl}" target="_blank" class="chat-image-link"><img${before}src="${imgUrl}"${after} class="chat-image" loading="lazy" style="max-width:300px;border-radius:8px;border:1px solid var(--border-color);margin:8px 0;cursor:pointer" /></a>`;
-      }
-    );
-  }
+  // Replace image src with resolved object URLs — thumbnail + click-to-expand
+  let imgIdx = 0;
+  html = html.replace(
+    /<img\s+([^>]*?)src="([^"]+)"([^>]*?)\/?>/gi,
+    (_m: string, before: string, src: string, after: string) => {
+      // Only replace local doc images (have hash filenames)
+      const fn = src.replace(/\\/g, "/").split("/").pop()!;
+      const url = getImageUrl(fn);
+      if (!url) return _m;
+      const idx = imgIdx++;
+      return `<span class="chat-image-wrap" data-img-idx="${idx}">`
+        + `<img ${before}src="${url}"${after} class="chat-image-thumb" loading="lazy" />`
+        + `</span>`;
+    }
+  );
   return html;
 });
 
-// Trigger baseUrl resolution once
-getApiBase();
+// ── Image preview dialog ──
+const previewUrl = ref("");
+const previewVisible = ref(false);
+
+function onContentClick(e: MouseEvent) {
+  const el = (e.target as HTMLElement).closest(".chat-image-thumb") as HTMLElement | null;
+  if (el) {
+    previewUrl.value = (el as HTMLImageElement).src;
+    previewVisible.value = true;
+    return;
+  }
+  // Open external links in default browser
+  const link = (e.target as HTMLElement).closest("a") as HTMLAnchorElement | null;
+  if (link && link.href && !link.href.startsWith("http://localhost") && !link.href.startsWith(window.location.origin)) {
+    e.preventDefault();
+    e.stopPropagation();
+    import("@tauri-apps/plugin-shell").then(({ open }) => open(link.href).catch(() => window.open(link.href, "_blank")));
+    return;
+  }
+  onBadgeClick(e);
+}
 
 function onBadgeClick(e: MouseEvent) {
   const el = (e.target as HTMLElement).closest("[data-source], [data-source-start]") as HTMLElement | null;
@@ -167,6 +201,9 @@ function onBadgeClick(e: MouseEvent) {
 .chat-markdown :deep(code) { font-family: "SF Mono", "Fira Code", "Consolas", monospace; font-size: 0.875em; color: var(--text-primary); }
 .chat-markdown :deep(pre code) { background: none; padding: 0; }
 .chat-markdown :deep(img) { max-width: 100%; border-radius: 6px; }
+.chat-markdown :deep(.chat-image-thumb) { max-width: 220px; max-height: 160px; border-radius: 8px; border: 1px solid var(--border-color); margin: 8px 0; cursor: pointer; object-fit: cover; transition: opacity .15s; }
+.chat-markdown :deep(.chat-image-thumb:hover) { opacity: .8; }
+.chat-markdown :deep(.chat-image-wrap) { display: inline-block; }
 .chat-markdown :deep(a) { color: var(--accent-color); text-decoration: none; }
 .chat-markdown :deep(a:hover) { text-decoration: underline; }
 .chat-markdown :deep(table) { width: 100%; border-collapse: collapse; }
@@ -180,4 +217,24 @@ function onBadgeClick(e: MouseEvent) {
 <style>
 @import "@/styles/academic.css";
 @import "@/styles/github.css";
+
+/* ── Image preview dialog (global, teleported to body) ── */
+.img-preview-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,.7);
+  display: flex; align-items: center; justify-content: center;
+  cursor: default;
+}
+.img-preview-container {
+  position: relative; max-width: 90vw; max-height: 90vh;
+}
+.img-preview-full {
+  max-width: 100%; max-height: 90vh; object-fit: contain;
+  border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,.4);
+}
+.img-preview-close {
+  position: absolute; top: -36px; right: 0;
+  background: none; border: none; color: #fff;
+  font-size: 24px; cursor: pointer; padding: 4px 8px;
+}
 </style>

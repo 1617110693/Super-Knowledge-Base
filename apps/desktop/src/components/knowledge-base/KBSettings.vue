@@ -33,6 +33,7 @@ import type { Document } from "@/types";
 import { ElMessage, ElMessageBox } from "element-plus";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import ErrorDialog from "@/components/common/ErrorDialog.vue";
+import IndexingStatusDialog from "@/components/common/IndexingStatusDialog.vue";
 import MoveCopyDialog from "@/components/knowledge-base/MoveCopyDialog.vue";
 
 const route = useRoute();
@@ -117,6 +118,21 @@ const expandedDocs = ref<Set<string>>(new Set());
 const uploadError = ref("");
 const errorDetailTarget = ref<string | null>(null);
 const errorCopied = ref(false);
+
+// ── Status detail dialog ──
+const statusDialogVisible = ref(false);
+const statusDialogDoc = ref<Document | null>(null);
+
+function openStatusDialog(doc: Document) {
+  statusDialogDoc.value = doc;
+  statusDialogVisible.value = true;
+}
+
+function handleStatusDialogRetry() {
+  if (statusDialogDoc.value && kbId.value) {
+    store.reindexDocument(kbId.value, statusDialogDoc.value.id, statusDialogDoc.value.name);
+  }
+}
 
 // ── Parse progress polling ──
 const parseProgress = ref<Record<string, { percent: number; stage: string }>>({});
@@ -425,10 +441,16 @@ function formatFileSize(bytes: number): string {
   return (bytes / 1024).toFixed(1) + " KB";
 }
 
-function formatProgress(p: { percent: number; stage: string; current: number; total: number } | undefined): string {
+function formatProgress(p: { percent: number; stage: string; current: number; total: number; error?: string } | undefined): string {
   if (!p) return t("kb.indexingProgress", { percent: 0 });
-  if (p.stage === "vlm" && p.total > 0) return t("kb.progressVlm", { cur: p.current, total: p.total });
-  return t("kb.indexingProgress", { percent: p.percent });
+  if (p.stage === "error") return `❌ ${p.error ? p.error.slice(0, 60) : t("kb.statusFailed")}`;
+  // Index stages (from Python backend): chunking, embedding, storing
+  if (p.stage === "chunking" || p.stage === "embedding" || p.stage === "storing" || p.stage === "vlm") {
+    if (p.stage === "vlm" && p.total > 0) return t("kb.progressVlm", { cur: p.current, total: p.total });
+    return t("kb.indexingProgress", { percent: p.percent });
+  }
+  // All other stages are from MinerU parsing (starting, uploading, processing, downloading, done)
+  return t("kb.parseProgress", { percent: p.percent });
 }
 
 function statusLabel(status: string): string {
@@ -802,7 +824,7 @@ async function handleRefresh() {
                     </span>
 
                     <!-- Status -->
-                    <span class="status-badge">
+                    <span class="status-badge cursor-pointer" @click.stop="openStatusDialog(doc)">
                       <template
                         v-if="
                           doc.parts?.length &&
@@ -814,7 +836,9 @@ async function handleRefresh() {
                         </span>
                       </template>
                       <template v-else-if="store.indexingProgress[doc.id]">
-                        <span class="text-blue-600">
+                        <span
+                          :class="store.indexingProgress[doc.id].stage === 'error' ? 'text-red-500' : 'text-blue-600'"
+                        >
                           {{ formatProgress(store.indexingProgress[doc.id]) }}
                         </span>
                       </template>
@@ -923,9 +947,9 @@ async function handleRefresh() {
                         {{ part.name }}
                       </span>
                       <span class="file-meta">{{ formatFileSize(part.file_size) }}</span>
-                      <span class="status-badge">
+                      <span class="status-badge cursor-pointer" @click.stop="openStatusDialog(part)">
                         <template v-if="store.indexingProgress[part.id]">
-                          <span class="text-blue-600">
+                          <span :class="store.indexingProgress[part.id].stage === 'error' ? 'text-red-500' : 'text-blue-600'">
                             {{ formatProgress(store.indexingProgress[part.id]) }}
                           </span>
                         </template>
@@ -1120,6 +1144,15 @@ async function handleRefresh() {
       :action="moveCopyAction"
       @update:visible="moveCopyVisible = $event"
       @done="onMoveCopyDone"
+    />
+
+    <!-- Status Detail Dialog -->
+    <IndexingStatusDialog
+      v-model:visible="statusDialogVisible"
+      :doc="statusDialogDoc"
+      :progress="statusDialogDoc ? store.indexingProgress[statusDialogDoc.id] ?? null : null"
+      :kb-id="kbId"
+      @retry="handleStatusDialogRetry"
     />
   </div>
 

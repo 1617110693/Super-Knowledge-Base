@@ -76,6 +76,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub web_search_max_results: u32,
     #[serde(default)]
+    pub web_search_proxy: String,
+    #[serde(default)]
     pub fontSize: u32,
     #[serde(default)]
     pub markdownTheme: String,
@@ -119,10 +121,11 @@ impl Default for AppSettings {
             max_search_result_chars: 2000,
             max_document_chars: 30000,
             max_chunk_chars: 800,
-            web_search_provider: "duckduckgo".to_string(),
+            web_search_provider: "bing".to_string(),
             tavily_api_key: String::new(),
             searxng_base_url: String::new(),
             web_search_max_results: 5,
+            web_search_proxy: String::new(),
             fontSize: 15,
             markdownTheme: "academic".to_string(),
             has_seen_guide: false,

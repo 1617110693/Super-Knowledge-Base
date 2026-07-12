@@ -373,17 +373,67 @@ export async function executeToolCall(
       const { useSettingsStore } = await import("@/stores/settingsStore");
       const settingsStore = useSettingsStore();
       const appSettings = settingsStore.settings;
-      const { searchWeb } = await import("./webSearch");
-      // Default to DuckDuckGo (free, no API key) when no provider is configured.
-      // Previously defaulted to "tavily" which silently failed without an API key,
-      // so the AI never got web results and the feature appeared broken.
-      const provider = ((appSettings as any).web_search_provider as "duckduckgo" | "tavily" | "searxng" | undefined) || "duckduckgo";
-      const results = await searchWeb(query, {
-        provider,
-        tavilyApiKey: (appSettings as any).tavily_api_key || "",
-        searxngBaseUrl: (appSettings as any).searxng_base_url || "",
-        maxResults: (appSettings as any).web_search_max_results || maxResults,
-      });
+      const provider = ((appSettings as any).web_search_provider as "bing" | "duckduckgo" | "tavily" | "searxng" | undefined) || "bing";
+
+      let results: { title: string; url: string; content: string; score?: number }[];
+
+      if (provider === "duckduckgo") {
+        // Route DuckDuckGo through the Python backend (supports proxy).
+        // Use Tauri HTTP plugin to bypass CORS; fall back to direct TS search
+        // if the backend is unreachable or returns an error.
+        const proxy = (appSettings as any).web_search_proxy || "";
+        try {
+          const { getBaseUrl } = await import("./pythonClient");
+          const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http");
+          const base = await getBaseUrl();
+          const resp = await tauriFetch(`${base}/api/v1/duckduckgo-search`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query, max_results: maxResults, proxy }),
+          });
+          if (resp.ok) {
+            const data = await resp.json() as { results: typeof results; total: number };
+            results = data.results;
+          } else {
+            throw new Error(`Backend returned ${resp.status}`);
+          }
+        } catch {
+          // Fallback to direct TypeScript DuckDuckGo search
+          const { searchWeb } = await import("./webSearch");
+          results = await searchWeb(query, { provider, maxResults });
+        }
+      } else if (provider === "bing") {
+        // Route Bing through the Python backend (Node.js subprocess handles TLS).
+        // Use Tauri HTTP plugin to bypass CORS; fall back to direct TS search.
+        try {
+          const { getBaseUrl } = await import("./pythonClient");
+          const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http");
+          const base = await getBaseUrl();
+          const resp = await tauriFetch(`${base}/api/v1/bing-search`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query, max_results: maxResults }),
+          });
+          if (resp.ok) {
+            const data = await resp.json() as { results: typeof results; total: number };
+            results = data.results;
+          } else {
+            throw new Error(`Backend returned ${resp.status}`);
+          }
+        } catch {
+          // Fallback to direct TypeScript Bing search
+          const { searchWeb } = await import("./webSearch");
+          results = await searchWeb(query, { provider, maxResults });
+        }
+      } else {
+        const { searchWeb } = await import("./webSearch");
+        results = await searchWeb(query, {
+          provider,
+          tavilyApiKey: (appSettings as any).tavily_api_key || "",
+          searxngBaseUrl: (appSettings as any).searxng_base_url || "",
+          maxResults: (appSettings as any).web_search_max_results || maxResults,
+        });
+      }
 
       return {
         result: {

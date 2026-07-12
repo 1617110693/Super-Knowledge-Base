@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { computed, inject } from "vue";
+import { computed, inject, onMounted, watch } from "vue";
 import MarkdownIt from "markdown-it";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { latexNormalize } from "@/utils/latexNormalize";
+import { imageVersion, getImageUrl, ensureImagesLoaded } from "@/utils/resolveImages";
 
 const props = defineProps<{
   content: string;
   sources?: any[];
   theme?: string;
+  /** Override KB/docs to search for images when sources aren't available */
+  imgKbId?: string;
+  imgDocId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -83,10 +87,25 @@ function renderInlineMathInHtml(inner: string): string {
 }
 
 const renderedHtml = computed(() => {
+  // Access imageVersion reactively — triggers re-render when images finish loading
+  void imageVersion.value;
   // Normalize LaTeX delimiters, wrap bare environments, fix \tag, etc.
   const processedContent = latexNormalize(props.content);
 
   let html = md.render(processedContent);
+
+  // Replace image src with resolved object URLs
+  html = html.replace(
+    /src="([^"]+)"/gi,
+    (_m: string, src: string) => {
+      const fn = src.replace(/\\/g, "/").split("/").pop()!;
+      const url = getImageUrl(fn);
+      if (url) {
+        return `src="${url}"`;
+      }
+      return _m;
+    }
+  );
 
   // Post-process: render $...$ inside HTML elements (e.g. <td> in tables)
   // that markdown-it skipped because html:true treats HTML content as literal.
@@ -126,6 +145,34 @@ const renderedHtml = computed(() => {
   return html;
 });
 
+// Trigger image loading
+function getCandidates() {
+  const list: { kb_id: string; doc_id: string }[] = [];
+  if (props.imgKbId && props.imgDocId) {
+    list.push({ kb_id: props.imgKbId, doc_id: props.imgDocId });
+  }
+  for (const s of props.sources || []) {
+    if (s.kb_id && s.doc_id) {
+      list.push({ kb_id: s.kb_id, doc_id: s.doc_id });
+    }
+  }
+  return list;
+}
+onMounted(() => ensureImagesLoaded(props.content, getCandidates()));
+watch(() => props.content, () => ensureImagesLoaded(props.content, getCandidates()));
+
+function onContentClick(e: MouseEvent) {
+  // Open external links in default browser
+  const link = (e.target as HTMLElement).closest("a") as HTMLAnchorElement | null;
+  if (link && link.href && !link.href.startsWith("http://localhost") && !link.href.startsWith(window.location.origin)) {
+    e.preventDefault();
+    e.stopPropagation();
+    import("@tauri-apps/plugin-shell").then(({ open }) => open(link.href).catch(() => window.open(link.href, "_blank")));
+    return;
+  }
+  onBadgeClick(e);
+}
+
 function onBadgeClick(e: MouseEvent) {
   const el = (e.target as HTMLElement).closest(
     "[data-source], [data-source-start]"
@@ -150,7 +197,7 @@ function onBadgeClick(e: MouseEvent) {
   <div
     class="markdown-renderer prose prose-sm max-w-none dark:prose-invert"
     :class="'md-theme-' + injectedTheme"
-    @click="onBadgeClick"
+    @click="onContentClick"
     v-html="renderedHtml"
   />
 </template>

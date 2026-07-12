@@ -13,6 +13,7 @@ def get_chunk_schema(embedding_dim: int) -> pa.Schema:
             pa.field("content", pa.string()),
             pa.field("chunk_index", pa.int32()),
             pa.field("page_number", pa.int32()),
+            pa.field("content_type", pa.string()),
             pa.field("chunk_strategy", pa.string()),
             pa.field("metadata_json", pa.string()),
             pa.field("vector", pa.list_(pa.float32(), embedding_dim)),

@@ -56,6 +56,9 @@ class BackendConfig(BaseSettings):
     vlm_enabled: bool = True
     vlm_concurrency: int = 5
 
+    # Web search
+    web_search_proxy: str = ""
+
     class Config:
         env_prefix = ""
         env_file = ".env"

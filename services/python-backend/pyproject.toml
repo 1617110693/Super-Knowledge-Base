@@ -17,6 +17,7 @@ dependencies = [
     "sse-starlette>=2.1",
     "pypdf>=4.0",
     "fastmcp>=1.0",
+    "duckduckgo-search>=8.1.1",
 ]
 
 [project.scripts]

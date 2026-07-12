@@ -399,11 +399,12 @@ _index_tasks: dict[str, dict] = {}
 _index_tasks_lock = threading.Lock()
 _seq_counter = 0  # monotonic sequence for all progress updates
 
-# Weight ranges for each stage (monotonically increasing)
+# Weight ranges for each stage (monotonically increasing).
+# VLM is now a post-processing phase that runs AFTER the main pipeline
+# completes, so it no longer has its own weight slot here.
 _STAGE_WEIGHTS = {
     "chunking": (0, 5),
-    "vlm": (5, 25),
-    "embedding": (25, 95),
+    "embedding": (5, 95),
     "storing": (95, 100),
 }
 
@@ -437,7 +438,8 @@ def _set_progress(task_id: str, stage: str, current: int, total: int, **extra):
         }
 
 
-def _mark_done(task_id: str, chunk_count: int = 0, embedding_model: str = "", embedding_dim: int = 0):
+def _mark_done(task_id: str, chunk_count: int = 0, embedding_model: str = "", embedding_dim: int = 0,
+               vlm_pending: int = 0):
     with _index_tasks_lock:
         _index_tasks[task_id] = {
             "stage": "done",
@@ -448,6 +450,10 @@ def _mark_done(task_id: str, chunk_count: int = 0, embedding_model: str = "", em
             "chunk_count": chunk_count,
             "embedding_model": embedding_model,
             "embedding_dim": embedding_dim,
+            "vlm_pending": vlm_pending,
+            "vlm_total": vlm_pending,
+            "vlm_status": "pending" if vlm_pending > 0 else "done",
+            "vlm_current": 0,
         }
 
 
@@ -461,6 +467,259 @@ def _mark_failed(task_id: str, error: str):
             "done": True,
             "error": error,
         }
+
+
+def _update_vlm_progress(task_id: str, vlm_current: int, vlm_total: int, vlm_status: str = "processing", **extra):
+    """Update VLM progress for a task that has already been marked done.
+    Does NOT regress the main percent (stays at 100)."""
+    with _index_tasks_lock:
+        prev = _index_tasks.get(task_id)
+        if prev is None:
+            return
+        _index_tasks[task_id] = {
+            **prev,
+            "vlm_status": vlm_status,
+            "vlm_current": vlm_current,
+            "vlm_total": vlm_total,
+            "vlm_pending": max(0, vlm_total - vlm_current),
+            **extra,
+        }
+
+
+def _run_vlm_phase(task_id: str, vlm_info: dict):
+    """Background VLM processing — runs AFTER the main indexing pipeline is done.
+    Uses a single shared httpx.Client connection pool across all concurrent threads
+    to avoid exhausting system socket resources."""
+    import time as _time
+    doc_dir = Path(vlm_info["doc_dir"])
+    mm_items = vlm_info["mm_items"]
+    image_descriptions = vlm_info["image_descriptions"]
+    image_count = vlm_info["image_count"]
+    vlm_api_base = vlm_info["vlm_api_base"]
+    vlm_api_key = vlm_info["vlm_api_key"]
+    vlm_model = vlm_info["vlm_model"]
+    vlm_concurrency = vlm_info["vlm_concurrency"]
+
+    try:
+        from ..vision import describe_image
+        import httpx
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        img_dir = doc_dir / "images"
+        cached_meta = _load_image_meta(doc_dir)
+        vlm_done = image_count - vlm_info.get("pending_count", 0)
+        new_meta_entries: dict[str, tuple[str, dict]] = {}
+
+        # Identify pending images
+        pending: list[dict] = []
+        for mi in mm_items:
+            if mi["type"] != "image":
+                continue
+            img_name = mi.get("img_path", "").split("/")[-1]
+            if not img_name or not (img_dir / img_name).exists():
+                continue
+            if not _is_valid_description(image_descriptions.get(img_name, ("",))[0]):
+                pending.append(mi)
+
+        if not pending:
+            _update_vlm_progress(task_id, image_count, image_count, "done")
+            return
+
+        _update_vlm_progress(task_id, vlm_done, image_count, "processing")
+
+        MAX_VLM_RETRIES = 3
+        VLM_REQUEST_TIMEOUT = 30.0
+        VLM_TOTAL_TIMEOUT = 120.0  # per-image cap including retries
+
+        # Create ONE shared httpx client with a bounded connection pool.
+        # All concurrent _describe_one calls share this pool, preventing
+        # socket resource exhaustion when multiple documents/images are
+        # processed in parallel.
+        with httpx.Client(
+            timeout=VLM_REQUEST_TIMEOUT,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        ) as http_client:
+
+            def _describe_one(mi: dict) -> tuple[str, str, dict, str]:
+                img_name = mi.get("img_path", "").split("/")[-1]
+                img_file = img_dir / img_name
+                fmt = img_file.suffix.lstrip(".") or "png"
+                caption = mi.get("text", "")
+                last_error = ""
+                deadline = _time.monotonic() + VLM_TOTAL_TIMEOUT
+                for attempt in range(MAX_VLM_RETRIES):
+                    if _time.monotonic() > deadline:
+                        if not last_error:
+                            last_error = f"total timeout ({VLM_TOTAL_TIMEOUT}s)"
+                        break
+                    try:
+                        desc, entity = describe_image(
+                            img_file.read_bytes(), fmt,
+                            vlm_api_base=vlm_api_base, vlm_api_key=vlm_api_key,
+                            vlm_model=vlm_model, caption=caption, http=http_client,
+                        )
+                        if _is_valid_description(desc):
+                            return img_name, desc, entity, ""
+                        last_error = f"empty/invalid description (attempt {attempt+1})"
+                    except Exception as e:
+                        last_error = str(e)
+                    if attempt < MAX_VLM_RETRIES - 1:
+                        _time.sleep(1.0 * (attempt + 1))
+                return img_name, caption or "Image", {"entity_name": img_name, "entity_type": "image", "summary": caption}, last_error
+
+            vlm_lock = threading.Lock()
+            workers = min(max(1, vlm_concurrency), len(pending))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(_describe_one, mi): mi for mi in pending}
+                for future in as_completed(futures):
+                    mi = futures[future]
+                    img_name, desc, entity, err = future.result()
+                    if err:
+                        import sys
+                        print(f"[index] VLM background failed for {img_name}: {err}", file=sys.stderr)
+                    image_descriptions[img_name] = (desc, entity)
+                    new_meta_entries[img_name] = (desc, entity)
+                    with vlm_lock:
+                        vlm_done += 1
+                        _update_vlm_progress(task_id, vlm_done, image_count, "processing")
+                    # Yield GIL briefly so uvicorn's asyncio loop can process
+                    # pending HTTP requests instead of being starved by VLM threads
+                    _time.sleep(0)
+
+        # Write descriptions
+        if new_meta_entries:
+            _save_image_meta_batch(doc_dir, new_meta_entries)
+
+        # Retry: second pass for any still-missing descriptions
+        missed = []
+        for img_name, (desc, _) in image_descriptions.items():
+            if not _is_valid_description(desc):
+                missed.append(img_name)
+        if missed:
+            import sys
+            print(f"[index] VLM background retrying {len(missed)} images...", file=sys.stderr)
+            retry_items = [mi for mi in pending if mi.get("img_path", "").split("/")[-1] in missed]
+            if retry_items:
+                with httpx.Client(
+                    timeout=VLM_REQUEST_TIMEOUT,
+                    limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+                ) as retry_http:
+                    def _retry_one(mi: dict) -> tuple[str, str, dict, str]:
+                        img_name = mi.get("img_path", "").split("/")[-1] or f"image_{mi.get('page_idx','')}"
+                        img_file = img_dir / img_name
+                        fmt = img_file.suffix.lstrip(".") or "png"
+                        caption = mi.get("text", "")
+                        last_error = ""
+                        deadline = _time.monotonic() + VLM_TOTAL_TIMEOUT
+                        for attempt in range(MAX_VLM_RETRIES):
+                            if _time.monotonic() > deadline:
+                                break
+                            try:
+                                desc, entity = describe_image(
+                                    img_file.read_bytes(), fmt,
+                                    vlm_api_base=vlm_api_base, vlm_api_key=vlm_api_key,
+                                    vlm_model=vlm_model, caption=caption, http=retry_http,
+                                )
+                                if _is_valid_description(desc):
+                                    return img_name, desc, entity, ""
+                                last_error = f"empty/invalid description (attempt {attempt+1})"
+                            except Exception as e:
+                                last_error = str(e)
+                            if attempt < MAX_VLM_RETRIES - 1:
+                                _time.sleep(1.0 * (attempt + 1))
+                        return img_name, "", {"entity_name": img_name, "entity_type": "image", "summary": ""}, last_error
+
+                    retry_meta: dict[str, tuple[str, dict]] = {}
+                    retry_workers = min(max(1, vlm_concurrency), len(retry_items))
+                    with ThreadPoolExecutor(max_workers=retry_workers) as retry_ex:
+                        retry_futures = {retry_ex.submit(_retry_one, mi): mi for mi in retry_items}
+                        for future in as_completed(retry_futures):
+                            mi = retry_futures[future]
+                            img_name, desc, entity, err = future.result()
+                            if err:
+                                print(f"[index] VLM background retry failed for {img_name}: {err}", file=sys.stderr)
+                            if _is_valid_description(desc):
+                                image_descriptions[img_name] = (desc, entity)
+                                retry_meta[img_name] = (desc, entity)
+                            _time.sleep(0)  # yield GIL
+                    if retry_meta:
+                        _save_image_meta_batch(doc_dir, retry_meta)
+
+        still_missed = sum(1 for d in image_descriptions.values() if not _is_valid_description(d[0]))
+        if still_missed > 0:
+            _update_vlm_progress(task_id, image_count, image_count, "done",
+                                 vlm_error=f"{still_missed} images without valid description")
+        else:
+            _update_vlm_progress(task_id, image_count, image_count, "done")
+
+    except Exception as e:
+        import sys, traceback
+        print(f"[index] VLM background phase failed for {task_id}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        _update_vlm_progress(task_id, 0, image_count, "error", vlm_error=str(e))
+
+
+def _prepare_tagged_markdown(markdown_content: str, doc_dir: Path, doc_name: str) -> tuple[str, int]:
+    """Prepare markdown with page markers and split-document offset adjustment.
+
+    This is a standalone step that:
+    1. Computes the split-document page offset (for multi-part PDFs)
+    2. Injects [PAGE:N|POS] markers into the markdown
+    3. Adjusts marker page numbers for split parts
+
+    Returns (tagged_markdown, split_offset).
+    """
+    split_offset = _compute_page_offset(doc_dir, doc_name)
+    tagged_md = _inject_page_markers(markdown_content, doc_dir)
+    if split_offset > 0:
+        tagged_md = _PAGE_MARKER_RE.sub(
+            lambda m: (
+                f"[PAGE:{int(m.group(1)) + split_offset}|{m.group(2)}]"
+                if m.group(2) is not None
+                else f"[PAGE:{int(m.group(1)) + split_offset}]"
+            ),
+            tagged_md,
+        )
+    return tagged_md, split_offset
+
+
+def _read_user_page_offset(doc_dir: Path) -> int:
+    """Read user-set page_offset from metadata.json (real-page adjustment)."""
+    meta_path = doc_dir / "metadata.json"
+    if not meta_path.exists():
+        return 0
+    try:
+        import json as _json
+        doc_meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+        return doc_meta.get("page_offset", 0)
+    except Exception:
+        return 0
+
+
+def _apply_page_offsets_to_mm_chunks(mm_chunks: list, split_offset: int, user_page_offset: int):
+    """Apply split and user page offsets to multimodal chunks.
+
+    Multimodal chunks use raw page_idx (0-based); converts to 1-based virtual pages,
+    adds split_offset, then applies user_page_offset so numbering is consistent
+    with text chunks.
+    """
+    for c in mm_chunks:
+        for key in ("page", "page_start", "page_end"):
+            val = c.metadata.get(key, 0)
+            if isinstance(val, int):
+                c.metadata[key] = val + 1 + split_offset
+        if split_offset > 0:
+            c.content = re.sub(
+                r"Page:\s*(\d+)",
+                lambda m: f"Page: {int(m.group(1)) + split_offset}",
+                c.content,
+            )
+    if user_page_offset:
+        for c in mm_chunks:
+            for key in ("page", "page_start", "page_end"):
+                val = c.metadata.get(key, 0)
+                if isinstance(val, int):
+                    c.metadata[key] = val - user_page_offset
 
 
 def _run_index(req: "IndexRequest", task_id: str):
@@ -487,20 +746,8 @@ def _run_index(req: "IndexRequest", task_id: str):
 
         doc_dir = Path(config.knowledge_base_data_dir) / f"kb_{req.kb_id}" / "docs" / req.doc_id
 
-        # Compute split-document offset BEFORE injecting markers
-        split_offset = _compute_page_offset(doc_dir, req.doc_name)
-
-        # Inject [PAGE:N] markers into markdown so chunks carry page info
-        tagged_md = _inject_page_markers(req.markdown_content, doc_dir)
-        if split_offset > 0:
-            tagged_md = _PAGE_MARKER_RE.sub(
-                lambda m: (
-                    f"[PAGE:{int(m.group(1)) + split_offset}|{m.group(2)}]"
-                    if m.group(2) is not None
-                    else f"[PAGE:{int(m.group(1)) + split_offset}]"
-                ),
-                tagged_md,
-            )
+        # ── Step 1: Prepare markdown with page markers + split offset ──
+        tagged_md, split_offset = _prepare_tagged_markdown(req.markdown_content, doc_dir, req.doc_name)
 
         chunker = Chunker.create(strategy, chunk_size, chunk_overlap)
         chunks = chunker.chunk(
@@ -541,19 +788,14 @@ def _run_index(req: "IndexRequest", task_id: str):
                         _split_chunks.append(nc)
         chunks = _split_chunks if _split_chunks else chunks
 
-        # Read user-set page_offset from metadata.json (real-page adjustment)
-        meta_path = doc_dir / "metadata.json"
-        user_page_offset = 0
-        if meta_path.exists():
-            try:
-                import json as _json3
-                doc_meta = _json3.loads(meta_path.read_text(encoding="utf-8"))
-                user_page_offset = doc_meta.get("page_offset", 0)
-            except Exception:
-                pass
+        # Merge adjacent small chunks produced by PAGE-marker splitting
+        from ..chunker import RecursiveChunker
+        before = len(chunks)
+        chunks = RecursiveChunker._merge_small_chunks(chunks)
+        after = len(chunks)
 
-        # Only user page_offset here — split_offset is already baked
-        # into the PAGE markers (applied during _inject_page_markers).
+        # ── Step 2: Read user page offset ──
+        user_page_offset = _read_user_page_offset(doc_dir)
 
         # Extract page ranges from markers (for non-split chunks)
         last_page = 0
@@ -604,8 +846,10 @@ def _run_index(req: "IndexRequest", task_id: str):
                         c.metadata["start_char"] = idx
                         _search_from = idx + len(c.content)
 
-        # ── Multimodal chunks + VLM ──
+        # ── Multimodal chunks (non-blocking — VLM runs in background after indexing) ──
         mm_chunks = []
+        vlm_pending_count = 0
+        _vlm_info: dict = {}
         cl_path = doc_dir / "content_list.json"
         if cl_path.exists() and config.extract_multimodal:
             try:
@@ -617,138 +861,41 @@ def _run_index(req: "IndexRequest", task_id: str):
                 image_descriptions: dict[str, tuple[str, dict]] = {}
                 has_vlm = config.vlm_enabled and bool(config.vlm_api_base.strip() and config.vlm_model.strip())
                 image_count = sum(1 for mi in mm_items if mi["type"] == "image")
+
+                # Load cached descriptions only (non-blocking — no VLM API calls during indexing)
                 if has_vlm and image_count > 0:
-                    from ..vision import describe_image
-                    import httpx
-                    from concurrent.futures import ThreadPoolExecutor, as_completed
                     img_dir = doc_dir / "images"
                     cached_meta = _load_image_meta(doc_dir)
                     cached_count = 0
-                    vlm_done = 0
-                    vlm_lock = threading.Lock()
-                    new_meta_entries: dict[str, tuple[str, dict]] = {}
-
-                    # Separate cached from pending
-                    pending: list[dict] = []
                     for mi in mm_items:
                         if mi["type"] != "image":
                             continue
                         img_name = mi.get("img_path", "").split("/")[-1]
-                        if not img_name:
-                            continue
-                        if not (img_dir / img_name).exists():
+                        if not img_name or not (img_dir / img_name).exists():
                             continue
                         if _is_valid_description(cached_meta.get(img_name, {}).get("description", "")):
                             cached = cached_meta[img_name]
                             image_descriptions[img_name] = (cached["description"], cached.get("entity_info", {}))
-                            vlm_done += 1
                             cached_count += 1
-                            _set_progress(task_id, "vlm", vlm_done, image_count)
-                        else:
-                            pending.append(mi)
 
-                    # Process pending images concurrently (with retry)
-                    if pending:
-                        MAX_VLM_RETRIES = 3
-
-                        def _describe_one(mi: dict, api_base: str, api_key: str, model: str) -> tuple[str, str, dict, str]:
-                            img_name = mi.get("img_path", "").split("/")[-1]
-                            img_file = img_dir / img_name
-                            fmt = img_file.suffix.lstrip(".") or "png"
-                            caption = mi.get("text", "")
-                            last_error = ""
-                            for attempt in range(MAX_VLM_RETRIES):
-                                try:
-                                    with httpx.Client(timeout=60.0) as client:
-                                        desc, entity = describe_image(
-                                            img_file.read_bytes(), fmt,
-                                            vlm_api_base=api_base, vlm_api_key=api_key,
-                                            vlm_model=model, caption=caption, http=client,
-                                        )
-                                    if _is_valid_description(desc):
-                                        return img_name, desc, entity, ""
-                                    last_error = f"empty/invalid description (attempt {attempt+1})"
-                                except Exception as e:
-                                    last_error = str(e)
-                                if attempt < MAX_VLM_RETRIES - 1:
-                                    import time as _time
-                                    _time.sleep(1.0 * (attempt + 1))  # backoff
-                            # All retries exhausted
-                            return img_name, caption or "Image", {"entity_name": img_name, "entity_type": "image", "summary": caption}, last_error
-
-                        workers = min(max(1, config.vlm_concurrency), len(pending))
-                        with ThreadPoolExecutor(max_workers=workers) as executor:
-                            futures = {
-                                executor.submit(
-                                    _describe_one, mi,
-                                    config.vlm_api_base, config.vlm_api_key, config.vlm_model,
-                                ): mi
-                                for mi in pending
-                            }
-                            for future in as_completed(futures):
-                                mi = futures[future]
-                                img_name, desc, entity, err = future.result()
-                                if err:
-                                    import sys
-                                    print(f"[index] VLM failed for {img_name}: {err}", file=sys.stderr)
-                                image_descriptions[img_name] = (desc, entity)
-                                new_meta_entries[img_name] = (desc, entity)
-                                with vlm_lock:
-                                    vlm_done += 1
-                                    _set_progress(task_id, "vlm", vlm_done, image_count)
-
-                    # Write all descriptions at once
-                    if new_meta_entries:
-                        _save_image_meta_batch(doc_dir, new_meta_entries)
+                    vlm_pending_count = image_count - cached_count
                     if cached_count > 0:
                         import sys
                         print(f"[index] Reused {cached_count} cached VLM descriptions", file=sys.stderr)
 
-                    # Second pass: retry any images that still have no valid description.
-                    # Uses a separate executor (the first-pass executor has shut down).
-                    # Does NOT increment vlm_done — image_count is fixed at first pass.
-                    missed = []
-                    for img_name, (desc, _) in image_descriptions.items():
-                        if not _is_valid_description(desc):
-                            missed.append(img_name)
-                    if missed:
-                        import sys
-                        print(f"[index] Retrying {len(missed)} images that have no valid description...", file=sys.stderr)
-                        retry_meta: dict[str, tuple[str, dict]] = {}
-                        retry_items = [mi for mi in pending if mi.get("img_path", "").split("/")[-1] in missed]
-                        if retry_items:
-                            retry_workers = min(max(1, config.vlm_concurrency), len(retry_items))
-                            retry_done = 0
-                            with ThreadPoolExecutor(max_workers=retry_workers) as retry_ex:
-                                retry_futures = {
-                                    retry_ex.submit(
-                                        _describe_one, mi,
-                                        config.vlm_api_base, config.vlm_api_key, config.vlm_model,
-                                    ): mi
-                                    for mi in retry_items
-                                }
-                                for future in as_completed(retry_futures):
-                                    mi = retry_futures[future]
-                                    img_name = mi.get("img_path", "").split("/")[-1] or f"image_{mi.get('page_idx','')}"
-                                    desc, entity, err = future.result()
-                                    if err:
-                                        print(f"[index] Retry VLM failed for {img_name}: {err}", file=sys.stderr)
-                                    if _is_valid_description(desc):
-                                        image_descriptions[img_name] = (desc, entity)
-                                        retry_meta[img_name] = (desc, entity)
-                                    retry_done += 1
-                                    _set_progress(task_id, "vlm", image_count, image_count,
-                                                  retry=f"{retry_done}/{len(retry_items)}")
-                            if retry_meta:
-                                _save_image_meta_batch(doc_dir, retry_meta)
-                        still_missed = sum(
-                            1 for d in image_descriptions.values()
-                            if not _is_valid_description(d[0])
-                        )
-                        print(f"[index] After retry: {still_missed} images still without valid description", file=sys.stderr)
+                    if vlm_pending_count > 0:
+                        _vlm_info = {
+                            "doc_dir": str(doc_dir),
+                            "mm_items": mm_items,
+                            "image_descriptions": dict(image_descriptions),
+                            "image_count": image_count,
+                            "pending_count": vlm_pending_count,
+                            "vlm_api_base": config.vlm_api_base,
+                            "vlm_api_key": config.vlm_api_key,
+                            "vlm_model": config.vlm_model,
+                            "vlm_concurrency": config.vlm_concurrency,
+                        }
 
-                # Transition: VLM done → preparing multimodal chunks + embedding
-                _set_progress(task_id, "embedding", 0, 0)
                 mm_chunks = multimodal_chunks_from_content_list(
                     mm_items,
                     metadata={"doc_id": req.doc_id, "doc_name": req.doc_name},
@@ -760,29 +907,15 @@ def _run_index(req: "IndexRequest", task_id: str):
 
         all_chunks = chunks + mm_chunks
 
-        # Multimodal chunks use raw page_idx (0-based); convert to 1-based
-        # virtual pages, add split_offset, then apply user_page_offset so
-        # numbering is consistent with text chunks.
-        for c in mm_chunks:
-            for key in ("page", "page_start", "page_end"):
-                val = c.metadata.get(key, 0)
-                if isinstance(val, int):
-                    c.metadata[key] = val + 1 + split_offset
-            if split_offset > 0:
-                c.content = re.sub(
-                    r"Page:\s*(\d+)",
-                    lambda m: f"Page: {int(m.group(1)) + split_offset}",
-                    c.content,
-                )
-        if user_page_offset:
-            for c in mm_chunks:
-                for key in ("page", "page_start", "page_end"):
-                    val = c.metadata.get(key, 0)
-                    if isinstance(val, int):
-                        c.metadata[key] = val - user_page_offset
+        # ── Step 3: Apply page offsets to multimodal chunks ──
+        _apply_page_offsets_to_mm_chunks(mm_chunks, split_offset, user_page_offset)
 
         if not all_chunks:
-            _mark_done(task_id, 0, config.embedding_model, embedding_dim)
+            _mark_done(task_id, 0, config.embedding_model, embedding_dim, vlm_pending_count)
+            # Start VLM background phase if needed (even with 0 chunks, we still want descriptions)
+            if _vlm_info:
+                _vlm_info["pending_count"] = vlm_pending_count
+                threading.Thread(target=_run_vlm_phase, args=(task_id, _vlm_info), daemon=True).start()
             return
 
         # ── Embedding with progress ──
@@ -791,28 +924,36 @@ def _run_index(req: "IndexRequest", task_id: str):
         batch_size = 50
         all_vectors = []
 
-        for i in range(0, total, batch_size):
-            batch = texts[i:i + batch_size]
-            batch_vecs = embedder.embed(batch)
-            all_vectors.extend(batch_vecs)
-            embedded = min(i + batch_size, total)
-            _set_progress(task_id, "embedding", embedded, total)
-
-        embedder.close()
+        try:
+            for i in range(0, total, batch_size):
+                batch = texts[i:i + batch_size]
+                batch_vecs = embedder.embed(batch)
+                all_vectors.extend(batch_vecs)
+                embedded = min(i + batch_size, total)
+                _set_progress(task_id, "embedding", embedded, total)
+        finally:
+            embedder.close()
 
         # ── Store ──
         _set_progress(task_id, "storing", 0, 0)
-        count = db.insert_chunks(
-            kb_id=req.kb_id,
-            chunks=all_chunks,
-            vectors=all_vectors,
-            doc_id=req.doc_id,
-            doc_name=req.doc_name or req.doc_id,
-            chunk_strategy=strategy,
-        )
-        db.close()
+        try:
+            count = db.insert_chunks(
+                kb_id=req.kb_id,
+                chunks=all_chunks,
+                vectors=all_vectors,
+                doc_id=req.doc_id,
+                doc_name=req.doc_name or req.doc_id,
+                chunk_strategy=strategy,
+            )
+        finally:
+            db.close()
 
-        _mark_done(task_id, count, config.embedding_model, embedding_dim)
+        _mark_done(task_id, count, config.embedding_model, embedding_dim, vlm_pending_count)
+
+        # ── Start VLM background phase if there are pending images ──
+        if _vlm_info:
+            _vlm_info["pending_count"] = vlm_pending_count
+            threading.Thread(target=_run_vlm_phase, args=(task_id, _vlm_info), daemon=True).start()
 
     except Exception as e:
         import sys, traceback
@@ -861,6 +1002,36 @@ def index_progress(task_id: str):
     if task is None:
         raise HTTPException(404, f"Task not found: {task_id}")
     return task
+
+
+@router.delete("/index/task/{task_id}")
+def cancel_index_task(task_id: str):
+    """Cancel a running indexing task. Marks it as failed with a cancellation message."""
+    with _index_tasks_lock:
+        task = _index_tasks.get(task_id)
+    if task is None:
+        raise HTTPException(404, f"Task not found: {task_id}")
+    if task.get("done"):
+        return {"status": "already_completed", "message": "Task was already done"}
+    _mark_failed(task_id, "Cancelled by user")
+    return {"status": "cancelled", "task_id": task_id}
+
+
+@router.get("/index/vlm-status/{task_id}")
+def index_vlm_status(task_id: str):
+    """Get VLM post-processing status for a completed indexing task."""
+    with _index_tasks_lock:
+        task = _index_tasks.get(task_id)
+    if task is None:
+        raise HTTPException(404, f"Task not found: {task_id}")
+    return {
+        "vlm_status": task.get("vlm_status", "done"),
+        "vlm_current": task.get("vlm_current", 0),
+        "vlm_total": task.get("vlm_total", 0),
+        "vlm_pending": task.get("vlm_pending", 0),
+        "vlm_error": task.get("vlm_error", ""),
+        "chunk_count": task.get("chunk_count", 0),
+    }
 
 
 @router.post("/delete-chunks")

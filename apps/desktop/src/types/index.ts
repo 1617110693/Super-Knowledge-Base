@@ -67,7 +67,7 @@ export interface ToolCall {
 export interface ChatSettings {
   selectedKbIds: string[];
   contextWindow: number;
-  webSearchEnabled?: boolean;
+  webSearchMode?: "off" | "smart" | "on";
 }
 
 export interface ChatMessage {
@@ -173,9 +173,10 @@ export interface AppSettings {
   max_document_chars: number;
   max_chunk_chars: number;
   // Web search
-  web_search_provider: "duckduckgo" | "tavily" | "searxng";
+  web_search_provider: "bing" | "duckduckgo" | "tavily" | "searxng";
   tavily_api_key: string;
   searxng_base_url: string;
+  web_search_proxy: string;
   web_search_max_results: number;
   fontSize: number;
   markdownTheme?: string;
@@ -216,9 +217,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   max_search_result_chars: 2000,
   max_document_chars: 30000,
   max_chunk_chars: 800,
-  web_search_provider: "duckduckgo",
+  web_search_provider: "bing",
   tavily_api_key: "",
   searxng_base_url: "",
+  web_search_proxy: "",
   web_search_max_results: 5,
   fontSize: 15,
   markdownTheme: "academic",

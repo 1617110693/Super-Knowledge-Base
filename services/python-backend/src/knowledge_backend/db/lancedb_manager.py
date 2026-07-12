@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from typing import List, Optional
 
+import pyarrow as pa
+
 import lancedb
 
 from ..chunker import Chunk
@@ -75,6 +77,11 @@ class LanceDBManager:
         if table is None:
             raise ValueError(f"Knowledge base table not found: {kb_id}")
 
+        # Ensure content_type column exists BEFORE delete_document_chunks
+        # (delete creates a pending transaction that would conflict with
+        # add_columns' schema change)
+        self._ensure_column(table, "content_type", pa.string())
+
         # Delete existing chunks for this document to prevent duplicates
         self.delete_document_chunks(kb_id, doc_id)
 
@@ -95,6 +102,7 @@ class LanceDBManager:
                     "content": chunk.content,
                     "chunk_index": chunk.chunk_index,
                     "page_number": chunk.metadata.get("page", 0),
+                    "content_type": chunk.metadata.get("content_type", "text"),
                     "chunk_strategy": chunk_strategy,
                     "metadata_json": json.dumps(chunk.metadata),
                     "vector": [float(v) for v in vector],
@@ -102,7 +110,22 @@ class LanceDBManager:
             )
 
         table.add(rows)
+        # Yield GIL so other threads can make progress
+        import time
+        time.sleep(0)
         return len(rows)
+
+    def _ensure_column(self, table, column_name: str, column_type):
+        """Add a column to a LanceDB table if it doesn't already exist.
+        Uses LanceDB's built-in schema evolution when available. Silently
+        skips if the column already exists or the operation is unsupported."""
+        try:
+            existing_names = [f.name for f in table.schema]
+            if column_name not in existing_names:
+                table.add_columns([pa.field(column_name, column_type)])
+                print(f"[lancedb] Added column '{column_name}' to table", flush=True)
+        except Exception as e:
+            print(f"[lancedb] Failed to add column '{column_name}': {e}", flush=True)
 
     def search(
         self,

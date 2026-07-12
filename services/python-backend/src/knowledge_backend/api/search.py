@@ -1,4 +1,6 @@
 """Search endpoint."""
+import json
+import subprocess
 import time
 from pathlib import Path
 
@@ -297,19 +299,58 @@ def get_chunk_by_index(req: GetChunkRequest):
         db.close()
 
 
-class GetChunksByPageRequest(BaseModel):
-    kb_id: str
-    doc_id: str
-    page: int
+class DuckDuckGoSearchRequest(BaseModel):
+    query: str
+    max_results: int = 5
+    proxy: str = ""
 
 
-@router.post("/get-chunks-by-page")
-def get_chunks_by_page(req: GetChunksByPageRequest):
-    """Fetch all chunks on a specific page number of a document."""
+@router.post("/duckduckgo-search")
+def duckduckgo_search(req: DuckDuckGoSearchRequest):
+    """Search via DuckDuckGo using the duckduckgo_search library."""
+    from duckduckgo_search import DDGS
+
     config = get_config()
-    db = LanceDBManager(Path(config.knowledge_base_data_dir) / "lancedb_data")
+    proxy = req.proxy or config.web_search_proxy or None
+
     try:
-        chunks = db.get_chunks_by_page(req.kb_id, req.doc_id, req.page)
-        return {"kb_id": req.kb_id, "doc_id": req.doc_id, "page": req.page, "chunks": chunks, "count": len(chunks)}
-    finally:
-        db.close()
+        ddgs = DDGS(proxy=proxy, timeout=20)
+        results = list(ddgs.text(req.query, max_results=min(req.max_results, 10)))
+        return {
+            "results": [
+                {"title": r["title"], "url": r.get("href", ""), "content": r.get("body", "")}
+                for r in results
+            ],
+            "total": len(results),
+        }
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=502, detail=f"DuckDuckGo search failed: {e}")
+
+
+class BingSearchRequest(BaseModel):
+    query: str
+    max_results: int = 5
+
+
+@router.post("/bing-search")
+def bing_search(req: BingSearchRequest):
+    """Search via Bing CN using a Node.js child process.
+    Node.js is used because Bing's edge-CDN identifies Python/rustls TLS
+    fingerprints as non-browser traffic and redirects to the homepage."""
+    script = Path(__file__).parent.parent / "bing_search.js"
+    if not script.exists():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Bing search script not found: {script}")
+    try:
+        proc = subprocess.run(
+            ["node", str(script), req.query, str(min(req.max_results, 10))],
+            capture_output=True, timeout=20,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.decode("utf-8", errors="replace").strip())
+        results = json.loads(proc.stdout.decode("utf-8"))
+        return {"results": results, "total": len(results)}
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=502, detail=f"Bing search failed: {e}")

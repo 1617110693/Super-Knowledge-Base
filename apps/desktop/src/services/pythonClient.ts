@@ -78,6 +78,11 @@ export interface IndexProgress {
   embedding_model?: string;
   embedding_dim?: number;
   error?: string;
+  vlm_pending?: number;
+  vlm_total?: number;
+  vlm_status?: string;
+  vlm_current?: number;
+  vlm_error?: string;
 }
 
 export async function indexDocument(params: {
@@ -101,8 +106,13 @@ export async function pollIndexProgress(taskId: string): Promise<IndexProgress> 
   return pythonFetch<IndexProgress>(`/index/progress/${taskId}`);
 }
 
-export async function waitForIndex(taskId: string, onProgress?: (p: IndexProgress) => void): Promise<IndexProgress> {
-  while (true) {
+export async function waitForIndex(
+  taskId: string,
+  onProgress?: (p: IndexProgress) => void,
+  timeoutMs: number = 30 * 60 * 1000,  // 30-minute timeout
+): Promise<IndexProgress> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     const p = await pollIndexProgress(taskId);
     onProgress?.(p);
     if (p.done) {
@@ -111,6 +121,39 @@ export async function waitForIndex(taskId: string, onProgress?: (p: IndexProgres
     }
     await new Promise(r => setTimeout(r, 500));
   }
+  throw new Error(`Indexing timed out after ${timeoutMs / 1000}s`);
+}
+
+export async function cancelIndexTask(taskId: string): Promise<{ status: string }> {
+  return pythonFetch<{ status: string }>(`/index/task/${taskId}`, { method: "DELETE" });
+}
+
+export interface VlmStatus {
+  vlm_status: string;
+  vlm_current: number;
+  vlm_total: number;
+  vlm_pending: number;
+  vlm_error: string;
+  chunk_count: number;
+}
+
+export async function pollVlmStatus(taskId: string): Promise<VlmStatus> {
+  return pythonFetch<VlmStatus>(`/index/vlm-status/${taskId}`);
+}
+
+export async function waitForVlmComplete(
+  taskId: string,
+  onProgress?: (v: VlmStatus) => void,
+  timeoutMs = 30 * 60 * 1000,
+): Promise<VlmStatus> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const v = await pollVlmStatus(taskId);
+    onProgress?.(v);
+    if (v.vlm_status === "done" || v.vlm_status === "error") return v;
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  throw new Error(`VLM processing timed out after ${timeoutMs / 1000}s`);
 }
 
 // ── Chat ──

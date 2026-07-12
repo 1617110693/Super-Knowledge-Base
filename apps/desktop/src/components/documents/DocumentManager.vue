@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Plus, Trash2, RefreshCw, Eye, FileText, FolderOpen } from "lucide-vue-next";
+import IndexingStatusDialog from "@/components/common/IndexingStatusDialog.vue";
 import { useKBStore } from "@/stores/kbStore";
 import { ElMessage, ElMessageBox } from "element-plus";
 import type { Document } from "@/types";
@@ -15,6 +16,9 @@ const store = useKBStore();
 
 const selectedDoc = ref<Document | null>(null);
 const uploadLoading = ref(false);
+// Status dialog
+const statusDialogVisible = ref(false);
+const statusDialogDoc = ref<Document | null>(null);
 
 const documents = computed(() => store.documents);
 const indexingProgress = computed(() => store.indexingProgress);
@@ -48,8 +52,33 @@ function getStatusType(status: string): string {
   }
 }
 
-function getProgress(doc: Document): { percent: number; stage: string } | null {
+function getProgress(doc: Document): { percent: number; stage: string; current: number; total: number; taskId?: string; vlm_status?: string; vlm_current?: number; vlm_total?: number; vlm_error?: string; error?: string } | null {
   return indexingProgress.value[doc.id] ?? null;
+}
+
+function openStatusDialog(doc: Document) {
+  statusDialogDoc.value = doc;
+  statusDialogVisible.value = true;
+}
+
+function stageLabel(stage: string): string {
+  switch (stage) {
+    case "starting": return "启动中";
+    case "downloading": return "下载中";
+    case "parsing": return "解析中";
+    case "chunking": return "分块中";
+    case "embedding": return "向量化中";
+    case "storing": return "存储中";
+    case "done": return "完成";
+    case "error": return "失败";
+    default: return stage;
+  }
+}
+
+function handleStatusDialogRetry() {
+  if (statusDialogDoc.value) {
+    store.reindexDocument(props.kbId, statusDialogDoc.value.id, statusDialogDoc.value.name);
+  }
 }
 
 async function handleUpload() {
@@ -178,20 +207,43 @@ function navigateToView(doc: Document) {
 
       <el-table-column label="Status" width="110" align="center">
         <template #default="{ row }: { row: Document }">
-          <div class="status-cell">
-            <el-tag :type="getStatusType(row.parse_status)" size="small" effect="plain">
+          <div class="status-cell" @click.stop="openStatusDialog(row)">
+            <el-tag
+              v-if="getProgress(row)?.stage === 'error'"
+              type="danger"
+              size="small"
+              effect="plain"
+              style="cursor: pointer"
+            >
+              error
+            </el-tag>
+            <el-tag
+              v-else
+              :type="getStatusType(row.parse_status)"
+              size="small"
+              effect="plain"
+              style="cursor: pointer"
+            >
               {{ row.parse_status }}
             </el-tag>
             <div
-              v-if="getProgress(row)"
+              v-if="getProgress(row) && getProgress(row)!.stage !== 'error'"
               class="index-progress"
-              :title="`${getProgress(row)!.stage}: ${getProgress(row)!.percent.toFixed(0)}%`"
+              :title="`${stageLabel(getProgress(row)!.stage)}: ${getProgress(row)!.percent.toFixed(0)}% — 点击查看详情`"
+              style="cursor: pointer"
             >
               <el-progress
                 :percentage="Math.round(getProgress(row)!.percent)"
                 :stroke-width="4"
                 size="small"
               />
+            </div>
+            <div
+              v-else-if="getProgress(row)?.stage === 'error'"
+              class="index-error-text"
+              style="cursor: pointer"
+            >
+              <span class="text-red-500 text-xs">点击查看错误</span>
             </div>
           </div>
         </template>
@@ -230,6 +282,15 @@ function navigateToView(doc: Document) {
         </template>
       </el-table-column>
     </el-table>
+
+    <!-- Status Detail Dialog -->
+    <IndexingStatusDialog
+      v-model:visible="statusDialogVisible"
+      :doc="statusDialogDoc"
+      :progress="statusDialogDoc ? getProgress(statusDialogDoc) : null"
+      :kb-id="props.kbId"
+      @retry="handleStatusDialogRetry"
+    />
   </div>
 </template>
 

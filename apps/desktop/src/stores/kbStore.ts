@@ -36,7 +36,7 @@ export const useKBStore = defineStore("kb", () => {
   const documents = ref<Document[]>([]);
   const loading = ref(false);
   const error = ref<string | null>(null);
-  const indexingProgress = ref<Record<string, { percent: number; stage: string; current: number; total: number }>>({});
+  const indexingProgress = ref<Record<string, { percent: number; stage: string; current: number; total: number; taskId?: string; vlm_status?: string; vlm_current?: number; vlm_total?: number; vlm_error?: string; error?: string }>>({});
   const viewMode = ref<ViewMode>((localStorage.getItem("kbViewMode") as ViewMode) || "card");
   const sortMode = ref<SortMode>((localStorage.getItem("kbSortMode") as SortMode) || "manual");
 
@@ -139,24 +139,42 @@ export const useKBStore = defineStore("kb", () => {
       await Promise.all(parseOrder.map(async (d) => {
         try {
           await tauriBridge.startParsing(kbId, d.id);
-          let parsed = await tauriBridge.pollParseStatus(kbId, d.id);
+          // Poll parse status + progress simultaneously
           const deadline = Date.now() + 15 * 60 * 1000;
-          while ((parsed.parse_status === "parsing" || parsed.parse_status === "pending") && Date.now() < deadline) {
+          while (Date.now() < deadline) {
+            const parsed = await tauriBridge.pollParseStatus(kbId, d.id);
+            documents.value = updateDocInTree(documents.value, d.id, parsed);
+            if (parsed.parse_status === "done" || parsed.parse_status === "failed") break;
+            // Also fetch progress percentage from Rust side
+            try {
+              const { getParseProgress } = await import("@/services/tauriBridge");
+              const p = await getParseProgress(kbId, d.id);
+              if (p) {
+                indexingProgress.value = { ...indexingProgress.value, [d.id]: { percent: p.percent, stage: p.stage, current: 0, total: 100 } };
+              }
+            } catch { /* progress not available */ }
             await new Promise(r => setTimeout(r, 2000));
-            parsed = await tauriBridge.pollParseStatus(kbId, d.id);
           }
-          documents.value = updateDocInTree(documents.value, d.id, parsed);
+          // Clean up parse progress so indexing can start
+          const { [d.id]: _, ...rest } = indexingProgress.value;
+          indexingProgress.value = rest;
         } catch { /* parse failed, keep original doc */ }
       }));
 
-      // Sequential index
-      for (const d of parseOrder) {
+      // Parallel index — all parts can run concurrently since:
+      // 1) Each part has its own doc_id (no LanceDB collision)
+      // 2) Page offset computation reads PDF files from disk, not index results
+      // 3) VLM background phase is already decoupled from the main pipeline
+      await Promise.all(parseOrder.map(async (d) => {
         const flat = documents.value.flatMap(doc =>
           doc.parts?.length ? [doc, ...doc.parts] : [doc]
         );
         const latest = flat.find(doc => doc.id === d.id);
-        if (!latest || latest.parse_status !== "done" || latest.chunk_count > 0) continue;
-        if (indexingProgress.value[d.id]) continue;
+        if (!latest || latest.parse_status !== "done") return;
+        if (indexingProgress.value[d.id]?.stage !== "error") {
+          if (indexingProgress.value[d.id]) return;
+          if (latest.chunk_count > 0) return;
+        }
 
         indexingProgress.value = { ...indexingProgress.value, [d.id]: { percent: 0, stage: "starting", current: 0, total: 0 } };
         try {
@@ -168,15 +186,15 @@ export const useKBStore = defineStore("kb", () => {
             doc_name: d.name,
             markdown_content: content.markdown,
           });
+          indexingProgress.value = { ...indexingProgress.value, [d.id]: { ...indexingProgress.value[d.id], taskId: task_id } };
           let lastUpdate = 0;
           const result = await waitForIndex(task_id, (p) => {
             const now = Date.now();
             if (now - lastUpdate < 800) return;
             lastUpdate = now;
-            indexingProgress.value = { ...indexingProgress.value, [d.id]: { percent: p.percent, stage: p.stage, current: p.current, total: p.total } };
+            indexingProgress.value = { ...indexingProgress.value, [d.id]: { ...indexingProgress.value[d.id], percent: p.percent, stage: p.stage, current: p.current, total: p.total, vlm_status: p.vlm_status, vlm_current: p.vlm_current, vlm_total: p.vlm_total, vlm_error: p.vlm_error } };
           });
           await tauriBridge.saveDocumentChunks(kbId, d.id, result.chunk_count!, result.embedding_model!, result.embedding_dim!);
-          const { [d.id]: _, ...rest } = indexingProgress.value;
           documents.value = updateDocInTree(documents.value, d.id, {
             chunk_count: result.chunk_count,
             embedding_model: result.embedding_model,
@@ -184,13 +202,35 @@ export const useKBStore = defineStore("kb", () => {
           knowledgeBases.value = knowledgeBases.value.map((k) =>
             k.id === kbId ? { ...k, embedding_model: result.embedding_model || "", embedding_dim: result.embedding_dim || 0 } : k
           );
+
+          // Phase 2: VLM post-processing (runs in background on backend)
+          if (result.vlm_pending && result.vlm_pending > 0) {
+            try {
+              const { waitForVlmComplete } = await import("@/services/pythonClient");
+              await waitForVlmComplete(task_id, (v) => {
+                const now = Date.now();
+                if (now - lastUpdate < 800) return;
+                lastUpdate = now;
+                indexingProgress.value = { ...indexingProgress.value, [d.id]: {
+                  ...indexingProgress.value[d.id],
+                  percent: v.vlm_total > 0 ? Math.round((v.vlm_current / v.vlm_total) * 100) : 0,
+                  stage: "vlm",
+                  current: v.vlm_current, total: v.vlm_total,
+                  vlm_status: v.vlm_status, vlm_current: v.vlm_current,
+                  vlm_total: v.vlm_total, vlm_error: v.vlm_error,
+                }};
+              });
+            } catch (vlmErr) {
+              console.error("VLM background failed:", vlmErr);
+            }
+          }
+          const { [d.id]: _, ...rest } = indexingProgress.value;
           indexingProgress.value = rest;
         } catch (e) {
           console.error("Auto-index failed:", e);
-          const { [d.id]: _, ...rest } = indexingProgress.value;
-          indexingProgress.value = rest;
+          indexingProgress.value = { ...indexingProgress.value, [d.id]: { ...indexingProgress.value[d.id], stage: "error", error: String(e), percent: 0 } };
         }
-      }
+      }));
       documents.value = groupParts(documents.value);
     })().catch(e => console.error("parse+index background flow failed:", e));
   }
@@ -223,25 +263,46 @@ export const useKBStore = defineStore("kb", () => {
         doc_name: docName,
         markdown_content: content.markdown,
       });
+      indexingProgress.value = { ...indexingProgress.value, [docId]: { ...indexingProgress.value[docId], taskId: task_id } };
       let lastUpdate = 0;
       const result = await waitForIndex(task_id, (p) => {
         const now = Date.now();
         if (now - lastUpdate < 800) return;
         lastUpdate = now;
-        indexingProgress.value = { ...indexingProgress.value, [docId]: { percent: p.percent, stage: p.stage, current: p.current, total: p.total } };
+        indexingProgress.value = { ...indexingProgress.value, [docId]: { ...indexingProgress.value[docId], percent: p.percent, stage: p.stage, current: p.current, total: p.total, vlm_status: p.vlm_status, vlm_current: p.vlm_current, vlm_total: p.vlm_total, vlm_error: p.vlm_error } };
       });
       await tauriBridge.saveDocumentChunks(kbId, docId, result.chunk_count!, result.embedding_model!, result.embedding_dim!);
       await loadKBs();
-      const { [docId]: _, ...rest } = indexingProgress.value;
       documents.value = updateDocInTree(documents.value, docId, {
         chunk_count: result.chunk_count,
         embedding_model: result.embedding_model,
       } as Partial<Document>);
+
+      if (result.vlm_pending && result.vlm_pending > 0) {
+        try {
+          const { waitForVlmComplete } = await import("@/services/pythonClient");
+          await waitForVlmComplete(task_id, (v) => {
+            const now = Date.now();
+            if (now - lastUpdate < 800) return;
+            lastUpdate = now;
+            indexingProgress.value = { ...indexingProgress.value, [docId]: {
+              ...indexingProgress.value[docId],
+              percent: v.vlm_total > 0 ? Math.round((v.vlm_current / v.vlm_total) * 100) : 0,
+              stage: "vlm", current: v.vlm_current, total: v.vlm_total,
+              vlm_status: v.vlm_status, vlm_current: v.vlm_current,
+              vlm_total: v.vlm_total, vlm_error: v.vlm_error,
+            }};
+          });
+        } catch (vlmErr) {
+          console.error("VLM background failed:", vlmErr);
+        }
+      }
+      const { [docId]: _, ...rest } = indexingProgress.value;
       indexingProgress.value = rest;
     } catch (e) {
       console.error("Re-index failed:", e);
-      const { [docId]: _, ...rest } = indexingProgress.value;
-      indexingProgress.value = rest;
+      // Keep progress entry with error info so user can see it in the dialog
+      indexingProgress.value = { ...indexingProgress.value, [docId]: { ...indexingProgress.value[docId], stage: "error", error: String(e), percent: 0 } };
     }
   }
 

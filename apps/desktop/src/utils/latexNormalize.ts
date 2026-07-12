@@ -44,6 +44,17 @@ function restoreDisplayMath(text: string, store: string[]): string {
 export function latexNormalize(raw: string): string {
   let s = raw;
 
+  /* ── Step 0: restore JSON-escaped control characters ───────────── */
+  // LLM outputs LaTeX commands like \frac, \tag, \boxed in JSON.
+  // After JSON.parse, the backslash-letter pairs become control characters
+  // (\f = formfeed 0x0c, \t = tab 0x09, \b = backspace 0x08).
+  // Restore them to literal backslash + letter.  Must use charCode(92)
+  // because writing "\\f" in TS/JS source may itself be re-escaped.
+  const BS = String.fromCharCode(92); // one real backslash
+  s = s.replace(/\f/g, () => BS + "f");   // formfeed → \f
+  s = s.replace(/\t/g, () => BS + "t");   // tab → \t
+  s = s.replace(/\x08/g, () => BS + "b"); // backspace → \b
+
   /* ── Step 1: delimiter conversions ─────────────────────────────── */
   // \(…\) → $…$  (inline)
   s = s.replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner) => `$${inner}$`);
@@ -53,8 +64,8 @@ export function latexNormalize(raw: string): string {
   /* ── Step 2: delimiter cleanup ─────────────────────────────────── */
   // $$$$ → $$
   s = s.replace(/\$\$\$\$/g, "$$");
-  // $ $ (space-split dollars) → $$
-  s = s.replace(/\$ \$/g, "$$");
+  // $   $ (3+ spaces → split display math across chunk boundary)
+  s = s.replace(/\$\s{3,}\$/g, "$$");
   // $$$…$$$ → $$…$$
   s = s.replace(/\$\$\$([\s\S]*?)\$\$\$/g, (_m, inner) => `$$\n${inner}\n$$`);
 

@@ -74,7 +74,7 @@ const chunkContent = computed(() => props.chunk?.content ?? "");
 
       <!-- Content -->
       <div class="chunk-content">
-        <MarkdownRenderer :content="chunkContent" />
+        <MarkdownRenderer :content="chunkContent" :sources="chunk ? [chunk] : undefined" />
       </div>
 
       <!-- Navigation -->

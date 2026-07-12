@@ -28,8 +28,10 @@
         { "url": "https://r.duckduckgo.com/*" },
         { "url": "https://r.jina.ai/*" },
         { "url": "https://api.tavily.com/*" },
+        { "url": "https://cn.bing.com/*" },
         { "url": "http://localhost:8080/*" },
-        { "url": "http://127.0.0.1:8080/*" }
+        { "url": "http://127.0.0.1:8080/*" },
+        { "url": "http://127.0.0.1:17390/*" }
       ]
     },
     {

@@ -45,6 +45,7 @@ declare module 'vue' {
     GlobalSearchDialog: typeof import('./src/components/search/GlobalSearchDialog.vue')['default']
     ImageDialog: typeof import('./src/components/documents/ImageDialog.vue')['default']
     ImportExport: typeof import('./src/components/knowledge-base/ImportExport.vue')['default']
+    IndexingStatusDialog: typeof import('./src/components/common/IndexingStatusDialog.vue')['default']
     KBDashboard: typeof import('./src/components/knowledge-base/KBDashboard.vue')['default']
     KBSelector: typeof import('./src/components/chat/KBSelector.vue')['default']
     KBSettings: typeof import('./src/components/knowledge-base/KBSettings.vue')['default']

@@ -1624,7 +1624,7 @@ function nextImage() {
         <div class="prose-container">
           <template v-if="sections.length <= 1">
             <div data-section-idx="0">
-              <MarkdownRenderer :content="anchoredContent" />
+              <MarkdownRenderer :content="anchoredContent" :imgKbId="kbId" :imgDocId="docId" />
             </div>
           </template>
           <template v-else>
@@ -1634,7 +1634,7 @@ function nextImage() {
               :data-section-idx="i"
             >
               <template v-if="i < EAGER || rendered.has(i)">
-                <MarkdownRenderer :content="injectAnchorsIntoSection(sec, sectionOffsets[i], sectionOffsets[i] + sec.length, pageAnchorPositions)" />
+                <MarkdownRenderer :content="injectAnchorsIntoSection(sec, sectionOffsets[i], sectionOffsets[i] + sec.length, pageAnchorPositions)" :imgKbId="kbId" :imgDocId="docId" />
               </template>
               <template v-else>
                 <div :ref="sentinelRef(i)" :data-section-idx="i" style="height: 1px" />

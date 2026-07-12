@@ -824,6 +824,13 @@ def add_document(
                     _split_chunks.append(nc)
     chunks = _split_chunks if _split_chunks else chunks
 
+    # Merge adjacent small chunks produced by PAGE-marker splitting
+    try:
+        from .chunker import RecursiveChunker
+        chunks = RecursiveChunker._merge_small_chunks(chunks)
+    except ImportError:
+        pass
+
     # Extract page ranges from markers (for non-split chunks)
     last_page = 0
     for c in chunks:

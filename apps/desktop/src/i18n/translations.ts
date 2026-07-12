@@ -178,6 +178,7 @@ export const translations = {
   "kb.folderBadge": { en: "Folder", "zh-CN": "文件夹" },
   "kb.partsCount": { en: "{count} parts", "zh-CN": "{count} 个分片" },
   "kb.indexingProgress": { en: "Idx {percent}%", "zh-CN": "索引 {percent}%" },
+  "kb.parseProgress": { en: "Parse {percent}%", "zh-CN": "解析 {percent}%" },
   "kb.progressVlm": { en: "VLM {cur}/{total}", "zh-CN": "VLM {cur}/{total}" },
   "kb.reindexTooltip": { en: "Re-index", "zh-CN": "重新索引" },
   "kb.reindexAllPartsTooltip": { en: "Re-index all parts", "zh-CN": "重新索引所有分片" },
@@ -279,6 +280,7 @@ export const translations = {
   "chat.webSearch": { en: "Web Search", "zh-CN": "联网搜索" },
   "chat.webSearchOn": { en: "On", "zh-CN": "开" },
   "chat.webSearchOff": { en: "Off", "zh-CN": "关" },
+  "chat.webSearchSmart": { en: "Smart", "zh-CN": "智能" },
 
   // Settings
   "settings.title": { en: "Settings", "zh-CN": "设置" },
@@ -325,6 +327,9 @@ export const translations = {
   "settings.webSearchMaxResults": { en: "Max Results", "zh-CN": "最大结果数" },
   "settings.free": { en: "free", "zh-CN": "免费" },
   "settings.webSearchDdgDesc": { en: "DuckDuckGo is free and requires no configuration.", "zh-CN": "DuckDuckGo 完全免费，无需任何配置。" },
+  "settings.bingDesc": { en: "Bing is free and requires no configuration.", "zh-CN": "必应完全免费，无需任何配置。" },
+  "settings.webSearchProxy": { en: "Proxy", "zh-CN": "代理地址" },
+  "settings.webSearchProxyDesc": { en: "Only fill if a proxy is needed. Leave empty for direct connection.", "zh-CN": "仅在需要代理时填写，留空则直连。" },
 
   "settings.navGeneral": { en: "General", "zh-CN": "通用" },
   "settings.navModels": { en: "Models", "zh-CN": "模型" },

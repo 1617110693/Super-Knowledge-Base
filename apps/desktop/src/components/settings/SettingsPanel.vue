@@ -926,14 +926,28 @@ async function browseGGUF(field: "local_embedding_model" | "local_rerank_model")
             <div class="field-row">
               <div class="field-label">{{ t("settings.webSearchProvider") }}</div>
               <el-select v-model="local.web_search_provider" size="small" style="width: 200px">
+                <el-option label="Bing (free)" value="bing" />
                 <el-option label="DuckDuckGo (free)" value="duckduckgo" />
                 <el-option label="Tavily" value="tavily" />
                 <el-option label="SearXNG" value="searxng" />
               </el-select>
             </div>
 
-            <template v-if="local.web_search_provider === 'duckduckgo'">
+            <template v-if="local.web_search_provider === 'bing'">
+              <div class="field-hint">{{ t("settings.bingDesc") }}</div>
+            </template>
+            <template v-else-if="local.web_search_provider === 'duckduckgo'">
               <div class="field-hint">{{ t("settings.webSearchDdgDesc") }}</div>
+              <div class="field-row">
+                <div class="field-label">{{ t("settings.webSearchProxy") }}</div>
+                <el-input
+                  v-model="local.web_search_proxy"
+                  placeholder="http://127.0.0.1:7892"
+                  size="small"
+                  style="flex: 1"
+                />
+              </div>
+              <div class="field-hint">{{ t("settings.webSearchProxyDesc") }}</div>
             </template>
             <template v-else-if="local.web_search_provider === 'tavily'">
               <div class="field-row">

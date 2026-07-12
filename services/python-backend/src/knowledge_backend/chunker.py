@@ -346,7 +346,7 @@ class FixedSizeChunker(Chunker):
             c.content = self._restore_math(c.content, math_map)
         self._annotate_char_positions(text, chunks, self.chunk_overlap)
         self._annotate_page_info(chunks, page_mapper)
-        return chunks
+        return [c for c in chunks if len(c.content.strip()) >= 4]
 
 
 class SemanticChunker(Chunker):
@@ -405,7 +405,7 @@ class SemanticChunker(Chunker):
             c.content = self._restore_math(c.content, math_map)
         self._annotate_char_positions(text, chunks, self.chunk_overlap)
         self._annotate_page_info(chunks, page_mapper)
-        return chunks
+        return [c for c in chunks if len(c.content.strip()) >= 4]
 
 
 class RecursiveChunker(Chunker):
@@ -434,7 +434,49 @@ class RecursiveChunker(Chunker):
             c.content = self._restore_math(c.content, math_map)
         self._annotate_char_positions(text, chunks, self.chunk_overlap)
         self._annotate_page_info(chunks, page_mapper)
-        return chunks
+        # Merge adjacent small chunks so single-sentence/list-item fragments
+        # don't become independent zero-information chunks
+        chunks = self._merge_small_chunks(chunks)
+        return [c for c in chunks if len(c.content.strip()) >= 4]
+
+    @staticmethod
+    def _merge_small_chunks(chunks: List[Chunk], min_chars: int = 120) -> List[Chunk]:
+        """Merge adjacent chunks shorter than *min_chars* into their neighbors.
+        Never merges across page boundaries (when both chunks have page metadata)."""
+        if not chunks:
+            return chunks
+        merged: List[Chunk] = []
+        buf: Chunk | None = None
+
+        def _same_page(a: Chunk, b: Chunk) -> bool:
+            pa = a.metadata.get("page") or a.metadata.get("page_start", 0)
+            pb = b.metadata.get("page") or b.metadata.get("page_start", 0)
+            return pa == 0 or pb == 0 or pa == pb
+
+        for c in chunks:
+            if len(c.content.strip()) >= min_chars or (buf is not None and not _same_page(buf, c)):
+                if buf is not None:
+                    if _same_page(buf, c if len(c.content.strip()) >= min_chars else c):
+                        c.content = buf.content + "\n" + c.content
+                        c.metadata = dict(c.metadata)
+                    else:
+                        merged.append(buf)
+                    buf = None
+                merged.append(c)
+            else:
+                if buf is None:
+                    buf = c
+                else:
+                    buf.content += "\n" + c.content
+                    if len(buf.content.strip()) >= min_chars:
+                        merged.append(buf)
+                        buf = None
+        if buf is not None:
+            if merged:
+                merged[-1].content += "\n" + buf.content
+            else:
+                merged.append(buf)
+        return merged
 
     def _split_text(
         self,
@@ -486,7 +528,11 @@ def multimodal_chunks_from_content_list(
     *,
     image_descriptions: dict[str, tuple[str, dict]] | None = None,
 ) -> list:
-    """Generate Chunk objects for image/table/equation items.
+    """Generate Chunk objects for image and table items from content_list.json.
+
+    Equation items are SKIPPED because they already appear as ``$$...$$``
+    in the text chunks produced by the main chunker — indexing them again
+    as separate [Equation] chunks would just duplicate content.
 
     Each chunk gets ``content_type`` in its metadata for search filtering.
     Image descriptions (from VLM) are woven in when available.
@@ -502,27 +548,14 @@ def multimodal_chunks_from_content_list(
             if image_descriptions and img_name in image_descriptions:
                 desc, entity = image_descriptions[img_name]
                 desc_text = desc
-            content = f"[Image: {img_name}]\n\n{desc_text or mi.get('text', '')}"
-            if page:
-                content += f"\n\nPage: {page}"
+            content = f"![](images/{img_name})\n\n{desc_text or mi.get('text', '')}"
 
         elif mtype == "table":
             txt = mi.get("text", "")
-            content = f"[Table]\n\n{txt}"
-            if page:
-                content += f"\n\nPage: {page}"
-
-        elif mtype == "equation":
-            txt = mi.get("text", "").strip()
-            # Ensure LaTeX is wrapped in $$...$$ for proper display rendering
-            if txt and not txt.startswith("$$"):
-                txt = f"$$\n{txt}\n$$"
-            content = f"[Equation]\n\n{txt}"
-            if page:
-                content += f"\n\nPage: {page}"
+            content = txt
 
         else:
-            content = mi.get("text", "")
+            continue  # skip equations (duplicated in text chunks)
 
         chunks.append(Chunk(
             content=content,

@@ -260,7 +260,7 @@ function scoreColor(score: number): string {
             </el-tag>
           </div>
           <div class="result-content">
-            <MarkdownRenderer :content="truncate(result.content, 400)" />
+            <MarkdownRenderer :content="truncate(result.content, 400)" :sources="[result]" />
           </div>
           <div class="result-footer">
             <span v-if="result.page_start != null" class="page-info">
@@ -316,7 +316,7 @@ function scoreColor(score: number): string {
           </el-descriptions>
         </div>
         <div class="chunk-content">
-          <MarkdownRenderer :content="selectedChunk.content" />
+          <MarkdownRenderer :content="selectedChunk.content" :sources="[selectedChunk]" />
         </div>
       </template>
       <template #footer>

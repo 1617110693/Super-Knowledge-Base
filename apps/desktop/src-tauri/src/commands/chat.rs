@@ -11,7 +11,7 @@ pub struct ChatSettings {
     #[serde(default = "default_context_window")]
     pub context_window: u32,
     #[serde(default)]
-    pub web_search_enabled: Option<bool>,
+    pub web_search_mode: Option<String>,
 }
 
 fn default_context_window() -> u32 { 1 }

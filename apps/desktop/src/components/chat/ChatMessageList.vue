@@ -15,6 +15,7 @@
         :active-tool-id="activeToolId"
         :copied-msg-idx="copiedMsgIdx"
         @source-click="(src: any) => $emit('sourceClick', src)"
+        @web-source-click="(src: any) => $emit('webSourceClick', src)"
         @copy="(content: string, idx: number) => $emit('copy', content, idx)"
       />
     </div>
@@ -23,7 +24,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onMounted } from "vue";
-import type { ChatMessage, SearchResult } from "@/types";
+import type { ChatMessage, SearchResult, WebSearchSource } from "@/types";
 import MessageRow from "./MessageRow.vue";
 
 const props = withDefaults(
@@ -48,6 +49,7 @@ const props = withDefaults(
 
 defineEmits<{
   sourceClick: [source: SearchResult];
+  webSourceClick: [source: WebSearchSource];
   copy: [content: string, idx: number];
   toggleAutoScroll: [];
 }>();

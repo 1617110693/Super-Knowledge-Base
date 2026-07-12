@@ -45,13 +45,12 @@
           webSearchMode !== 'off'
             ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800'
             : 'bg-muted/60 text-muted-foreground border border-transparent hover:bg-muted hover:text-foreground/70',
-          webSearchMode === 'smart' ? '!bg-amber-50 !text-amber-700 !border-amber-200 dark:!bg-amber-950/40 dark:!text-amber-400 dark:!border-amber-800' : '',
           webSearchMode === 'on' ? '!bg-sky-50 !text-sky-700 !border-sky-200 dark:!bg-sky-950/40 dark:!text-sky-400 dark:!border-sky-800' : '',
         ]"
         :title="t('chat.webSearch')"
         @click="cycleWebSearchMode"
       >
-        <Earth class="w-4 h-4" :class="{ 'opacity-50': webSearchMode === 'off' }" />
+        <Globe class="w-4 h-4" :class="{ 'opacity-50': webSearchMode === 'off' }" />
         <span>{{ webSearchMode === 'on' ? (t('chat.webSearchOn') || 'On') : webSearchMode === 'smart' ? (t('chat.webSearchSmart') || 'Smart') : (t('chat.webSearchOff') || 'Off') }}</span>
       </button>
 
@@ -134,6 +133,7 @@
         :auto-scroll="autoScroll"
         :scroll-ref="scrollRef"
         @source-click="setPreviewChunk"
+        @web-source-click="openWebSource"
         @copy="handleCopy"
         @toggle-auto-scroll="autoScroll = !autoScroll"
       />
@@ -143,8 +143,10 @@
     <div class="px-6 shrink-0">
       <SourcesPanel
         :sources="lastAssistantSources"
+        :web-sources="lastAssistantWebSources"
         :sources-label="t('chat.sources') || 'Sources'"
         @source-click="setPreviewChunk"
+        @web-source-click="openWebSource"
       />
       <div v-if="error" class="p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 mt-2">
         {{ error }}
@@ -189,7 +191,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   MessageSquare, Plus, ArrowDownToLine, ArrowDown,
-  RefreshCw, Trash2, X, Earth, ChevronDown,
+  RefreshCw, Trash2, X, Globe, ChevronDown,
 } from "lucide-vue-next";
 import type { ChatMessage, SearchResult, ToolCall } from "@/types";
 import { useChatStore } from "@/stores/chatStore";
@@ -275,6 +277,12 @@ const lastAssistantSources = computed<SearchResult[]>(() => {
   return lastAsst?.sources || [];
 });
 
+const lastAssistantWebSources = computed<import("@/types").WebSearchSource[]>(() => {
+  const reversed = [...messages.value].reverse();
+  const lastAsst = reversed.find((m) => m.role === "assistant");
+  return lastAsst?.webSources || [];
+});
+
 // ── KB helpers ──
 function kbNameById(id: string): string {
   return kbStore.knowledgeBases.find((kb) => kb.id === id)?.name || id;
@@ -330,6 +338,7 @@ watch(
 
 // Track scroll position and restore on mount
 let scrollListener: (() => void) | null = null;
+let lastScrollTop = 0;
 
 onMounted(() => {
   const el = scrollRef.value;
@@ -337,10 +346,14 @@ onMounted(() => {
 
   const onScroll = () => {
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const scrollDelta = el.scrollTop - lastScrollTop;
+    lastScrollTop = el.scrollTop;
     showScrollBtn.value = dist > 200;
+    // Only disable autoScroll when user actively scrolls UP (away from bottom)
+    // Ignore programmatic scrolls downward or content growth
     if (dist < 4) {
       autoScroll.value = true;
-    } else if (dist > 20) {
+    } else if (scrollDelta < -5 && dist > 30) {
       autoScroll.value = false;
     }
     // Save scroll position to tab store (throttled to 500ms)
@@ -457,8 +470,12 @@ function buildInstr(): string {
     "Wrap ALL math in $..$ or $$..$$. Single symbols too: $x$, $\\alpha$, $A$. Display equations: $$A^T A$$. No bare LaTeX.";
   const citeInstr =
     "IMPORTANT: Each search result has an 'index' field (1,2,3...) AND a 'chunk_index' field (document position). Use the INDEX number for citation: write [N] where N is the result index, NOT the chunk_index. Example: if result index=1 has chunk_index=8, cite it as [1], not [8].";
+  const webCiteInstr =
+    "WEB SEARCH CITATIONS: When you call web_search and use information from the results, cite each web result using [W1], [W2], [W3], etc. where the number matches the 'index' field in the search results. This is SEPARATE from knowledge base citations [1], [2], etc. — use [N] for KB chunks and [WN] for web results. Always cite your web sources so users can verify and visit the original pages.";
   const imageInstr =
     "IMPORTANT — YOU MUST INCLUDE IMAGES IN YOUR ANSWER: Before writing your final answer, ALWAYS search for images related to the topic. When search results include content_type='image' chunks, you MUST render them inline using: ![description](images/filename.jpg). Additionally, look at ALL search result content for image filenames (patterns like 'Image: hash.jpg', 'images/hash.jpg', or markdown image syntax). Extract these filenames and include the images. If you reference a diagram, chart, figure, or visual concept but no image chunk was returned, use search_knowledge_base with content_type='image' to specifically find related images. Images are key visual evidence — never skip them, they appear as clickable thumbnails that the user can preview.";
+  const webImageInstr =
+    "WEB IMAGE SEARCH: If the knowledge base does not have enough images for your answer, you SHOULD use web_search to find additional images. When web_search results contain image URLs (links ending in .jpg, .png, .gif, .webp, or from image hosting sites), include them in your answer using standard markdown: ![description](https://example.com/image.jpg). This is especially encouraged for visual topics — diagrams, charts, illustrations, photos. Always prefer knowledge base images first, then supplement with web-sourced images. When you use a web image, cite the web search result it came from using [WN] notation.";
   const webSearchModeVal = conv.value?.chatSettings?.webSearchMode ?? "smart";
   const kbNames =
     selectedKbIds.value.length > 0
@@ -479,12 +496,12 @@ HOW TO ANSWER QUESTIONS (RAG-first workflow):
     ? `${ragInstr}\n\n${citeInstr}\n\n${imageInstr}`
     : "You are a helpful assistant.";
   if (webSearchModeVal === "on") {
-    systemMsg += `\n\nWEB SEARCH (ENABLED): You MUST call web_search before answering whenever the question involves (a) recent events, news, or dates after your training cutoff, (b) real-time or live information, (c) specific facts you are not confident about, or (d) anything beyond the selected knowledge bases. Do NOT answer from memory alone if web_search could give a fresher or more accurate answer. After web_search, use web_fetch to read a specific result page if you need full detail. Cite web results by URL or title so the user knows the source.`;
+    systemMsg += `\n\nWEB SEARCH (ENABLED): You MUST call web_search before answering whenever the question involves (a) recent events, news, or dates after your training cutoff, (b) real-time or live information, (c) specific facts you are not confident about, or (d) anything beyond the selected knowledge bases. Do NOT answer from memory alone if web_search could give a fresher or more accurate answer. After web_search, use web_fetch to read a specific result page if you need full detail.\n\n${webCiteInstr}\n\n${webImageInstr}`;
   } else if (webSearchModeVal === "smart" && !kbNames) {
-    systemMsg += `\n\nYou have web_search and web_fetch tools available. Use web_search to find information when you need up-to-date or external data.`;
+    systemMsg += `\n\nYou have web_search and web_fetch tools available. Use web_search to find information when you need up-to-date or external data.\n\n${webCiteInstr}\n\n${webImageInstr}`;
   } else if (webSearchModeVal === "smart" && kbNames) {
     // KB is primary, web search is available as a supplement
-    systemMsg += `\n\nYou also have web_search and web_fetch tools available. Use them to find supplementary information (e.g. images, recent updates, external context) AFTER searching the knowledge base when the knowledge base results are incomplete or the question specifically asks for web content. Do NOT use web_search as a replacement for search_knowledge_base.`;
+    systemMsg += `\n\nYou also have web_search and web_fetch tools available. Use them to find supplementary information (e.g. images, recent updates, external context) AFTER searching the knowledge base when the knowledge base results are incomplete or the question specifically asks for web content. Do NOT use web_search as a replacement for search_knowledge_base.\n\n${webCiteInstr}\n\n${webImageInstr}`;
   }
   // Inject memory context
   const memoryPrompt = formatMemoryForPrompt(2000);
@@ -554,6 +571,7 @@ async function handleSend(text?: string) {
 
     // ── Tool-calling loop ──
     let allSources: SearchResult[] = [];
+    let allWebSources: import("@/types").WebSearchSource[] = [];
     const kbList = kbStore.knowledgeBases; // snapshot at send time
 
     for (let round = 0; round < (settingsStore.settings.max_tool_rounds || 10); round++) {
@@ -618,7 +636,7 @@ async function handleSend(text?: string) {
       let lastFlush = 0;
       let flushTimer: ReturnType<typeof setTimeout> | null = null;
       const flushContent = () => {
-        chatStore.updateLastAssistant(currentConv.id, fullContent, allSources, fullReasoning);
+        chatStore.updateLastAssistant(currentConv.id, fullContent, allSources, fullReasoning, allWebSources);
         lastFlush = Date.now();
         flushTimer = null;
       };
@@ -678,7 +696,7 @@ async function handleSend(text?: string) {
       if (finishReason === "stop" && toolCallsAcc.size === 0) {
         if (flushTimer) clearTimeout(flushTimer);
         fullContent = normalizeMath(fullContent);
-        chatStore.updateLastAssistant(currentConv.id, fullContent, allSources, fullReasoning);
+        chatStore.updateLastAssistant(currentConv.id, fullContent, allSources, fullReasoning, allWebSources);
         break;
       }
 
@@ -694,7 +712,8 @@ async function handleSend(text?: string) {
           currentConv.id,
           fullContent,
           tcArray,
-          allSources
+          allSources,
+          allWebSources
         );
 
         // Append assistant message (with tool_calls) to the LLM message list
@@ -715,7 +734,7 @@ async function handleSend(text?: string) {
           // Collapse all previously manual-expanded cards for new tool round
           manualExpand.value = new Set();
           try {
-            const { result, newSources } = await executeToolCall(
+            const { result, newSources, newWebSources } = await executeToolCall(
               tc,
               kbList.map((kb) => ({
                 id: kb.id,
@@ -733,6 +752,7 @@ async function handleSend(text?: string) {
               allSources.length
             );
             allSources = [...allSources, ...newSources];
+            allWebSources = [...allWebSources, ...(newWebSources || [])];
             // Store tool result for UI display
             toolResults.value = { ...toolResults.value, [tc.id]: result.content };
             llmMessages.push({
@@ -795,6 +815,16 @@ async function handleSend(text?: string) {
 // ── Chunk preview ──
 function setPreviewChunk(chunk: SearchResult) {
   previewChunk.value = chunk;
+}
+
+// ── Open web search result URL ──
+async function openWebSource(src: { url: string }) {
+  try {
+    const { open } = await import("@tauri-apps/plugin-shell");
+    await open(src.url);
+  } catch {
+    window.open(src.url, "_blank");
+  }
 }
 
 // ── Chunk preview navigation ──
@@ -923,6 +953,8 @@ function openDocFromChunk(docId: string) {
     const url = ci != null
       ? `/kb/${kbId}/documents/${docId}?ci=${ci}`
       : `/kb/${kbId}/documents/${docId}`;
+    const tabId = `doc-${docId}`;
+    tabStore.openTab({ id: tabId, title: previewChunk.value.doc_name || docId, url });
     router.push(url);
     previewChunk.value = null;
   }
@@ -935,6 +967,8 @@ function openPdfFromChunk(docId: string) {
     const url = ci != null
       ? `/kb/${kbId}/documents/${docId}?view=pdf&ci=${ci}`
       : `/kb/${kbId}/documents/${docId}?view=pdf`;
+    const tabId = `doc-${docId}`;
+    tabStore.openTab({ id: tabId, title: previewChunk.value.doc_name || docId, url });
     router.push(url);
     previewChunk.value = null;
   }

@@ -96,6 +96,15 @@ function updateThemeTitle() {
 async function onDrag(e: MouseEvent) {
   const target = e.target as HTMLElement;
   if (target.closest("button, [role=\"button\"], .titlebar-icon-btn, .titlebar-win-btn")) return;
+  // Don't drag window when clicking on tab-list's horizontal scrollbar
+  const tabList = target.closest(".tab-list") as HTMLElement | null;
+  if (tabList) {
+    const rect = tabList.getBoundingClientRect();
+    const scrollbarHeight = tabList.offsetHeight - tabList.clientHeight;
+    if (scrollbarHeight > 0 && e.clientY > rect.bottom - scrollbarHeight - 2) {
+      return;
+    }
+  }
   try { await win.startDragging(); } catch {}
 }
 </script>

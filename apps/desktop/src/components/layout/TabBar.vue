@@ -1,17 +1,28 @@
 <template>
   <div class="tab-bar">
-    <TransitionGroup name="tab-list" tag="div" class="tab-list">
+    <div class="tab-list" @dragover.prevent="onListDragOver">
       <div
         v-for="tab in tabStore.tabs"
         :key="tab.id"
         class="tab-item"
-        :class="{ active: tabStore.activeTabId === tab.id }"
+        :class="{
+          active: tabStore.activeTabId === tab.id,
+          dragging: draggedId === tab.id,
+          'drag-over-left': dragOverId === tab.id && dragOverPos === 'left',
+          'drag-over-right': dragOverId === tab.id && dragOverPos === 'right',
+        }"
         role="button"
         tabindex="0"
+        draggable="true"
         @click="selectTab(tab.id)"
         @keydown.enter.prevent="selectTab(tab.id)"
         @keydown.space.prevent="selectTab(tab.id)"
         @pointerdown.middle.prevent="closeTab(tab.id)"
+        @dragstart="onDragStart($event, tab.id)"
+        @dragover.prevent="onDragOver($event, tab.id)"
+        @dragleave="onDragLeave"
+        @drop.prevent="onDrop(tab.id)"
+        @dragend="onDragEnd"
         :title="tab.title"
       >
         <component :is="tabIconComponent(tab.url)" :size="14" class="tab-icon" />
@@ -27,11 +38,12 @@
           </svg>
         </button>
       </div>
-    </TransitionGroup>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { FileText, MessageSquare, Search, Settings } from "lucide-vue-next";
 import { useTabStore } from "@/stores/tabStore";
@@ -57,13 +69,73 @@ function selectTab(id: string) {
 
 function closeTab(id: string) {
   tabStore.closeTab(id);
-  // Navigate to the new active tab or home
   const newActive = tabStore.tabs.find((t) => t.id === tabStore.activeTabId);
   if (newActive) {
     router.push(newActive.url);
   } else {
     router.push("/");
   }
+}
+
+// ── Drag-to-reorder ──
+const draggedId = ref<string | null>(null);
+const dragOverId = ref<string | null>(null);
+const dragOverPos = ref<"left" | "right">("left");
+
+function onDragStart(e: DragEvent, id: string) {
+  draggedId.value = id;
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", id);
+  }
+}
+
+function onListDragOver(e: DragEvent) {
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+}
+
+function onDragOver(e: DragEvent, id: string) {
+  if (!draggedId.value || draggedId.value === id) return;
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+  dragOverId.value = id;
+  // Determine if cursor is on left or right half of the tab
+  const target = e.currentTarget as HTMLElement;
+  const rect = target.getBoundingClientRect();
+  dragOverPos.value = e.clientX < rect.left + rect.width / 2 ? "left" : "right";
+}
+
+function onDragLeave() {
+  // Only clear if leaving to outside any tab (handled in dragend/drop)
+}
+
+function onDrop(targetId: string) {
+  if (!draggedId.value || draggedId.value === targetId) {
+    onDragEnd();
+    return;
+  }
+  const tabs = [...tabStore.tabs];
+  const fromIdx = tabs.findIndex((t) => t.id === draggedId.value);
+  let toIdx = tabs.findIndex((t) => t.id === targetId);
+  if (fromIdx === -1 || toIdx === -1) {
+    onDragEnd();
+    return;
+  }
+  // If dropping on right half, insert after target
+  if (dragOverPos.value === "right" && toIdx < tabs.length - 1) {
+    // Adjust for removal: if from < to, removing shifts toIdx by -1
+  }
+  const [moved] = tabs.splice(fromIdx, 1);
+  // Recalculate toIdx after removal
+  toIdx = tabs.findIndex((t) => t.id === targetId);
+  if (dragOverPos.value === "right") toIdx++;
+  tabs.splice(toIdx, 0, moved);
+  tabStore.reorderTabs(tabs);
+  onDragEnd();
+}
+
+function onDragEnd() {
+  draggedId.value = null;
+  dragOverId.value = null;
 }
 </script>
 
@@ -77,7 +149,6 @@ function closeTab(id: string) {
   padding: 0 4px;
   flex: 1;
   min-width: 0;
-  max-width: 680px;
 }
 
 .tab-list {
@@ -88,13 +159,27 @@ function closeTab(id: string) {
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(144, 147, 153, 0.2) transparent;
   position: relative;
 }
 
 .tab-list::-webkit-scrollbar {
-  display: none;
+  height: 3px;
+  -webkit-appearance: none;
+}
+
+.tab-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tab-list::-webkit-scrollbar-thumb {
+  background: rgba(144, 147, 153, 0.2);
+  border-radius: 2px;
+}
+
+.tab-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(144, 147, 153, 0.4);
 }
 
 .tab-item {
@@ -110,8 +195,8 @@ function closeTab(id: string) {
   border-radius: 6px 6px 0 0;
   font-size: 12px;
   white-space: nowrap;
-  flex-shrink: 0;
-  min-width: 0;
+  flex-shrink: 1;
+  min-width: 44px;
   max-width: 180px;
   position: relative;
   transition: background 120ms ease, color 120ms ease;
@@ -137,6 +222,31 @@ function closeTab(id: string) {
   height: 2px;
   background: var(--accent-color);
   border-radius: 1px 1px 0 0;
+}
+
+/* Drag-to-reorder styles */
+.tab-item.dragging {
+  opacity: 0.35;
+}
+.tab-item.drag-over-left::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 4px;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent-color);
+  border-radius: 1px;
+}
+.tab-item.drag-over-right::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  top: 4px;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent-color);
+  border-radius: 1px;
 }
 
 .tab-icon {

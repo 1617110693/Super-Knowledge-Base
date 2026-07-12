@@ -1,6 +1,6 @@
 // Executes tool calls from the LLM by dispatching to the appropriate
 // backend API (Python REST or Tauri IPC).
-import type { SearchResult, ToolCall } from "../types";
+import type { SearchResult, ToolCall, WebSearchSource } from "../types";
 import { searchAll } from "./pythonClient";
 import { getDocumentContent } from "./tauriBridge";
 
@@ -13,6 +13,7 @@ export interface ToolExecutionResult {
 interface KbInfo {
   id: string;
   name: string;
+
   document_count: number;
   chunk_count: number;
 }
@@ -30,7 +31,7 @@ export async function executeToolCall(
   allowedKbIds?: string[],
   defaultContextWindow?: number,
   sourceOffset: number = 0,
-): Promise<{ result: ToolExecutionResult; newSources: SearchResult[] }> {
+): Promise<{ result: ToolExecutionResult; newSources: SearchResult[]; newWebSources?: WebSearchSource[] }> {
   const { name, arguments: argsJson } = toolCall.function;
   let parsedArgs: Record<string, unknown>;
   try {
@@ -58,7 +59,7 @@ export async function executeToolCall(
       if (allowedKbIds && allowedKbIds.length > 0) {
         kbIds = kbIds ? kbIds.filter((id) => allowedKbIds.includes(id)) : allowedKbIds;
         if (kbIds.length === 0) {
-          return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: "None of the requested KBs are selected. Please select KBs in the chat header." }) }, newSources: [] };
+          return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: "None of the requested KBs are selected. Please select KBs in the chat header." }) }, newSources: [], newWebSources: [] };
         }
       }
       const topK = Math.min(Number(parsedArgs.top_k) || 10, 50);
@@ -114,6 +115,7 @@ export async function executeToolCall(
           }),
         },
         newSources: res.results,
+        newWebSources: [],
       };
     }
 
@@ -122,7 +124,7 @@ export async function executeToolCall(
       const kbId = String(parsedArgs.kb_id);
       const docId = String(parsedArgs.doc_id);
       const accessErr = checkKbAccess(kbId);
-      if (accessErr) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: accessErr }) }, newSources: [] };
+      if (accessErr) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: accessErr }) }, newSources: [], newWebSources: [] };
       const doc = await getDocumentContent(kbId, docId);
 
       return {
@@ -143,7 +145,7 @@ export async function executeToolCall(
     case "get_document_chunks": {
       const kbId = String(parsedArgs.kb_id);
       const accessErr2 = checkKbAccess(kbId);
-      if (accessErr2) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: accessErr2 }) }, newSources: [] };
+      if (accessErr2) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: accessErr2 }) }, newSources: [], newWebSources: [] };
       const docId = String(parsedArgs.doc_id);
       // Use FTS search with a broad query to find all chunks for this doc
       const res = await searchAll({
@@ -177,7 +179,7 @@ export async function executeToolCall(
     case "list_documents": {
       const kbId = String(parsedArgs.kb_id);
       const accessErr3 = checkKbAccess(kbId);
-      if (accessErr3) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: accessErr3 }) }, newSources: [] };
+      if (accessErr3) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: accessErr3 }) }, newSources: [], newWebSources: [] };
       const { listDocuments } = await import("./tauriBridge");
       const docs = await listDocuments(kbId);
 
@@ -209,15 +211,15 @@ export async function executeToolCall(
     case "get_chunk_by_index": {
       const kbId = String(parsedArgs.kb_id);
       const accessErr4 = checkKbAccess(kbId);
-      if (accessErr4) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: accessErr4 }) }, newSources: [] };
+      if (accessErr4) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: accessErr4 }) }, newSources: [], newWebSources: [] };
       const docId = String(parsedArgs.doc_id);
       const chunkIdx = Number(parsedArgs.chunk_index);
-      if (isNaN(chunkIdx)) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: "chunk_index must be a number" }) }, newSources: [] };
+      if (isNaN(chunkIdx)) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: "chunk_index must be a number" }) }, newSources: [], newWebSources: [] };
 
       const { getChunkByIndex } = await import("./pythonClient");
       const res = await getChunkByIndex({ kb_id: kbId, doc_id: docId, chunk_index: chunkIdx });
       if ("error" in res) {
-        return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: res.error }) }, newSources: [] };
+        return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: res.error }) }, newSources: [], newWebSources: [] };
       }
 
       const c = res.chunk;
@@ -245,7 +247,7 @@ export async function executeToolCall(
       const kbId5 = String(parsedArgs.kb_id);
       const docId3 = String(parsedArgs.doc_id);
       const page = Number(parsedArgs.page);
-      if (isNaN(page)) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: "page must be a number" }) }, newSources: [] };
+      if (isNaN(page)) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: "page must be a number" }) }, newSources: [], newWebSources: [] };
       const { getChunksByPage } = await import("./pythonClient");
       const res = await getChunksByPage({ kb_id: kbId5, doc_id: docId3, page });
       return {
@@ -435,6 +437,14 @@ export async function executeToolCall(
         });
       }
 
+      const webSources: WebSearchSource[] = results.map((r) => ({
+        title: r.title,
+        url: r.url,
+        content: r.content.slice(0, limits?.maxSearchResultChars ?? 2000),
+        score: r.score,
+        query,
+      }));
+
       return {
         result: {
           tool_call_id: toolCall.id,
@@ -451,13 +461,14 @@ export async function executeToolCall(
           }),
         },
         newSources: [],
+        newWebSources: webSources,
       };
     }
 
     // ── web_fetch ──
     case "web_fetch": {
       const url = String(parsedArgs.url || "");
-      if (!url) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: "url is required" }) }, newSources: [] };
+      if (!url) return { result: { tool_call_id: toolCall.id, role: "tool", content: JSON.stringify({ error: "url is required" }) }, newSources: [], newWebSources: [] };
       const { fetchWebContent } = await import("./webSearch");
       const content = await fetchWebContent(url);
       return {

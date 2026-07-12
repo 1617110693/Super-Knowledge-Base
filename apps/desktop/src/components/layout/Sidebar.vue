@@ -211,73 +211,35 @@ function showChatCtxMenu(conv: { id: string; title: string }, e: MouseEvent) {
     <!-- Collapsed mode icons -->
     <div v-show="collapsed" class="sidebar-collapsed-content">
       <div class="sc-top">
-        <button
-          class="sb-icon-btn"
-          :title="t('nav.expandSidebar')"
-          @click="toggleCollapsed"
-        >
+        <button class="sb-icon-btn" :title="t('nav.expandSidebar')" @click="toggleCollapsed">
           <PanelLeft :size="16" />
         </button>
-        <span
-          class="sb-status-dot"
-          :class="settingsStore.pythonRunning ? 'bg-green' : 'bg-red'"
-          :title="settingsStore.pythonRunning ? t('app.backendReady') : t('app.backendOffline')"
-        />
+        <span class="sb-status-dot" :class="settingsStore.pythonRunning ? 'bg-green' : 'bg-red'"
+              :title="settingsStore.pythonRunning ? t('app.backendReady') : t('app.backendOffline')" />
       </div>
-
-      <!-- Middle: split 1fr/1fr like expanded mode -->
       <div class="sc-middle">
-        <!-- Top half: overview + KBs (scrollable) -->
-        <div class="sc-icons">
-          <button
-            class="sb-icon-btn sb-nav-btn"
-            :class="{ active: isActive('/') && !kbId }"
-            :title="t('nav.overview')"
-            @click="router.push('/')"
-          >
+        <div class="sc-top-half">
+          <button class="sb-icon-btn sb-nav-btn" :class="{ active: isActive('/') && !kbId }" :title="t('nav.overview')" @click="router.push('/')">
             <LayoutDashboard :size="16" />
           </button>
-
-          <button
-            v-for="kb in sortedKBs"
-            :key="kb.id"
-            class="sb-icon-btn"
-            :class="{ active: kbId === kb.id }"
-            :title="kb.name"
-            @click="router.push(`/kb/${kb.id}`)"
-            @contextmenu.prevent="showKbCtxMenu(kb, $event)"
-          >
-            <Pin v-if="kb.pinned" :size="16" class="text-amber-500" />
-            <Layers v-else :size="16" />
-          </button>
+          <div class="sc-kb-list">
+            <button v-for="kb in sortedKBs" :key="kb.id" class="sb-icon-btn" :class="{ active: kbId === kb.id }" :title="kb.name" @click="router.push(`/kb/${kb.id}`)" @contextmenu.prevent="showKbCtxMenu(kb, $event)">
+              <Pin v-if="kb.pinned" :size="16" class="text-amber-500" />
+              <Layers v-else :size="16" />
+            </button>
+          </div>
         </div>
-
-        <!-- Bottom half: chat button + recent conversations -->
-        <div class="sc-chat-cell">
-          <button
-            class="sb-nav-btn-chat-icon"
-            :title="t('nav.chatSection')"
-            @click="ensureNewChat"
-          >
+        <div class="sc-bottom-half">
+          <button class="sb-nav-btn-chat-icon" :title="t('nav.chatSection')" @click="ensureNewChat">
             <MessageSquare :size="16" />
           </button>
           <div class="sc-recent-chats">
-            <button
-              v-for="conv in recentConversations.slice(0, 8)"
-              :key="conv.id"
-              class="sb-icon-btn sb-icon-btn-sm"
-              :class="{ active: chatStore.activeConversationId === conv.id && route.path.startsWith('/chat') }"
-              :title="conv.title || conv.messages[0]?.content?.slice(0, 30) || t('chat.new')"
-              @click="chatStore.setActiveConversation(conv.id); tabStore.openTab({ id: conv.id, title: conv.title || conv.messages[0]?.content?.slice(0, 30) || t('chat.new'), url: `/chat/${conv.id}` }); router.push(`/chat/${conv.id}`)"
-              @contextmenu.prevent="showChatCtxMenu(conv, $event)"
-            >
+            <button v-for="conv in recentConversations" :key="conv.id" class="sb-icon-btn sb-icon-btn-sm" :class="{ active: chatStore.activeConversationId === conv.id && route.path.startsWith('/chat') }" :title="conv.title || conv.messages[0]?.content?.slice(0, 30) || t('chat.new')" @click="chatStore.setActiveConversation(conv.id); tabStore.openTab({ id: conv.id, title: conv.title || conv.messages[0]?.content?.slice(0, 30) || t('chat.new'), url: `/chat/${conv.id}` }); router.push(`/chat/${conv.id}`)" @contextmenu.prevent="showChatCtxMenu(conv, $event)">
               <MessageSquare :size="12" />
             </button>
           </div>
         </div>
       </div>
-
-      <!-- Settings (footer) -->
       <div class="sc-bottom">
         <button class="sb-icon-btn" :class="{ active: isActive('/settings') }" :title="t('nav.settings')" @click="router.push('/settings')">
           <Settings :size="16" />
@@ -552,6 +514,7 @@ function showChatCtxMenu(conv: { id: string; title: string }, e: MouseEvent) {
   width: 52px;
   padding: 0;
   gap: 0;
+  overflow: hidden;
 }
 
 .sidebar-expanded {
@@ -764,6 +727,7 @@ function showChatCtxMenu(conv: { id: string; title: string }, e: MouseEvent) {
   flex-direction: column;
   height: 100%;
   width: 52px;
+  overflow: hidden;
 }
 .sc-top {
   display: flex;
@@ -774,12 +738,50 @@ function showChatCtxMenu(conv: { id: string; title: string }, e: MouseEvent) {
   flex-shrink: 0;
 }
 .sc-middle {
-  flex: 1;
-  display: grid;
-  grid-template-rows: 1fr 1fr;
-  justify-items: center;
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+.sc-top-half {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 0;
+  padding: 4px 0;
+  gap: 2px;
+  overflow: hidden;
+  --sb-thumb: transparent;
+  --sb-thumb-hover: transparent;
+}
+.sc-top-half:hover {
+  --sb-thumb: rgba(144, 147, 153, 0.25);
+  --sb-thumb-hover: rgba(144, 147, 153, 0.45);
+}
+/* Keep "overview" and "new chat" buttons fixed — never shrink */
+.sc-top-half > .sb-nav-btn,
+.sc-bottom-half > .sb-nav-btn-chat-icon {
+  flex-shrink: 0;
+}
+.sc-kb-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  flex: 1 1 0;
+  padding-left: 8px;
+  padding-right: 4px;
+}
+/* CRITICAL: prevent list items from shrinking — force scroll instead */
+.sc-kb-list > button,
+.sc-recent-chats > button {
+  flex-shrink: 0;
 }
 .sc-icons {
   display: flex;
@@ -787,31 +789,74 @@ function showChatCtxMenu(conv: { id: string; title: string }, e: MouseEvent) {
   align-items: center;
   gap: 2px;
   width: 100%;
-  overflow-y: auto;
+  padding: 4px 0;
+}
+.sc-bottom-half {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   min-height: 0;
-  padding-top: 4px;
+  padding: 2px 0 4px;
+  gap: 4px;
+  overflow: hidden;
+  --sb-thumb: transparent;
+  --sb-thumb-hover: transparent;
+}
+.sc-bottom-half:hover {
+  --sb-thumb: rgba(144, 147, 153, 0.25);
+  --sb-thumb-hover: rgba(144, 147, 153, 0.45);
+}
+.sc-recent-chats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  flex: 1 1 0;
+  padding-left: 8px;
+  padding-right: 4px;
+}
+/* Scrollbar for collapsed sidebar — shown on hover only */
+.sc-kb-list,
+.sc-recent-chats {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-thumb) transparent;
+}
+.sc-kb-list::-webkit-scrollbar,
+.sc-recent-chats::-webkit-scrollbar {
+  width: 4px;
+  -webkit-appearance: none;
+}
+.sc-kb-list::-webkit-scrollbar-track,
+.sc-recent-chats::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sc-kb-list::-webkit-scrollbar-thumb,
+.sc-recent-chats::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb);
+  border-radius: 2px;
+}
+.sc-kb-list::-webkit-scrollbar-thumb:hover,
+.sc-recent-chats::-webkit-scrollbar-thumb:hover {
+  background: var(--sb-thumb-hover);
 }
 .sc-chat-cell {
   display: flex;
   flex-direction: column;
   align-items: center;
   width: 100%;
-  overflow-y: auto;
-  min-height: 0;
-  padding-top: 2px;
-  gap: 1px;
+  padding: 2px 0 4px;
+  gap: 4px;
 }
 .sc-chat-cell .sb-popover-host {
   flex-shrink: 0;
   line-height: 0;
 }
-.sc-recent-chats {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  width: 100%;
-}
+
 .sb-icon-btn-sm {
   width: 30px;
   height: 30px;
@@ -846,7 +891,15 @@ function showChatCtxMenu(conv: { id: string; title: string }, e: MouseEvent) {
 .sb-middle { flex: 1; display: grid; grid-template-rows: 1fr 1fr; gap: 2px; padding: 4px; overflow: hidden; min-height: 0; }
 
 /* ── Sections ── */
-.sb-section { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+.sb-section {
+  display: flex; flex-direction: column; overflow: hidden; min-height: 0;
+  --sb-thumb: transparent;
+  --sb-thumb-hover: transparent;
+}
+.sb-section:hover {
+  --sb-thumb: rgba(144, 147, 153, 0.25);
+  --sb-thumb-hover: rgba(144, 147, 153, 0.45);
+}
 .sb-section-header {
   display: flex; align-items: center; gap: 6px; padding: 6px 10px;
   border: none; border-radius: 6px; background: transparent;
@@ -857,8 +910,14 @@ function showChatCtxMenu(conv: { id: string; title: string }, e: MouseEvent) {
 .ml-auto { margin-left: auto; }
 .sb-section-list {
   margin-left: 8px; border-left: 1px solid var(--el-border-color-lighter);
-  padding-left: 4px; overflow-y: auto; flex: 1; min-height: 0;
+  padding-left: 4px; overflow-y: auto; overflow-x: hidden; flex: 1; min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-thumb) transparent;
 }
+.sb-section-list::-webkit-scrollbar { width: 4px; -webkit-appearance: none; }
+.sb-section-list::-webkit-scrollbar-track { background: transparent; }
+.sb-section-list::-webkit-scrollbar-thumb { background: var(--sb-thumb); border-radius: 2px; }
+.sb-section-list::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
 
 /* ── Items ── */
 .sb-item {

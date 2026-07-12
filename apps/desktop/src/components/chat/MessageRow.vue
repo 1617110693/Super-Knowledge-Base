@@ -29,7 +29,9 @@
           :content="msg.content"
           :is-streaming="isStreaming"
           :sources="msg.sources"
+          :web-sources="msg.webSources"
           @source-click="(s: any) => $emit('sourceClick', s)"
+          @web-source-click="(s: any) => $emit('webSourceClick', s)"
         />
 
         <!-- Tool calls -->
@@ -65,11 +67,10 @@
 
 <script setup lang="ts">
 import { Bot, User, Copy, Check, Loader2 } from "lucide-vue-next";
-import type { ChatMessage } from "@/types";
+import type { ChatMessage, SearchResult, WebSearchSource } from "@/types";
 import ChatMarkdown from "./ChatMarkdown.vue";
 import ToolCallCards from "./ToolCallCards.vue";
 import ThinkingBlock from "./ThinkingBlock.vue";
-import type { SearchResult } from "@/types";
 
 defineProps<{
   msg: ChatMessage;
@@ -84,6 +85,7 @@ defineProps<{
 
 defineEmits<{
   sourceClick: [source: SearchResult];
+  webSourceClick: [source: WebSearchSource];
   copy: [content: string, idx: number];
 }>();
 </script>

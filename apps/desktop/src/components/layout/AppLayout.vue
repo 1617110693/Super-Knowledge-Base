@@ -24,6 +24,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted, computed } from "vue";
+import { useRoute } from "vue-router";
 import TitleBar from "./TitleBar.vue";
 import Sidebar from "./Sidebar.vue";
 import TabBar from "./TabBar.vue";
@@ -32,10 +33,13 @@ import UserGuideDialog from "@/components/common/UserGuideDialog.vue";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useChatStore } from "@/stores/chatStore";
 import { useKBStore } from "@/stores/kbStore";
+import { useTabStore } from "@/stores/tabStore";
 
 const settingsStore = useSettingsStore();
 const chatStore = useChatStore();
 const kbStore = useKBStore();
+const tabStore = useTabStore();
+const route = useRoute();
 
 const globalSearchRef = ref<InstanceType<typeof GlobalSearchDialog> | null>(null);
 const showGuide = ref(false);
@@ -91,6 +95,14 @@ onMounted(async () => {
     // KBs may not be available yet
   }
 });
+
+// Clear active tab indicator when navigating to a route not backed by any tab
+watch(() => route.path, (newPath) => {
+  const matched = tabStore.tabs.some((t) => newPath === t.url || newPath.startsWith(t.url + "/") || t.url.startsWith(newPath + "/"));
+  if (!matched && tabStore.activeTabId) {
+    tabStore.setActiveTab("");
+  }
+}, { flush: "post" });
 </script>
 
 <style scoped>

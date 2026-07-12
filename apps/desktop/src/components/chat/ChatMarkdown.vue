@@ -19,7 +19,7 @@ import { computed, inject, ref, onMounted, watch } from "vue";
 import MarkdownIt from "markdown-it";
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import type { SearchResult } from "@/types";
+import type { SearchResult, WebSearchSource } from "@/types";
 import { latexNormalize } from "@/utils/latexNormalize";
 import { imageVersion, getImageUrl, ensureImagesLoaded } from "@/utils/resolveImages";
 
@@ -27,16 +27,18 @@ const props = withDefaults(
   defineProps<{
     content: string;
     sources?: SearchResult[];
+    webSources?: WebSearchSource[];
     isStreaming?: boolean;
     theme?: string;
   }>(),
-  { sources: () => [], isStreaming: false, theme: "academic" }
+  { sources: () => [], webSources: () => [], isStreaming: false, theme: "academic" }
 );
 
 const injectedTheme = inject("markdownTheme", "academic");
 
 const emit = defineEmits<{
   sourceClick: [source: SearchResult];
+  webSourceClick: [source: WebSearchSource];
 }>();
 
 // Trigger image loading
@@ -109,14 +111,27 @@ md.renderer.rules["display_math"] = function (tokens, idx) {
 };
 
 // Embed source badges [N] -> <sup class="skb-badge">
+// Embed web source badges [W1], [W2] -> <sup class="web-badge">
 function embedBadges(content: string): string {
-  if (!props.sources?.length) return content;
-  return content.replace(/\[(\d+)(?:[-–](\d+))?\]/g, (m, n1, n2) => {
-    const start = parseInt(n1) - 1;
-    const end = n2 ? parseInt(n2) - 1 : start;
-    if (start < 0 || end >= props.sources.length || start > end) return m;
-    return `<sup data-source="${start}" class="skb-badge">${n1}</sup>`;
-  });
+  let result = content;
+  // KB chunk citations: [N] or [N-M]
+  if (props.sources?.length) {
+    result = result.replace(/\[(\d+)(?:[-–](\d+))?\]/g, (m, n1, n2) => {
+      const start = parseInt(n1) - 1;
+      const end = n2 ? parseInt(n2) - 1 : start;
+      if (start < 0 || end >= props.sources.length || start > end) return m;
+      return `<sup data-source="${start}" class="skb-badge">${n1}</sup>`;
+    });
+  }
+  // Web search citations: [W1], [W2], etc.
+  if (props.webSources?.length) {
+    result = result.replace(/\[W(\d+)\]/gi, (m, n1) => {
+      const idx = parseInt(n1) - 1;
+      if (idx < 0 || idx >= props.webSources.length) return m;
+      return `<sup data-web-source="${idx}" class="web-badge">W${n1}</sup>`;
+    });
+  }
+  return result;
 }
 
 // Helper: render $...$ math inside HTML element content
@@ -185,6 +200,16 @@ function onContentClick(e: MouseEvent) {
 }
 
 function onBadgeClick(e: MouseEvent) {
+  // Web source badge click
+  const webEl = (e.target as HTMLElement).closest("[data-web-source]") as HTMLElement | null;
+  if (webEl && props.webSources) {
+    const idx = parseInt(webEl.getAttribute("data-web-source") || "-1", 10);
+    if (idx >= 0 && idx < props.webSources.length) {
+      emit("webSourceClick", props.webSources[idx]);
+      return;
+    }
+  }
+  // KB source badge click
   const el = (e.target as HTMLElement).closest("[data-source], [data-source-start]") as HTMLElement | null;
   if (!el || !props.sources) return;
   const start = parseInt(el.getAttribute("data-source-start") || el.getAttribute("data-source") || "-1", 10);

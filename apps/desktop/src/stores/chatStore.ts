@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import type { ChatMessage, ChatSettings, SearchResult, ToolCall } from "@/types";
+import type { ChatMessage, ChatSettings, SearchResult, ToolCall, WebSearchSource } from "@/types";
 import { loadChatConversations, saveChatConversations } from "@/services/tauriBridge";
 
 export interface Conversation {
@@ -58,24 +58,24 @@ export const useChatStore = defineStore("chat", () => {
     if (streamingConvId.value !== convId) persistConversations();
   }
 
-  function updateLastAssistant(convId: string, content: string, sources?: SearchResult[], reasoning?: string) {
+  function updateLastAssistant(convId: string, content: string, sources?: SearchResult[], reasoning?: string, webSources?: WebSearchSource[]) {
     conversations.value = conversations.value.map((c) => {
       if (c.id !== convId) return c;
       const messages = [...c.messages];
       if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
-        messages[messages.length - 1] = { ...messages[messages.length - 1], content, sources, reasoning };
+        messages[messages.length - 1] = { ...messages[messages.length - 1], content, sources, reasoning, webSources };
       }
       return { ...c, messages, updatedAt: new Date().toISOString() };
     });
     if (streamingConvId.value !== convId) persistConversations();
   }
 
-  function updateLastAssistantWithToolCalls(convId: string, content: string, toolCalls: ToolCall[], sources?: SearchResult[]) {
+  function updateLastAssistantWithToolCalls(convId: string, content: string, toolCalls: ToolCall[], sources?: SearchResult[], webSources?: WebSearchSource[]) {
     conversations.value = conversations.value.map((c) => {
       if (c.id !== convId) return c;
       const messages = [...c.messages];
       if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
-        messages[messages.length - 1] = { ...messages[messages.length - 1], content, tool_calls: toolCalls, sources };
+        messages[messages.length - 1] = { ...messages[messages.length - 1], content, tool_calls: toolCalls, sources, webSources };
       }
       return { ...c, messages, updatedAt: new Date().toISOString() };
     });

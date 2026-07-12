@@ -70,11 +70,20 @@ export interface ChatSettings {
   webSearchMode?: "off" | "smart" | "on";
 }
 
+export interface WebSearchSource {
+  title: string;
+  url: string;
+  content: string;
+  score?: number;
+  query?: string;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant" | "tool";
   content: string;
   reasoning?: string;
   sources?: SearchResult[];
+  webSources?: WebSearchSource[];
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;

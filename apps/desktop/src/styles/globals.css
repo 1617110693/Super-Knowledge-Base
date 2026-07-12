@@ -63,6 +63,19 @@
 .dark .skb-badge { background: rgba(129,140,248,0.15); color: #a5b4fc; }
 .dark .skb-badge:hover { background: rgba(129,140,248,0.28); }
 
+/* Web search citation badge — square shape, blue color, prefixed with W */
+.web-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 16px; border-radius: 4px;
+  background: rgba(14,165,233,0.12); color: #0284c7;
+  font-size: 9px; font-weight: 600; text-decoration: none;
+  cursor: pointer; vertical-align: super; margin: 0 2px; line-height: 1;
+  padding: 0 3px;
+}
+.web-badge:hover { background: rgba(14,165,233,0.24); }
+.dark .web-badge { background: rgba(56,189,248,0.15); color: #7dd3fc; }
+.dark .web-badge:hover { background: rgba(56,189,248,0.28); }
+
 /* Animations */
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }

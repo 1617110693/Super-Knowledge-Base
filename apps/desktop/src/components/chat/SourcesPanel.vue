@@ -1,7 +1,12 @@
 <template>
-  <div class="sources-panel" v-if="sources.length > 0">
+  <div class="sources-panel" v-if="sources.length > 0 || webSources.length > 0">
     <el-collapse v-model="activePanels">
-      <el-collapse-item :title="`${sourcesLabel || 'Sources'} (${sources.length})`" name="sources">
+      <!-- Knowledge Base Sources -->
+      <el-collapse-item
+        v-if="sources.length > 0"
+        :title="`${sourcesLabel || 'Sources'} (${sources.length})`"
+        name="sources"
+      >
         <div class="sources-list">
           <div
             v-for="(src, idx) in sources"
@@ -35,24 +40,60 @@
           </div>
         </div>
       </el-collapse-item>
+
+      <!-- Web Search Sources -->
+      <el-collapse-item
+        v-if="webSources.length > 0"
+        :title="`${webSourcesLabel || 'Web Results'} (${webSources.length})`"
+        name="web-sources"
+      >
+        <div class="sources-list">
+          <div
+            v-for="(src, idx) in webSources"
+            :key="src.url || idx"
+            class="source-item web-source-item"
+            @click="$emit('webSourceClick', src)"
+          >
+            <div class="source-header">
+              <span class="source-doc-name text-xs font-medium truncate web-source-title">
+                <Globe :size="11" class="inline-block mr-1 shrink-0" />
+                {{ src.title || `Result ${idx + 1}` }}
+              </span>
+              <span class="web-source-index text-xs">
+                W{{ idx + 1 }}
+              </span>
+            </div>
+            <div class="web-source-url text-xs text-gray-400 truncate">
+              {{ src.url }}
+            </div>
+            <div class="source-preview text-xs text-gray-500 dark:text-gray-400 line-clamp-2">
+              {{ truncateContent(src.content) }}
+            </div>
+          </div>
+        </div>
+      </el-collapse-item>
     </el-collapse>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from "vue";
-import type { SearchResult } from "@/types";
+import { Globe } from "lucide-vue-next";
+import type { SearchResult, WebSearchSource } from "@/types";
 
-defineProps<{
+const props = defineProps<{
   sources: SearchResult[];
+  webSources?: WebSearchSource[];
   sourcesLabel?: string;
+  webSourcesLabel?: string;
 }>();
 
 defineEmits<{
   sourceClick: [source: SearchResult];
+  webSourceClick: [source: WebSearchSource];
 }>();
 
-const activePanels = ref<string[]>([]);
+const activePanels = ref<string[]>(["sources", "web-sources"]);
 
 function normalizedScore(score: number): number {
   return Math.min(Math.max(Math.round((score || 0) * 100), 0), 100);
@@ -62,6 +103,9 @@ function truncateContent(content: string, maxLen = 150): string {
   if (!content) return "";
   return content.length > maxLen ? content.slice(0, maxLen) + "..." : content;
 }
+
+// Ensure webSources has a default
+const webSources = props.webSources || [];
 </script>
 
 <style scoped>
@@ -105,5 +149,24 @@ function truncateContent(content: string, maxLen = 150): string {
 
 .source-preview {
   @apply leading-relaxed;
+}
+
+/* Web source specific styles */
+.web-source-item {
+  @apply border-l-2 border-sky-200 dark:border-sky-800;
+}
+
+.web-source-title {
+  @apply inline-flex items-center text-sky-700 dark:text-sky-400;
+}
+
+.web-source-index {
+  @apply text-sky-500 dark:text-sky-400 font-mono font-semibold;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.web-source-url {
+  @apply mb-1;
 }
 </style>

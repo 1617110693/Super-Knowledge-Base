@@ -64,42 +64,32 @@ const chatExpanded = ref(true);
 const renamingId = ref<string | null>(null);
 const renameDraft = ref("");
 
-// ── Chat popover (collapsed mode) ──
-const chatPopover = ref(false);
-const chatBtnRef = ref<HTMLButtonElement | null>(null);
-const popoverRef = ref<HTMLDivElement | null>(null);
-const chatPopoverStyle = ref<Record<string, string>>({});
+// ── Context menu ──
+const ctxMenu = ref<{
+  visible: boolean;
+  x: number;
+  y: number;
+  items: { label: string; danger?: boolean; action: () => void }[];
+}>({ visible: false, x: 0, y: 0, items: [] });
+
+// ── Rename dialog ──
+const renameDialog = ref<{ visible: boolean; id: string; name: string; type: "kb" | "chat" }>(
+  { visible: false, id: "", name: "", type: "chat" }
+);
 
 // ── Python error dialog ──
 const showError = ref(false);
 
-// ── Close popover on outside click / Escape ──
-function onDocumentClick(e: MouseEvent) {
-  if (!chatPopover.value) return;
-  const target = e.target as Node;
-  if (chatBtnRef.value?.contains(target)) return;
-  if (popoverRef.value?.contains(target)) return;
-  chatPopover.value = false;
+// ── Close context menu on outside click / Escape ──
+function closeCtxMenu() { ctxMenu.value.visible = false; }
+function onCtxKeyDown(e: KeyboardEvent) {
+  if (e.key === "Escape") closeCtxMenu();
 }
-function onKeyDown(e: KeyboardEvent) {
-  if (e.key === "Escape") chatPopover.value = false;
-}
-
-watch(chatPopover, (val) => {
+watch(() => ctxMenu.value.visible, (val) => {
   if (val) {
-    document.addEventListener("mousedown", onDocumentClick);
-    document.addEventListener("keydown", onKeyDown);
-    // Position popover relative to the chat button
-    if (chatBtnRef.value) {
-      const rect = chatBtnRef.value.getBoundingClientRect();
-      chatPopoverStyle.value = {
-        top: `${rect.top}px`,
-        left: `${rect.right + 8}px`,
-      };
-    }
+    document.addEventListener("keydown", onCtxKeyDown);
   } else {
-    document.removeEventListener("mousedown", onDocumentClick);
-    document.removeEventListener("keydown", onKeyDown);
+    document.removeEventListener("keydown", onCtxKeyDown);
   }
 });
 
@@ -117,22 +107,39 @@ function isActive(path: string) {
   return route.path === path || route.path.startsWith(path + "/");
 }
 
+function isChatActive() {
+  const active = route.path.startsWith("/chat") && route.path.length > 6;
+  console.log("[Sidebar] isChatActive:", route.path, "→", active);
+  return active;
+}
+
 // ── Actions ──
 function newConversation() {
   const id = chatStore.newConversation();
   return id;
 }
 
-function startNewChat() {
-  const id = newConversation();
-  router.push(`/chat/${id}`);
-  chatPopover.value = false;
+function ensureNewChat() {
+  // Reuse existing empty-title conversation if one exists
+  const existing = chatStore.conversations.find(c => !c.title || c.title === "");
+  if (existing) {
+    chatStore.setActiveConversation(existing.id);
+    router.push(`/chat/${existing.id}`);
+  } else {
+    const id = chatStore.newConversation();
+    router.push(`/chat/${id}`);
+  }
 }
 
-function startNewChatExpanded() {
-  chatExpanded.value = true;
-  const id = newConversation();
-  router.push(`/chat/${id}`);
+function commitRenameDialog() {
+  const d = renameDialog.value;
+  if (!d.visible || !d.name.trim()) { d.visible = false; return; }
+  if (d.type === "kb") {
+    kbStore.updateKB(d.id, d.name.trim(), null);
+  } else {
+    chatStore.renameConversation(d.id, d.name.trim());
+  }
+  d.visible = false;
 }
 
 function startRename(convId: string, title: string) {
@@ -156,10 +163,46 @@ function handleDeleteConversation(convId: string) {
     if (remaining.length > 0) {
       router.replace(`/chat/${remaining[0].id}`);
     } else {
-      const id = newConversation();
+      const id = chatStore.newConversation();
       router.replace(`/chat/${id}`);
     }
   }
+}
+
+// ── Context menu helpers ──
+function showKbCtxMenu(kb: KnowledgeBase, e: MouseEvent) {
+  e.preventDefault();
+  ctxMenu.value = {
+    visible: true, x: e.clientX, y: e.clientY,
+    items: [
+      {
+        label: "重命名", action: () => {
+          renameDialog.value = { visible: true, id: kb.id, name: kb.name, type: "kb" };
+        },
+      },
+      {
+        label: "删除", danger: true, action: () => {
+          if (confirm(`确认删除知识库"${kb.name}"？`)) kbStore.deleteKB(kb.id);
+        },
+      },
+    ],
+  };
+}
+function showChatCtxMenu(conv: { id: string; title: string }, e: MouseEvent) {
+  e.preventDefault();
+  ctxMenu.value = {
+    visible: true, x: e.clientX, y: e.clientY,
+    items: [
+      {
+        label: "重命名", action: () => {
+          renameDialog.value = { visible: true, id: conv.id, name: conv.title, type: "chat" };
+        },
+      },
+      {
+        label: "删除", danger: true, action: () => handleDeleteConversation(conv.id),
+      },
+    ],
+  };
 }
 </script>
 
@@ -182,69 +225,59 @@ function handleDeleteConversation(convId: string) {
         />
       </div>
 
-      <!-- Scrollable: overview + KBs + chat -->
-      <div class="sc-icons">
-        <button
-          class="sb-icon-btn"
-          :class="{ active: isActive('/') && !kbId }"
-          :title="t('nav.overview')"
-          @click="router.push('/')"
-        >
-          <LayoutDashboard :size="16" />
-        </button>
-
-        <button
-          v-for="kb in sortedKBs.slice(0, 8)"
-          :key="kb.id"
-          class="sb-icon-btn"
-          :class="{ active: kbId === kb.id }"
-          :title="kb.name"
-          @click="router.push(`/kb/${kb.id}`)"
-        >
-          <Pin v-if="kb.pinned" :size="16" class="text-amber-500" />
-          <Layers v-else :size="16" />
-        </button>
-
-        <div class="sb-popover-host">
+      <!-- Middle: split 1fr/1fr like expanded mode -->
+      <div class="sc-middle">
+        <!-- Top half: overview + KBs (scrollable) -->
+        <div class="sc-icons">
           <button
-            ref="chatBtnRef"
+            class="sb-icon-btn sb-nav-btn"
+            :class="{ active: isActive('/') && !kbId }"
+            :title="t('nav.overview')"
+            @click="router.push('/')"
+          >
+            <LayoutDashboard :size="16" />
+          </button>
+
+          <button
+            v-for="kb in sortedKBs"
+            :key="kb.id"
             class="sb-icon-btn"
-            :class="{ active: route.path.startsWith('/chat') }"
+            :class="{ active: kbId === kb.id }"
+            :title="kb.name"
+            @click="router.push(`/kb/${kb.id}`)"
+            @contextmenu.prevent="showKbCtxMenu(kb, $event)"
+          >
+            <Pin v-if="kb.pinned" :size="16" class="text-amber-500" />
+            <Layers v-else :size="16" />
+          </button>
+        </div>
+
+        <!-- Bottom half: chat button + recent conversations -->
+        <div class="sc-chat-cell">
+          <button
+            class="sb-nav-btn-chat-icon"
             :title="t('nav.chatSection')"
-            @click="chatPopover = !chatPopover"
+            @click="ensureNewChat"
           >
             <MessageSquare :size="16" />
           </button>
-          <Transition name="popover">
-          <div
-            v-if="chatPopover"
-            ref="popoverRef"
-            class="sb-popover"
-            :style="chatPopoverStyle"
-          >
-            <div class="sb-popover-header">
-              <span class="sb-popover-title">{{ t("nav.chatSection") }}</span>
-              <button class="sb-icon-btn-xs" :title="t('nav.newChat')" @click="startNewChat">
-                <Plus :size="14" />
-              </button>
-            </div>
-            <div class="sb-popover-list">
-              <p v-if="recentConversations.length === 0" class="sb-empty-text">{{ t("nav.noConversations") }}</p>
-              <div v-for="conv in recentConversations" :key="conv.id" class="sb-popover-item group">
-                <button class="sb-popover-link" @click="tabStore.openTab({ id: conv.id, title: conv.title || conv.messages[0]?.content?.slice(0, 30) || t('chat.new'), url: `/chat/${conv.id}` }); router.push(`/chat/${conv.id}`); chatPopover = false">
-                  <MessageSquare :size="12" />
-                  <span class="truncate">{{ conv.title || conv.messages[0]?.content?.slice(0, 30) || t("chat.new") }}</span>
-                </button>
-                <button class="sb-popover-delete" :title="t('kb.deleteTooltip')" @click.stop="handleDeleteConversation(conv.id)">
-                  <Trash2 :size="10" />
-                </button>
-              </div>
-            </div>
+          <div class="sc-recent-chats">
+            <button
+              v-for="conv in recentConversations.slice(0, 8)"
+              :key="conv.id"
+              class="sb-icon-btn sb-icon-btn-sm"
+              :class="{ active: chatStore.activeConversationId === conv.id && route.path.startsWith('/chat') }"
+              :title="conv.title || conv.messages[0]?.content?.slice(0, 30) || t('chat.new')"
+              @click="chatStore.setActiveConversation(conv.id); tabStore.openTab({ id: conv.id, title: conv.title || conv.messages[0]?.content?.slice(0, 30) || t('chat.new'), url: `/chat/${conv.id}` }); router.push(`/chat/${conv.id}`)"
+              @contextmenu.prevent="showChatCtxMenu(conv, $event)"
+            >
+              <MessageSquare :size="12" />
+            </button>
           </div>
-          </Transition>
         </div>
       </div>
 
+      <!-- Settings (footer) -->
       <div class="sc-bottom">
         <button class="sb-icon-btn" :class="{ active: isActive('/settings') }" :title="t('nav.settings')" @click="router.push('/settings')">
           <Settings :size="16" />
@@ -314,6 +347,7 @@ function handleDeleteConversation(convId: string) {
               class="sb-item"
               :class="{ active: kbId === kb.id }"
               :title="kb.description || undefined"
+              @contextmenu.prevent="showKbCtxMenu(kb, $event)"
             >
               <Pin
                 v-if="kb.pinned"
@@ -342,7 +376,7 @@ function handleDeleteConversation(convId: string) {
             <button
               class="sb-icon-btn-xs ml-auto"
               :title="t('nav.newChat')"
-              @click.stop="startNewChatExpanded"
+              @click.stop="ensureNewChat"
             >
               <Plus :size="12" />
             </button>
@@ -358,6 +392,7 @@ function handleDeleteConversation(convId: string) {
               v-for="conv in recentConversations"
               :key="conv.id"
               class="sb-chat-item group"
+              @contextmenu.prevent="showChatCtxMenu(conv, $event)"
             >
               <template v-if="renamingId === conv.id">
                 <div class="flex items-center gap-1 px-2 py-1">
@@ -456,6 +491,47 @@ function handleDeleteConversation(convId: string) {
         </div>
       </div>
     </Teleport>
+
+    <!-- Rename dialog -->
+    <Teleport to="body">
+      <div v-if="renameDialog.visible" class="modal-overlay" @click="renameDialog.visible = false">
+        <div class="modal-card" style="max-width:360px" @click.stop>
+          <div class="modal-header">
+            <h3 class="modal-title">{{ renameDialog.type === 'kb' ? '重命名知识库' : '重命名对话' }}</h3>
+            <button class="sb-icon-btn-xs" @click="renameDialog.visible = false"><X :size="16" /></button>
+          </div>
+          <div class="modal-body" style="padding: 12px 16px">
+            <input
+              v-model="renameDialog.name"
+              class="sb-rename-input"
+              style="width:100%;font-size:13px;padding:6px 10px"
+              autofocus
+              @keydown.enter="commitRenameDialog"
+              @keydown.escape="renameDialog.visible = false"
+            />
+          </div>
+          <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;padding:8px 16px 12px">
+            <button class="sb-icon-btn-xs" style="padding:4px 12px;width:auto" @click="renameDialog.visible = false">取消</button>
+            <button class="sb-icon-btn-xs" style="padding:4px 12px;width:auto;background:var(--el-color-primary);color:#fff" @click="commitRenameDialog">确定</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Context menu -->
+    <Teleport to="body">
+      <div v-if="ctxMenu.visible" class="ctx-overlay" @click="closeCtxMenu" @contextmenu.prevent="closeCtxMenu" />
+      <div v-if="ctxMenu.visible" class="ctx-menu" :style="{ top: ctxMenu.y + 'px', left: ctxMenu.x + 'px' }">
+        <button
+          v-for="item in ctxMenu.items"
+          :key="item.label"
+          :class="{ danger: item.danger }"
+          @click="item.action(); closeCtxMenu()"
+        >
+          {{ item.label }}
+        </button>
+      </div>
+    </Teleport>
   </aside>
 </template>
 
@@ -474,9 +550,8 @@ function handleDeleteConversation(convId: string) {
 
 .sidebar-collapsed {
   width: 52px;
-  align-items: center;
-  padding: 8px 0;
-  gap: 4px;
+  padding: 0;
+  gap: 0;
 }
 
 .sidebar-expanded {
@@ -504,6 +579,40 @@ function handleDeleteConversation(convId: string) {
 .sb-icon-btn.active {
   background: var(--el-color-primary-light-9);
   color: var(--el-color-primary);
+}
+/* Nav buttons (overview, chat section) */
+.sb-nav-btn {
+  background: var(--el-fill-color-lighter);
+  color: var(--el-text-color-regular);
+  font-weight: 500;
+}
+.sb-nav-btn:hover {
+  background: var(--el-fill-color);
+  color: var(--el-text-color-primary);
+}
+/* Overview gets blue active shade */
+.sb-nav-btn.active {
+  background: var(--el-color-primary-light-8);
+  color: var(--el-color-primary);
+}
+/* Chat nav button: standalone, never gets active shade */
+.sb-nav-btn-chat-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+  color: var(--el-text-color-regular);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 120ms;
+}
+.sb-nav-btn-chat-icon:hover {
+  background: var(--el-fill-color);
+  color: var(--el-text-color-primary);
 }
 
 .sb-icon-btn-xs {
@@ -571,11 +680,29 @@ function handleDeleteConversation(convId: string) {
 
 /* ── Popover (collapsed) ── */
 .sb-popover-host { position: relative; }
+
+/* ── Context menu ── */
+.ctx-overlay { position: fixed; inset: 0; z-index: 999; }
+.ctx-menu {
+  position: fixed; z-index: 1000; min-width: 130px;
+  background: var(--el-bg-color); border: 1px solid var(--el-border-color);
+  border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.12);
+  padding: 4px; display: flex; flex-direction: column; gap: 1px;
+}
+.ctx-menu button {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 10px; border: none; border-radius: 6px;
+  background: transparent; color: var(--el-text-color-regular);
+  font-size: 12px; cursor: pointer; text-align: left; white-space: nowrap;
+}
+.ctx-menu button:hover { background: var(--el-color-primary-light-9); }
+.ctx-menu button.danger { color: var(--el-color-danger); }
+.ctx-menu button.danger:hover { background: rgba(220,38,38,.08); }
 .sb-popover {
-  position: fixed; z-index: 100; width: 280px; max-height: 400px;
+  position: fixed; z-index: 100; width: 280px;
   background: var(--surface); border: 1px solid var(--border-color);
   border-radius: 14px; box-shadow: 0 8px 40px rgba(0,0,0,0.14), 0 2px 8px rgba(0,0,0,0.06);
-  overflow: visible; left: 60px; top: auto; margin-top: -8px;
+  overflow: visible;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
@@ -646,16 +773,49 @@ function handleDeleteConversation(convId: string) {
   padding: 8px 0 4px;
   flex-shrink: 0;
 }
-.sc-icons {
+.sc-middle {
   flex: 1;
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  justify-items: center;
+  min-height: 0;
+  overflow: hidden;
+}
+.sc-icons {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding: 4px;
   width: 100%;
   overflow-y: auto;
   min-height: 0;
+  padding-top: 4px;
+}
+.sc-chat-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  overflow-y: auto;
+  min-height: 0;
+  padding-top: 2px;
+  gap: 1px;
+}
+.sc-chat-cell .sb-popover-host {
+  flex-shrink: 0;
+  line-height: 0;
+}
+.sc-recent-chats {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  width: 100%;
+}
+.sb-icon-btn-sm {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
 }
 .sc-bottom {
   display: flex;
